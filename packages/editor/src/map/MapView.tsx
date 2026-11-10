@@ -2,30 +2,46 @@ import { useEffect, useRef } from 'react';
 import { Map as MapLibreMap, NavigationControl, ScaleControl, setWorkerUrl, type GeoJSONSource, type StyleSpecification } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { TerraDraw, TerraDrawLineStringMode, type TerraDrawMouseEvent } from 'terra-draw';
+import { TerraDraw, TerraDrawLineStringMode, TerraDrawPolygonMode, type TerraDrawMouseEvent } from 'terra-draw';
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
 import type { NodeFeature, Position } from '@campo/core';
 import type { CampusDoc } from '../model/document.ts';
 import type { OutdoorKind, PathVertex } from '../model/outdoor-path.ts';
+import { nodeInScope, type Scope } from '../model/scope.ts';
 import { nearestWithin, type ScreenPoint } from '../model/snap.ts';
 import type { Tool } from '../ui/ui-state.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import { DATA_LAYERS, DATA_SOURCE, WAY_COLORS, toDisplayGeoJSON } from './layers.ts';
+
+/** Clicking within this many pixels of a node picks it (잇기). Larger than the 5px snap: it is a pick, not a placement. */
+const PICK_PX = 10;
+
+export interface MapClick {
+  position: Position;
+  /** Nearest node on the current floor (or outdoors) within PICK_PX, if any. */
+  node: NodeFeature | undefined;
+}
 
 interface Props {
   doc: CampusDoc;
   tool: Tool;
   outdoorKind: OutdoorKind;
   basemap: BasemapId;
+  scope: Scope;
+  highlight: ReadonlySet<string>;
   onPathDrawn: (vertices: PathVertex[]) => void;
+  onPolygonDrawn: (ring: Position[]) => void;
+  onMapClick: (click: MapClick) => void;
 }
 
 // Vite pre-bundles maplibre-gl, which breaks the worker's relative URL; point MapLibre at the file directly.
 setWorkerUrl(workerUrl);
 
 const KIND_COLOR: Record<OutdoorKind, string> = { flat: WAY_COLORS.footway, steps: WAY_COLORS.steps, ramp: WAY_COLORS.ramp };
+const DRAW_MODE: Partial<Record<Tool, string>> = { 'outdoor-path': 'linestring', building: 'polygon' };
 
-export function MapView({ doc, tool, outdoorKind, basemap, onPathDrawn }: Props) {
+export function MapView(props: Props) {
+  const { doc, tool, outdoorKind, basemap, scope, highlight } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const drawRef = useRef<TerraDraw | null>(null);
@@ -35,17 +51,15 @@ export function MapView({ doc, tool, outdoorKind, basemap, onPathDrawn }: Props)
     if (pending.current) pending.current.push(fn);
     else if (mapRef.current) fn(mapRef.current);
   };
-  // Terra Draw callbacks are registered once; they read the latest props through refs.
-  const docRef = useRef(doc);
-  const onPathDrawnRef = useRef(onPathDrawn);
-  docRef.current = doc;
-  onPathDrawnRef.current = onPathDrawn;
+  // Map and Terra Draw callbacks are registered once; they read the latest props through this ref.
+  const latest = useRef(props);
+  latest.current = props;
 
   useEffect(() => {
     const map = new MapLibreMap({
       container: container.current!,
       style: baseStyle(),
-      center: doc.meta.center,
+      center: latest.current.doc.meta.center,
       zoom: 17,
       attributionControl: { compact: false },
     });
@@ -53,27 +67,43 @@ export function MapView({ doc, tool, outdoorKind, basemap, onPathDrawn }: Props)
     map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left');
     mapRef.current = map;
 
-    /** Outdoor nodes within SNAP_PX of a screen point (the 바깥 길 tool attaches only to outdoor points). */
-    const snapNode = (point: ScreenPoint): NodeFeature | undefined => {
-      const candidates = [...docRef.current.features.values()]
-        .filter((f): f is NodeFeature => f.properties.kind === 'node' && f.properties.building_id === null)
+    const nearestNode = (point: ScreenPoint, accept: (n: NodeFeature) => boolean, maxPx?: number) => {
+      const candidates = [...latest.current.doc.features.values()]
+        .filter((f): f is NodeFeature => f.properties.kind === 'node' && accept(f as NodeFeature))
         .map((node) => ({ node, screen: map.project(node.geometry.coordinates) }));
-      return nearestWithin(candidates, point)?.node;
+      return nearestWithin(candidates, point, maxPx)?.node;
     };
+    /** The 바깥 길 tool attaches only to outdoor points, within SNAP_PX. */
+    const snapOutdoor = (point: ScreenPoint) => nearestNode(point, (n) => n.properties.building_id === null);
+
+    map.on('click', (e) => {
+      if (DRAW_MODE[latest.current.tool]) return; // Terra Draw owns clicks while drawing
+      const node = nearestNode(e.point, (n) => nodeInScope(n, latest.current.scope), PICK_PX);
+      latest.current.onMapClick({ position: [e.lngLat.lng, e.lngLat.lat], node });
+    });
 
     map.on('load', () => {
-      map.addSource(DATA_SOURCE, { type: 'geojson', data: toDisplayGeoJSON(docRef.current) });
+      map.addSource(DATA_SOURCE, { type: 'geojson', data: toDisplayGeoJSON(latest.current.doc, latest.current.scope) });
       for (const layer of DATA_LAYERS) map.addLayer(layer);
 
       const draw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map }),
         modes: [
           new TerraDrawLineStringMode({
-            snapping: {
-              toCustom: (event: TerraDrawMouseEvent) =>
-                snapNode({ x: event.containerX, y: event.containerY })?.geometry.coordinates,
-            },
+            snapping: { toCustom: (ev: TerraDrawMouseEvent) => snapOutdoor({ x: ev.containerX, y: ev.containerY })?.geometry.coordinates },
             styles: lineStyles(KIND_COLOR.flat),
+          }),
+          new TerraDrawPolygonMode({
+            styles: {
+              fillColor: '#1e2933',
+              fillOpacity: 0.08,
+              outlineColor: '#1e2933',
+              outlineWidth: 2,
+              closingPointColor: '#ffffff',
+              closingPointOutlineColor: '#1e2933',
+              closingPointWidth: 6,
+              closingPointOutlineWidth: 2,
+            },
           }),
         ],
       });
@@ -81,12 +111,15 @@ export function MapView({ doc, tool, outdoorKind, basemap, onPathDrawn }: Props)
       draw.on('finish', (id) => {
         const drawn = draw.getSnapshotFeature(id);
         draw.removeFeatures([id]); // the saved data is drawn by our own layers
-        if (drawn?.geometry.type !== 'LineString') return;
-        const vertices = (drawn.geometry.coordinates as Position[]).map((position): PathVertex => {
-          const node = snapNode(map.project(position));
-          return node ? { nodeId: node.id } : { position: [position[0], position[1]] };
-        });
-        onPathDrawnRef.current(vertices);
+        if (drawn?.geometry.type === 'LineString') {
+          const vertices = (drawn.geometry.coordinates as Position[]).map((position): PathVertex => {
+            const node = snapOutdoor(map.project(position));
+            return node ? { nodeId: node.id } : { position: [position[0], position[1]] };
+          });
+          latest.current.onPathDrawn(vertices);
+        } else if (drawn?.geometry.type === 'Polygon') {
+          latest.current.onPolygonDrawn((drawn.geometry.coordinates[0] as Position[]).map(([x, y]) => [x, y]));
+        }
       });
       drawRef.current = draw;
       const queued = pending.current ?? [];
@@ -101,16 +134,14 @@ export function MapView({ doc, tool, outdoorKind, basemap, onPathDrawn }: Props)
       map.remove();
       mapRef.current = null;
     };
-    // The map is created once; later prop changes are applied by the effects below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    whenReady((map) => (map.getSource(DATA_SOURCE) as GeoJSONSource).setData(toDisplayGeoJSON(doc)));
-  }, [doc]);
+    whenReady((map) => (map.getSource(DATA_SOURCE) as GeoJSONSource).setData(toDisplayGeoJSON(doc, scope, highlight)));
+  }, [doc, scope, highlight]);
 
   useEffect(() => {
-    whenReady(() => drawRef.current?.setMode(tool === 'outdoor-path' ? 'linestring' : 'static'));
+    whenReady(() => drawRef.current?.setMode(DRAW_MODE[tool] ?? 'static'));
   }, [tool]);
 
   useEffect(() => {
@@ -131,7 +162,7 @@ export function MapView({ doc, tool, outdoorKind, basemap, onPathDrawn }: Props)
       className="map"
       data-tool={tool}
       role="application"
-      aria-label="캠퍼스 지도. 바깥 길 도구를 고르면 클릭해서 길을 그릴 수 있습니다."
+      aria-label="캠퍼스 지도. 도구를 고른 뒤 지도를 눌러 그립니다."
     />
   );
 }

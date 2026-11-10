@@ -1,6 +1,7 @@
 // "바깥 길" tool (SPEC §8): a drawn polyline becomes outdoor node and edge Features (SPEC §4).
 import type { EdgeFeature, EdgeProperties, NodeFeature, Position } from '@campo/core';
 import { withFeatures, type CampusDoc } from './document.ts';
+import { edgeIdFor } from './ids.ts';
 
 export const OUTDOOR_KINDS = ['flat', 'steps', 'ramp'] as const;
 export type OutdoorKind = (typeof OUTDOOR_KINDS)[number];
@@ -66,9 +67,7 @@ export function addOutdoorPath(doc: CampusDoc, vertices: readonly PathVertex[], 
   for (let i = 0; i + 1 < path.length; i++) {
     const from = lookup(path[i]!)!;
     const to = lookup(path[i + 1]!)!;
-    const base = `e_${tail(from.id)}__${tail(to.id)}`;
-    let id = base;
-    for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
+    const id = edgeIdFor(taken, from.id, to.id);
     taken.add(id);
     const edge: EdgeFeature = {
       type: 'Feature',
@@ -104,9 +103,4 @@ function nextOutdoorNumber(ids: Iterable<string>): number {
     if (m) max = Math.max(max, Number(m[1]));
   }
   return max + 1;
-}
-
-/** "n_out_0042" → "out_0042" (SPEC §4.4 edge ids). */
-function tail(nodeId: string): string {
-  return nodeId.replace(/^n_/, '');
 }

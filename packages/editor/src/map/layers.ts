@@ -1,19 +1,18 @@
 // How saved data is drawn on the map. Display only: builds a throwaway GeoJSON from CampusDoc.
 import type { FeatureCollection } from 'geojson';
-import type { LayerSpecification } from 'maplibre-gl';
+import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
 import type { CampusDoc } from '../model/document.ts';
+import { inScope, type Scope } from '../model/scope.ts';
 
 export const DATA_SOURCE = 'campo-data';
 
 /** Line colours per kind of way. Same values as the CSS tokens --footway / --steps / --ramp. */
-export const WAY_COLORS = { footway: '#2463a6', steps: '#d4461a', ramp: '#1f8f68', other: '#5b6875' } as const;
+export const WAY_COLORS = { footway: '#2463a6', corridor: '#3d4c5a', steps: '#d4461a', ramp: '#1f8f68', elevator: '#6a4fc4', other: '#5b6875' } as const;
 
-export function toDisplayGeoJSON(doc: CampusDoc): FeatureCollection {
+export function toDisplayGeoJSON(doc: CampusDoc, scope: Scope, highlight: ReadonlySet<string> = new Set()): FeatureCollection {
   const features: FeatureCollection['features'] = [];
   for (const f of doc.features.values()) {
     const p = f.properties;
-    // Outdoor mode (SPEC §8): outdoor data and building outlines are drawn strongly.
-    const outdoor = p.kind === 'building' || (p.kind === 'node' ? p.building_id === null : p.edge_type === 'outdoor' || p.edge_type === undefined);
     features.push({
       type: 'Feature',
       id: f.id,
@@ -23,67 +22,104 @@ export function toDisplayGeoJSON(doc: CampusDoc): FeatureCollection {
         kind: p.kind,
         highway: p.kind === 'edge' ? p.highway : null,
         node_type: p.kind === 'node' ? p.node_type : null,
-        emphasis: outdoor ? 1 : 0,
+        classroom: p.kind === 'node' && p.node_type === 'door' && (p.space_name !== undefined || p.ref !== undefined),
+        emphasis: inScope(f, scope, doc) ? 1 : 0,
+        selected: scope.kind === 'building' && f.id === scope.buildingId,
+        highlight: highlight.has(f.id),
       },
     });
   }
+  // Strong features last, so they draw above faded ones at the same spot (stacked elevator stops).
+  features.sort((a, b) => Number(a.properties!['emphasis']) - Number(b.properties!['emphasis']));
   return { type: 'FeatureCollection', features };
 }
+
+const strong: ExpressionSpecification = ['==', ['get', 'emphasis'], 1];
+const opacity: ExpressionSpecification = ['case', strong, 1, 0.18];
+const isEdge: ExpressionSpecification = ['==', ['get', 'kind'], 'edge'];
+const isNode: ExpressionSpecification = ['==', ['get', 'kind'], 'node'];
 
 const wayColor = [
   'match', ['get', 'highway'],
   'footway', WAY_COLORS.footway,
+  'corridor', WAY_COLORS.corridor,
   'steps', WAY_COLORS.steps,
   'ramp', WAY_COLORS.ramp,
+  'elevator', WAY_COLORS.elevator,
   WAY_COLORS.other,
 ] as const;
 
-const opacity = ['case', ['==', ['get', 'emphasis'], 1], 1, 0.25] as const;
+const nodeColor = [
+  'match', ['get', 'node_type'],
+  'entrance', '#1f8f68',
+  'elevator_stop', WAY_COLORS.elevator,
+  'stair_landing', WAY_COLORS.steps,
+  'poi', '#1e2933',
+  '#ffffff',
+] as const;
 
 export const DATA_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-buildings-fill',
+    type: 'fill',
+    source: DATA_SOURCE,
+    filter: ['==', ['get', 'kind'], 'building'],
+    paint: { 'fill-color': '#1e2933', 'fill-opacity': ['case', ['get', 'selected'], 0.08, 0.03] as never },
+  },
   {
     id: 'campo-buildings',
     type: 'line',
     source: DATA_SOURCE,
     filter: ['==', ['get', 'kind'], 'building'],
-    paint: { 'line-color': '#1e2933', 'line-width': 1.5, 'line-opacity': 0.7 },
+    paint: {
+      'line-color': '#1e2933',
+      'line-width': ['case', ['get', 'selected'], 2.5, 1.5] as never,
+      'line-opacity': ['case', strong, 0.8, 0.3] as never,
+    },
   },
   {
     id: 'campo-edges-casing',
     type: 'line',
     source: DATA_SOURCE,
-    filter: ['==', ['get', 'kind'], 'edge'],
+    filter: isEdge,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-opacity': opacity as never },
+    paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-opacity': opacity },
   },
   {
     id: 'campo-edges',
     type: 'line',
     source: DATA_SOURCE,
-    filter: ['all', ['==', ['get', 'kind'], 'edge'], ['!=', ['get', 'highway'], 'steps']],
+    filter: ['all', isEdge, ['!=', ['get', 'highway'], 'steps']],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': wayColor as never, 'line-width': 4, 'line-opacity': opacity as never },
+    paint: { 'line-color': wayColor as never, 'line-width': 4, 'line-opacity': opacity },
   },
   {
     // Stairs: short heavy dashes, read as treads.
     id: 'campo-edges-steps',
     type: 'line',
     source: DATA_SOURCE,
-    filter: ['all', ['==', ['get', 'kind'], 'edge'], ['==', ['get', 'highway'], 'steps']],
-    paint: { 'line-color': WAY_COLORS.steps, 'line-width': 6, 'line-dasharray': [0.6, 0.5], 'line-opacity': opacity as never },
+    filter: ['all', isEdge, ['==', ['get', 'highway'], 'steps']],
+    paint: { 'line-color': WAY_COLORS.steps, 'line-width': 6, 'line-dasharray': [0.6, 0.5], 'line-opacity': opacity },
+  },
+  {
+    id: 'campo-nodes-highlight',
+    type: 'circle',
+    source: DATA_SOURCE,
+    filter: ['all', isNode, ['get', 'highlight']],
+    paint: { 'circle-radius': 11, 'circle-color': '#f2b705', 'circle-opacity': 0.55 },
   },
   {
     id: 'campo-nodes',
     type: 'circle',
     source: DATA_SOURCE,
-    filter: ['==', ['get', 'kind'], 'node'],
+    filter: isNode,
     paint: {
-      'circle-radius': ['case', ['==', ['get', 'node_type'], 'poi'], 6, 4],
-      'circle-color': '#ffffff',
+      'circle-radius': ['case', ['any', ['==', ['get', 'node_type'], 'poi'], ['get', 'classroom']], 6, 4.5] as never,
+      'circle-color': ['case', ['get', 'classroom'], '#2463a6', nodeColor] as never,
       'circle-stroke-color': '#1e2933',
       'circle-stroke-width': 2,
-      'circle-opacity': opacity as never,
-      'circle-stroke-opacity': opacity as never,
+      'circle-opacity': opacity,
+      'circle-stroke-opacity': opacity,
     },
   },
 ];

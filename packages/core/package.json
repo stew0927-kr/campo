@@ -5,9 +5,14 @@
   "type": "module",
   "description": "Schema types, loading, validation, graph and routing shared by browser and Node.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./node": "./src/node/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "@turf/distance": "7.4.0",
+    "ajv": "8.20.0"
   }
 }

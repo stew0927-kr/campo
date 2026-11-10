@@ -1,0 +1,6 @@
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"e_A_3_bridge__B_2_bridge","geometry":{"type":"LineString","coordinates":[[127.0009,37.0005],[127.0011,37.0005]]},"properties":{"kind":"edge","highway":"corridor","edge_type":"bridge","step_free":true,"building_from":"bldg_A","building_to":"bldg_B","level_from":3,"level_to":2,"from":"n_A_3_bridge","to":"n_B_2_bridge","bidirectional":true,"source":"field-survey-2026-11"}},
+{"type":"Feature","id":"e_portal_A_1_main","geometry":{"type":"LineString","coordinates":[[127.0004,37.0004],[127.0002,37.0004]]},"properties":{"kind":"edge","highway":"footway","edge_type":"portal","step_free":false,"from":"n_A_1_main","to":"n_out_0002","bidirectional":true,"source":"field-survey-2026-11"}},
+{"type":"Feature","id":"e_portal_A_4_north","geometry":{"type":"LineString","coordinates":[[127.0005,37.0007],[127.0003,37.0007]]},"properties":{"kind":"edge","highway":"footway","edge_type":"portal","step_free":true,"from":"n_A_4_north","to":"n_out_0003","bidirectional":true,"source":"field-survey-2026-11"}},
+{"type":"Feature","id":"e_portal_B_1_main","geometry":{"type":"LineString","coordinates":[[127.0011,37.0004],[127.001,37.0001]]},"properties":{"kind":"edge","highway":"footway","edge_type":"portal","step_free":false,"from":"n_B_1_main","to":"n_out_0006","bidirectional":true,"source":"field-survey-2026-11"}}
+]}

@@ -1,0 +1,9 @@
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"e_B_2_bridge__B_2_hall","geometry":{"type":"LineString","coordinates":[[127.0011,37.0005],[127.0012,37.0005]]},"properties":{"kind":"edge","highway":"corridor","edge_type":"indoor","step_free":true,"from":"n_B_2_bridge","to":"n_B_2_hall","bidirectional":true,"source":"field-survey-2026-11"}},
+{"type":"Feature","id":"e_B_2_hall__B_2_201door","geometry":{"type":"LineString","coordinates":[[127.0012,37.0005],[127.0012,37.0006]]},"properties":{"kind":"edge","highway":"corridor","edge_type":"indoor","step_free":true,"from":"n_B_2_hall","to":"n_B_2_201door","bidirectional":true,"source":"field-survey-2026-11"}},
+{"type":"Feature","id":"e_B_2_hall__B_2_stair","geometry":{"type":"LineString","coordinates":[[127.0012,37.0005],[127.0013,37.00041]]},"properties":{"kind":"edge","highway":"corridor","edge_type":"indoor","step_free":true,"from":"n_B_2_hall","to":"n_B_2_stair","bidirectional":true,"source":"field-survey-2026-11"}},
+{"type":"Feature","id":"n_B_2_201door","geometry":{"type":"Point","coordinates":[127.0012,37.0006]},"properties":{"kind":"node","node_type":"door","building_id":"bldg_B","level":2,"ref":"201","space_name":"201호 강의실","source":"field-survey-2026-11"}},
+{"type":"Feature","id":"n_B_2_bridge","geometry":{"type":"Point","coordinates":[127.0011,37.0005]},"properties":{"kind":"node","node_type":"corridor","building_id":"bldg_B","level":2,"source":"field-survey-2026-11"}},
+{"type":"Feature","id":"n_B_2_hall","geometry":{"type":"Point","coordinates":[127.0012,37.0005]},"properties":{"kind":"node","node_type":"corridor","building_id":"bldg_B","level":2,"source":"field-survey-2026-11"}},
+{"type":"Feature","id":"n_B_2_stair","geometry":{"type":"Point","coordinates":[127.0013,37.00041]},"properties":{"kind":"node","node_type":"stair_landing","building_id":"bldg_B","level":2,"source":"field-survey-2026-11"}}
+]}

@@ -94,7 +94,7 @@ v0.1은 아래가 모두 되면 끝이다.
 
 ```
 data/campuses/hanyang-seoul/
-├─ campus.json                 # 이름, 중심 좌표, 범위
+├─ campus.json                 # id, name, center([경도, 위도]), bbox([서, 남, 동, 북])
 ├─ outdoor.geojson             # 바깥 node·edge, poi
 ├─ connections.geojson         # 포탈 edge, 연결통로(bridge) edge
 └─ buildings/

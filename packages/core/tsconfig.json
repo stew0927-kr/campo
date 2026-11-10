@@ -1,8 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2023"],
     "types": []
   },
-  "include": ["src", "test", "vitest.config.ts"]
+  "include": ["src"],
+  "exclude": ["src/node"]
 }

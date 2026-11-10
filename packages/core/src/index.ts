@@ -1,2 +1,3 @@
-// Public API of @campo/core. Implementation arrives in M1/M2 (see docs/SPEC.md §10).
-export {};
+export * from './types.ts';
+export { CAMPUS_META_FILE, isCampusFile, parseCampus } from './load.ts';
+export { ENDPOINT_TOLERANCE_M, isClassroomDoor, isStepFreePassable, isValidFeature, validateCampus } from './validate.ts';

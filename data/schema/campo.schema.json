@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campo.local/schema/campo.schema.json",
+  "title": "CAMPO campus data file",
+  "description": "SPEC v0.1 §4. A campus data file is a GeoJSON FeatureCollection of building, node and edge Features. campus.json uses $defs/campus.",
+  "$ref": "#/$defs/featureCollection",
+  "$defs": {
+    "featureCollection": {
+      "type": "object",
+      "required": ["type", "features"],
+      "properties": {
+        "type": { "const": "FeatureCollection" },
+        "features": { "type": "array", "items": { "$ref": "#/$defs/feature" } }
+      }
+    },
+
+    "campus": {
+      "description": "campus.json: name, center and extent of the campus.",
+      "type": "object",
+      "required": ["id", "name", "center", "bbox"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "center": { "$ref": "#/$defs/position" },
+        "bbox": {
+          "description": "[west, south, east, north] in EPSG:4326.",
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "prefixItems": [
+            { "$ref": "#/$defs/longitude" },
+            { "$ref": "#/$defs/latitude" },
+            { "$ref": "#/$defs/longitude" },
+            { "$ref": "#/$defs/latitude" }
+          ]
+        }
+      }
+    },
+
+    "feature": {
+      "description": "Common rules (§4.1): top-level string id, properties.kind and properties.source. Kind-specific rules are dispatched below.",
+      "type": "object",
+      "required": ["type", "id", "geometry", "properties"],
+      "properties": {
+        "type": { "const": "Feature" },
+        "id": { "type": "string", "minLength": 1 },
+        "geometry": { "type": "object" },
+        "properties": {
+          "type": "object",
+          "required": ["kind", "source"],
+          "properties": {
+            "kind": { "enum": ["building", "node", "edge"] }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "$ref": "#/$defs/isBuilding" },
+          "then": { "properties": { "geometry": { "$ref": "#/$defs/polygon" }, "properties": { "$ref": "#/$defs/buildingProperties" } } }
+        },
+        {
+          "if": { "$ref": "#/$defs/isNode" },
+          "then": { "properties": { "geometry": { "$ref": "#/$defs/point" }, "properties": { "$ref": "#/$defs/nodeProperties" } } }
+        },
+        {
+          "if": { "$ref": "#/$defs/isEdge" },
+          "then": { "properties": { "geometry": { "$ref": "#/$defs/lineString" }, "properties": { "$ref": "#/$defs/edgeProperties" } } }
+        }
+      ]
+    },
+
+    "isBuilding": { "required": ["properties"], "properties": { "properties": { "required": ["kind"], "properties": { "kind": { "const": "building" } } } } },
+    "isNode": { "required": ["properties"], "properties": { "properties": { "required": ["kind"], "properties": { "kind": { "const": "node" } } } } },
+    "isEdge": { "required": ["properties"], "properties": { "properties": { "required": ["kind"], "properties": { "kind": { "const": "edge" } } } } },
+
+    "longitude": { "type": "number", "minimum": -180, "maximum": 180 },
+    "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+    "position": {
+      "description": "[longitude, latitude] in EPSG:4326.",
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [{ "$ref": "#/$defs/longitude" }, { "$ref": "#/$defs/latitude" }]
+    },
+    "point": {
+      "type": "object",
+      "required": ["type", "coordinates"],
+      "properties": { "type": { "const": "Point" }, "coordinates": { "$ref": "#/$defs/position" } }
+    },
+    "lineString": {
+      "type": "object",
+      "required": ["type", "coordinates"],
+      "properties": {
+        "type": { "const": "LineString" },
+        "coordinates": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/position" } }
+      }
+    },
+    "polygon": {
+      "type": "object",
+      "required": ["type", "coordinates"],
+      "properties": {
+        "type": { "const": "Polygon" },
+        "coordinates": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "array", "minItems": 4, "items": { "$ref": "#/$defs/position" } }
+        }
+      }
+    },
+
+    "level": {
+      "description": "Building-internal floor number: 1F = 1, B1 = -1. 0 is not used (§3).",
+      "type": "integer",
+      "not": { "const": 0 }
+    },
+    "levelList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/level" }
+    },
+    "source": {
+      "description": "Where the data came from, e.g. field-survey-2026-11, ngii-imagery, school-floorplan, estimate.",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "buildingProperties": {
+      "type": "object",
+      "required": ["kind", "source", "name", "code", "levels", "ground_levels"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "building" },
+        "source": { "$ref": "#/$defs/source" },
+        "needs_check": { "type": "boolean" },
+        "name": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "pattern": "^[A-Za-z0-9]+$" },
+        "levels": { "$ref": "#/$defs/levelList" },
+        "ground_levels": { "$ref": "#/$defs/levelList" },
+        "ext": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "moct_bldg_id": { "type": "string", "minLength": 1 },
+            "floor_height_m": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      }
+    },
+
+    "nodeProperties": {
+      "type": "object",
+      "required": ["kind", "source", "node_type", "building_id", "level"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "node" },
+        "source": { "$ref": "#/$defs/source" },
+        "needs_check": { "type": "boolean" },
+        "node_type": { "enum": ["outdoor", "entrance", "door", "corridor", "elevator_stop", "stair_landing", "poi"] },
+        "building_id": { "type": ["string", "null"], "minLength": 1 },
+        "level": { "oneOf": [{ "$ref": "#/$defs/level" }, { "type": "null" }] },
+        "name": { "type": "string", "minLength": 1 },
+        "ref": { "type": "string", "minLength": 1 },
+        "shaft_id": { "type": "string", "minLength": 1 },
+        "space_name": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "description": "Outdoor points have no building and no level.",
+          "if": { "properties": { "node_type": { "const": "outdoor" } } },
+          "then": { "properties": { "building_id": { "type": "null" }, "level": { "type": "null" } } }
+        },
+        {
+          "description": "Points inside a building need building_id and level.",
+          "if": { "properties": { "node_type": { "enum": ["entrance", "door", "corridor", "elevator_stop", "stair_landing"] } } },
+          "then": { "properties": { "building_id": { "type": "string" }, "level": { "type": "integer" } } }
+        },
+        {
+          "description": "building_id and level are null together (outdoor) or set together (indoor).",
+          "if": { "properties": { "building_id": { "type": "null" } } },
+          "then": { "properties": { "level": { "type": "null" } } },
+          "else": { "properties": { "level": { "type": "integer" } } }
+        }
+      ]
+    },
+
+    "edgeProperties": {
+      "type": "object",
+      "required": ["kind", "source", "highway", "from", "to", "bidirectional", "step_free"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "edge" },
+        "source": { "$ref": "#/$defs/source" },
+        "needs_check": { "type": "boolean" },
+        "highway": { "enum": ["footway", "steps", "corridor", "elevator", "ramp"] },
+        "edge_type": { "enum": ["outdoor", "portal", "indoor", "bridge"] },
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "bidirectional": { "type": "boolean" },
+        "step_free": { "type": "boolean" },
+        "level_from": { "$ref": "#/$defs/level" },
+        "level_to": { "$ref": "#/$defs/level" },
+        "step_count": { "type": "integer", "minimum": 1 },
+        "covered": { "type": "boolean" },
+        "hours": { "type": "string", "minLength": 1 },
+        "building_from": { "type": "string", "minLength": 1 },
+        "building_to": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "description": "Allowed highway / edge_type pairs (§4.2).",
+          "if": { "required": ["edge_type"], "properties": { "highway": { "const": "footway" } } },
+          "then": { "properties": { "edge_type": { "enum": ["outdoor", "portal"] } } }
+        },
+        {
+          "if": { "required": ["edge_type"], "properties": { "highway": { "const": "steps" } } },
+          "then": { "properties": { "edge_type": { "enum": ["outdoor", "indoor"] } } }
+        },
+        {
+          "if": { "required": ["edge_type"], "properties": { "highway": { "const": "corridor" } } },
+          "then": { "properties": { "edge_type": { "enum": ["indoor", "bridge"] } } }
+        },
+        {
+          "if": { "required": ["edge_type"], "properties": { "highway": { "const": "elevator" } } },
+          "then": { "properties": { "edge_type": { "const": "indoor" } } }
+        },
+        {
+          "if": { "required": ["edge_type"], "properties": { "highway": { "const": "ramp" } } },
+          "then": { "properties": { "edge_type": { "enum": ["outdoor", "indoor"] } } }
+        },
+        {
+          "description": "Bridges must name both buildings and both levels.",
+          "if": { "required": ["edge_type"], "properties": { "edge_type": { "const": "bridge" } } },
+          "then": { "required": ["building_from", "building_to", "level_from", "level_to"] }
+        }
+      ]
+    }
+  }
+}

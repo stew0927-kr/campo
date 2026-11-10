@@ -1,6 +1,7 @@
 // How saved data is drawn on the map. Display only: builds a throwaway GeoJSON from CampusDoc.
 import type { FeatureCollection } from 'geojson';
 import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
+import type { Position, Profile } from '@campo/core';
 import type { CampusDoc } from '../model/document.ts';
 import { inScope, type Scope } from '../model/scope.ts';
 
@@ -121,5 +122,41 @@ export const DATA_LAYERS: LayerSpecification[] = [
       'circle-opacity': opacity,
       'circle-stroke-opacity': opacity,
     },
+  },
+];
+
+// ---- Routes (길찾기 tab) ----
+
+export const ROUTE_SOURCE = 'campo-routes';
+/** Same values as the CSS tokens --route-shortest / --route-step-free. */
+export const ROUTE_COLORS: Record<Profile, string> = { shortest: '#c2255c', step_free: '#0b7285' };
+
+export interface RouteLine {
+  profile: Profile;
+  coordinates: Position[];
+}
+
+export function routesGeoJSON(routes: readonly RouteLine[]): FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: routes.filter((r) => r.coordinates.length >= 2).map((r) => ({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: r.coordinates },
+      properties: { profile: r.profile },
+    })),
+  };
+}
+
+const routeColor: ExpressionSpecification = ['match', ['get', 'profile'], 'shortest', ROUTE_COLORS.shortest, ROUTE_COLORS.step_free];
+/** Side by side where both routes share a path, so neither hides the other. */
+const routeOffset: ExpressionSpecification = ['match', ['get', 'profile'], 'shortest', -5, 5];
+
+export const ROUTE_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-routes',
+    type: 'line',
+    source: ROUTE_SOURCE,
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': routeColor, 'line-width': 7, 'line-opacity': 0.85, 'line-offset': routeOffset },
   },
 ];

@@ -23,3 +23,12 @@ export function nearestWithin<T extends { screen: ScreenPoint }>(
   }
   return best;
 }
+
+/** Distance in pixels from `p` to the segment a–b. */
+export function distanceToSegment(p: ScreenPoint, a: ScreenPoint, b: ScreenPoint): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}

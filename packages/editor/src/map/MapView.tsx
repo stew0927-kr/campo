@@ -4,22 +4,30 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { TerraDraw, TerraDrawLineStringMode, TerraDrawPolygonMode, type TerraDrawMouseEvent } from 'terra-draw';
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
-import type { NodeFeature, Position } from '@campo/core';
+import type { EdgeFeature, NodeFeature, Position } from '@campo/core';
 import type { CampusDoc } from '../model/document.ts';
 import type { OutdoorKind, PathVertex } from '../model/outdoor-path.ts';
-import { nodeInScope, type Scope } from '../model/scope.ts';
-import { nearestWithin, type ScreenPoint } from '../model/snap.ts';
+import { inScope, type Scope } from '../model/scope.ts';
+import { distanceToSegment, nearestWithin, type ScreenPoint } from '../model/snap.ts';
 import type { Tool } from '../ui/ui-state.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
-import { DATA_LAYERS, DATA_SOURCE, WAY_COLORS, toDisplayGeoJSON } from './layers.ts';
+import { DATA_LAYERS, DATA_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, WAY_COLORS, routesGeoJSON, toDisplayGeoJSON, type RouteLine } from './layers.ts';
 
 /** Clicking within this many pixels of a node picks it (잇기). Larger than the 5px snap: it is a pick, not a placement. */
 const PICK_PX = 10;
 
 export interface MapClick {
   position: Position;
-  /** Nearest node on the current floor (or outdoors) within PICK_PX, if any. */
+  /** Nearest pickable node within PICK_PX, if any. */
   node: NodeFeature | undefined;
+  /** Nearest edge drawn strongly in this scope within PICK_PX, when no node was hit. */
+  edge: EdgeFeature | undefined;
+}
+
+/** A request to move the map; `seq` changes on every request so the same place can be asked for twice. */
+export interface FocusRequest {
+  position: Position;
+  seq: number;
 }
 
 interface Props {
@@ -29,6 +37,10 @@ interface Props {
   basemap: BasemapId;
   scope: Scope;
   highlight: ReadonlySet<string>;
+  /** Which nodes a click may pick right now (e.g. outdoor points for the second click of 포탈). */
+  canPick: (node: NodeFeature) => boolean;
+  routes: RouteLine[];
+  focus: FocusRequest | null;
   onPathDrawn: (vertices: PathVertex[]) => void;
   onPolygonDrawn: (ring: Position[]) => void;
   onMapClick: (click: MapClick) => void;
@@ -41,7 +53,7 @@ const KIND_COLOR: Record<OutdoorKind, string> = { flat: WAY_COLORS.footway, step
 const DRAW_MODE: Partial<Record<Tool, string>> = { 'outdoor-path': 'linestring', building: 'polygon' };
 
 export function MapView(props: Props) {
-  const { doc, tool, outdoorKind, basemap, scope, highlight } = props;
+  const { doc, tool, outdoorKind, basemap, scope, highlight, routes, focus } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const drawRef = useRef<TerraDraw | null>(null);
@@ -78,13 +90,34 @@ export function MapView(props: Props) {
 
     map.on('click', (e) => {
       if (DRAW_MODE[latest.current.tool]) return; // Terra Draw owns clicks while drawing
-      const node = nearestNode(e.point, (n) => nodeInScope(n, latest.current.scope), PICK_PX);
-      latest.current.onMapClick({ position: [e.lngLat.lng, e.lngLat.lat], node });
+      const { doc: d, scope: sc, canPick } = latest.current;
+      const node = nearestNode(e.point, canPick, PICK_PX);
+      let edge: EdgeFeature | undefined;
+      if (!node) {
+        let best = PICK_PX;
+        for (const f of d.features.values()) {
+          if (f.properties.kind !== 'edge' || !inScope(f, sc, d)) continue;
+          const pts = (f as EdgeFeature).geometry.coordinates.map((c) => map.project(c));
+          for (let i = 0; i + 1 < pts.length; i++) {
+            const dist = distanceToSegment(e.point, pts[i]!, pts[i + 1]!);
+            if (dist <= best) {
+              best = dist;
+              edge = f as EdgeFeature;
+            }
+          }
+        }
+      }
+      latest.current.onMapClick({ position: [e.lngLat.lng, e.lngLat.lat], node, edge });
     });
 
     map.on('load', () => {
       map.addSource(DATA_SOURCE, { type: 'geojson', data: toDisplayGeoJSON(latest.current.doc, latest.current.scope) });
-      for (const layer of DATA_LAYERS) map.addLayer(layer);
+      map.addSource(ROUTE_SOURCE, { type: 'geojson', data: routesGeoJSON(latest.current.routes) });
+      // Routes sit above the faded data but below the points, so the points stay clickable and readable.
+      for (const layer of DATA_LAYERS) {
+        if (layer.id === 'campo-nodes-highlight') for (const r of ROUTE_LAYERS) map.addLayer(r);
+        map.addLayer(layer);
+      }
 
       const draw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map }),
@@ -139,6 +172,14 @@ export function MapView(props: Props) {
   useEffect(() => {
     whenReady((map) => (map.getSource(DATA_SOURCE) as GeoJSONSource).setData(toDisplayGeoJSON(doc, scope, highlight)));
   }, [doc, scope, highlight]);
+
+  useEffect(() => {
+    whenReady((map) => (map.getSource(ROUTE_SOURCE) as GeoJSONSource).setData(routesGeoJSON(routes)));
+  }, [routes]);
+
+  useEffect(() => {
+    if (focus) whenReady((map) => map.flyTo({ center: focus.position, zoom: Math.max(map.getZoom(), 19), duration: 600 }));
+  }, [focus]);
 
   useEffect(() => {
     whenReady(() => drawRef.current?.setMode(DRAW_MODE[tool] ?? 'static'));

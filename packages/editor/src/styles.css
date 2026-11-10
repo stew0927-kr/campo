@@ -10,6 +10,9 @@
   --ramp: #1f8f68;
   --elevator: #6a4fc4;
   --entrance: #1f8f68;
+  --route-shortest: #c2255c;
+  --route-step-free: #0b7285;
+  --warning: #9a6700;
   --danger: #b4231b;
   --focus: #2463a6;
 
@@ -149,6 +152,7 @@ button, select, input { font: inherit; color: inherit; }
 .dot-classroom { background: var(--footway); }
 .dot-elevator { background: var(--elevator); }
 .dot-stairs { background: var(--steps); }
+.dot-poi { background: var(--ink); }
 
 /* ---- Dialogs ---- */
 .dialog { width: min(360px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--rule); border-radius: 10px; color: var(--ink); }
@@ -175,6 +179,53 @@ button, select, input { font: inherit; color: inherit; }
 .tabs [role="tab"][aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
 .panel-body { flex: 1; overflow: auto; padding: calc(var(--gap) * 2); }
 .panel-empty { margin: 0; max-width: 32ch; color: var(--muted); }
+
+/* Tab error count */
+.tab-badge {
+  display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px;
+  border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; line-height: 18px; text-align: center;
+}
+
+/* ---- 속성 ---- */
+.props { display: flex; flex-direction: column; gap: 12px; }
+.props-kind { margin: 0; font-weight: 700; font-size: var(--text-l); }
+.props-id { margin: -8px 0 0; color: var(--muted); font-size: var(--text-s); word-break: break-all; }
+.check-field { display: flex; align-items: flex-start; gap: 8px; }
+.check-field input { margin-top: 3px; }
+
+/* ---- 검사 ---- */
+.checks-panel { display: flex; flex-direction: column; gap: 18px; }
+.check-section h3 { margin: 0 0 6px; font-size: var(--text-m); }
+.check-count { margin-left: 4px; color: var(--muted); font-weight: 400; }
+.check-section ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.check-empty { margin: 0; color: var(--muted); }
+.check-item {
+  display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; width: 100%;
+  padding: 8px 10px; border: 1px solid var(--rule); border-left-width: 4px; border-radius: 6px;
+  background: var(--surface); text-align: left;
+}
+button.check-item { cursor: pointer; }
+button.check-item:hover { background: var(--chrome); }
+.check-error .check-item { border-left-color: var(--danger); }
+.check-warning .check-item { border-left-color: var(--warning); }
+.check-survey .check-item { border-left-color: var(--footway); }
+.check-code { font-weight: 600; }
+.check-message { grid-column: 1 / -1; }
+.check-where { grid-column: 1 / -1; color: var(--muted); font-size: var(--text-s); word-break: break-all; }
+
+/* ---- 길찾기 ---- */
+.route-panel { display: flex; flex-direction: column; gap: 12px; }
+.route-card { padding: 12px; border: 1px solid var(--rule); border-top: 5px solid var(--route); border-radius: 6px; }
+.route-shortest { --route: var(--route-shortest); }
+.route-step-free { --route: var(--route-step-free); }
+.route-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: var(--text-m); }
+.route-swatch { width: 22px; height: 5px; border-radius: 3px; background: var(--route); }
+.route-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 8px; }
+.route-stats dt { color: var(--muted); font-size: var(--text-s); }
+.route-stats dd { margin: 0; font-size: var(--text-l); font-weight: 700; font-variant-numeric: tabular-nums; }
+.route-steps { margin: 0; padding-left: 18px; }
+.route-steps li + li { margin-top: 2px; }
+.route-note { margin: 0; color: var(--muted); }
 
 /* ---- Status bar ---- */
 .status {

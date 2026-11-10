@@ -1,6 +1,6 @@
 import type { OutdoorKind } from '../model/outdoor-path.ts';
 import { basemaps, type BasemapId } from '../map/basemaps.ts';
-import { TOOL_HINTS, toolAvailable, type AddKind, type Tool, type UiState } from './ui-state.ts';
+import { INDOOR_ADD_KINDS, OUTDOOR_ADD_KINDS, TOOL_HINTS, effectiveAddKind, toolAvailable, type AddKind, type Tool, type UiState } from './ui-state.ts';
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'pan', label: '이동' },
@@ -9,6 +9,8 @@ const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select-building', label: '건물 선택' },
   { id: 'add-node', label: '지점 추가' },
   { id: 'connect', label: '잇기' },
+  { id: 'portal', label: '포탈' },
+  { id: 'bridge', label: '연결통로' },
 ];
 
 const OUTDOOR_KINDS: { id: OutdoorKind; label: string; sample: string }[] = [
@@ -24,6 +26,8 @@ const ADD_KINDS: { id: AddKind; label: string; dot: string }[] = [
   { id: 'corridor', label: '복도', dot: 'dot-door' },
   { id: 'elevator', label: '엘리베이터', dot: 'dot-elevator' },
   { id: 'stairs', label: '계단', dot: 'dot-stairs' },
+  { id: 'outdoor', label: '바깥 지점', dot: 'dot-door' },
+  { id: 'poi', label: '출발·도착 후보', dot: 'dot-poi' },
 ];
 
 interface Props {
@@ -52,7 +56,7 @@ export function Toolbar({ ui, campusName, canSave, saving, onTool, onChange, onS
               className="tool"
               aria-pressed={ui.tool === t.id}
               disabled={!toolAvailable(t.id, ui.scope)}
-              title={toolAvailable(t.id, ui.scope) ? undefined : t.id === 'add-node' ? '건물 선택으로 층을 먼저 골라 주세요' : '바깥 모드에서 쓸 수 있습니다'}
+              title={toolAvailable(t.id, ui.scope) ? undefined : t.id === 'portal' || t.id === 'bridge' ? '건물 선택으로 층을 먼저 골라 주세요' : '바깥 모드에서 쓸 수 있습니다'}
               onClick={() => onTool(t.id)}
             >
               {t.label}
@@ -94,9 +98,9 @@ export function Toolbar({ ui, campusName, canSave, saving, onTool, onChange, onS
         {ui.tool === 'add-node' && (
           <fieldset className="kinds">
             <legend className="visually-hidden">지점 종류</legend>
-            {ADD_KINDS.map((k) => (
+            {ADD_KINDS.filter((k) => (ui.scope.kind === 'outdoor' ? OUTDOOR_ADD_KINDS : INDOOR_ADD_KINDS).includes(k.id)).map((k) => (
               <label key={k.id} className="kind">
-                <input type="radio" name="add-kind" checked={ui.addKind === k.id} onChange={() => onChange({ addKind: k.id })} />
+                <input type="radio" name="add-kind" checked={effectiveAddKind(ui) === k.id} onChange={() => onChange({ addKind: k.id })} />
                 <span className={`kind-dot ${k.dot}`} aria-hidden="true" />
                 {k.label}
               </label>

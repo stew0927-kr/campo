@@ -1,5 +1,5 @@
 // File layout (SPEC §4.3) and on-disk format: Features sorted by id, one per line.
-import type { BuildingFeature, CampoFeature, NodeFeature } from '@campo/core';
+import { parseCampus, type BuildingFeature, type CampoFeature, type LoadedCampus, type NodeFeature } from '@campo/core';
 import type { CampusDoc } from './document.ts';
 
 export const META_FILE = 'campus.json';
@@ -76,4 +76,9 @@ function compareIds(a: string | undefined, b: string | undefined): number {
   if (a === undefined) return 1;
   if (b === undefined) return -1;
   return a < b ? -1 : 1;
+}
+
+/** The campus exactly as it would be saved, read back the way core reads it. Used for checks and routes. */
+export function docToCampus(doc: CampusDoc): LoadedCampus {
+  return parseCampus(Object.entries(docToFiles(doc)).map(([path, text]) => ({ path, text })));
 }

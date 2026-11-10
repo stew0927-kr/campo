@@ -126,3 +126,14 @@ export function StairsDialog({ building, startLevel, onSubmit, onCancel }: {
     </Modal>
   );
 }
+
+export function PoiDialog({ onSubmit, onCancel }: { onSubmit: Submit<string>; onCancel: () => void }) {
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string>();
+  return (
+    <Modal title="출발·도착 후보" submitLabel="후보 만들기" error={error} onSubmit={() => setError(onSubmit(name))} onCancel={onCancel}>
+      <label className="field">이름<input value={name} onChange={(e) => setName(e.target.value)} placeholder="한양대역 2번 출구" autoFocus /></label>
+      <p className="field-help">길찾기 탭에서 이 이름으로 검색합니다. 바깥 길과 잇기 도구로 이어 주세요.</p>
+    </Modal>
+  );
+}

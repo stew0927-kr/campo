@@ -1,13 +1,18 @@
+import type { ReactNode } from 'react';
 import type { PanelTab } from './ui-state.ts';
 
-const TABS: { id: PanelTab; label: string; empty: string }[] = [
-  { id: 'properties', label: '속성', empty: '지점이나 구간을 고르면 여기에서 속성을 고칠 수 있습니다.' },
-  { id: 'checks', label: '검사', empty: '데이터 검사 결과가 여기에 나옵니다.' },
-  { id: 'routes', label: '길찾기', empty: '출발지와 도착지를 고르면 두 가지 경로를 보여 드립니다.' },
+const TABS: { id: PanelTab; label: string }[] = [
+  { id: 'properties', label: '속성' },
+  { id: 'checks', label: '검사' },
+  { id: 'routes', label: '길찾기' },
 ];
 
-export function SidePanel({ tab, onTab }: { tab: PanelTab; onTab: (tab: PanelTab) => void }) {
-  const current = TABS.find((t) => t.id === tab)!;
+export function SidePanel({ tab, onTab, badges, children }: {
+  tab: PanelTab;
+  onTab: (tab: PanelTab) => void;
+  badges?: Partial<Record<PanelTab, number>>;
+  children: ReactNode;
+}) {
   return (
     <aside className="panel">
       <div className="tabs" role="tablist" aria-label="패널">
@@ -22,12 +27,11 @@ export function SidePanel({ tab, onTab }: { tab: PanelTab; onTab: (tab: PanelTab
             onClick={() => onTab(t.id)}
           >
             {t.label}
+            {badges?.[t.id] ? <span className="tab-badge" aria-label={`오류 ${badges[t.id]}개`}>{badges[t.id]}</span> : null}
           </button>
         ))}
       </div>
-      <div className="panel-body" id="panel-body" role="tabpanel" aria-labelledby={`tab-${tab}`}>
-        <p className="panel-empty">{current.empty}</p>
-      </div>
+      <div className="panel-body" id="panel-body" role="tabpanel" aria-labelledby={`tab-${tab}`}>{children}</div>
     </aside>
   );
 }

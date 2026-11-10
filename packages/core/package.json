@@ -13,6 +13,9 @@
   },
   "dependencies": {
     "@turf/distance": "7.4.0",
-    "ajv": "8.20.0"
+    "@turf/length": "7.4.0",
+    "ajv": "8.20.0",
+    "ngraph.graph": "20.1.2",
+    "ngraph.path": "1.6.1"
   }
 }

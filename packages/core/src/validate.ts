@@ -18,6 +18,7 @@ import {
   type WarningCode,
 } from './types.ts';
 import { CAMPUS_META_FILE } from './load.ts';
+import { isStepFreePassable } from './costs.ts';
 
 /** Max distance (m) between an edge's line ends and its from/to nodes (§7 error 4). */
 export const ENDPOINT_TOLERANCE_M = 1;
@@ -224,7 +225,7 @@ export function validateCampus(campus: LoadedCampus): ValidationResult {
   const stepFreeNext = new Map<string, string[]>();
   for (const id of nodes.keys()) stepFreeNext.set(id, []);
   for (const { edge } of linked) {
-    if (!isStepFreePassable(edge)) continue;
+    if (!isStepFreePassable(edge.properties)) continue;
     stepFreeNext.get(edge.properties.from)!.push(edge.properties.to);
     if (edge.properties.bidirectional) stepFreeNext.get(edge.properties.to)!.push(edge.properties.from);
   }
@@ -241,23 +242,6 @@ export function validateCampus(campus: LoadedCampus): ValidationResult {
   }
 
   return { errors, warnings };
-}
-
-/**
- * Can a step-free traveller use this edge? (§6 step_free profile column)
- * Only the edge's own highway and step_free decide this — never floor numbers.
- */
-export function isStepFreePassable(edge: EdgeFeature): boolean {
-  switch (edge.properties.highway) {
-    case 'steps':
-      return false;
-    case 'elevator':
-    case 'ramp':
-      return true;
-    case 'footway':
-    case 'corridor':
-      return edge.properties.step_free;
-  }
 }
 
 /** A classroom door is a `door` node with a room name or number (§4.2). */

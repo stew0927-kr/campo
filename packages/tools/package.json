@@ -1,0 +1,20 @@
+{
+  "name": "@campo/tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Command-line tools: validate CLI, later elevation join scripts.",
+  "bin": {
+    "campo-validate": "./src/validate.ts"
+  },
+  "scripts": {
+    "validate": "tsx src/validate.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@campo/core": "*"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}

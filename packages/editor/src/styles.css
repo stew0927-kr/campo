@@ -1,0 +1,138 @@
+/* Quiet slate chrome; colour belongs to the data. Way colours match src/map/layers.ts. */
+:root {
+  --ink: #1e2933;
+  --muted: #5b6875;
+  --chrome: #eef1f4;
+  --surface: #ffffff;
+  --rule: #d3d9df;
+  --footway: #2463a6;
+  --steps: #d4461a;
+  --ramp: #1f8f68;
+  --danger: #b4231b;
+  --focus: #2463a6;
+
+  --font: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+  --text-s: 12px;
+  --text-m: 13px;
+  --text-l: 15px;
+  --gap: 8px;
+
+  color: var(--ink);
+  background: var(--chrome);
+  font-family: var(--font);
+  font-size: var(--text-m);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "toolbar toolbar" "map panel" "status status";
+  height: 100%;
+}
+
+/* ---- Toolbar ---- */
+.toolbar {
+  grid-area: toolbar;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--gap) * 2);
+  padding: var(--gap) calc(var(--gap) * 2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+}
+.brand { margin: 0 var(--gap) 0 0; font-size: var(--text-l); font-weight: 700; letter-spacing: -0.01em; }
+.brand-campus { margin-left: 6px; font-weight: 400; color: var(--muted); }
+
+.toolbar-group { display: flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.tool { padding: 5px 12px; border: 0; background: transparent; cursor: pointer; }
+.tool + .tool { border-left: 1px solid var(--rule); }
+.tool[aria-pressed="true"] { background: var(--ink); color: #fff; }
+
+/* Line-kind picker: each option shows the same line the map draws. */
+.kinds { display: flex; gap: 2px; margin: 0; padding: 2px; border: 1px solid var(--rule); border-radius: 6px; }
+.kinds:disabled { opacity: 0.45; }
+.kind { position: relative; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+.kinds:disabled .kind { cursor: default; }
+.kind input { position: absolute; opacity: 0; pointer-events: none; }
+.kind:has(input:checked) { background: var(--chrome); box-shadow: inset 0 0 0 1px var(--ink); }
+.kind:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
+.kind-sample { width: 28px; height: 8px; overflow: visible; }
+.kind-sample line { stroke-linecap: butt; }
+.solid-footway line { stroke: var(--footway); stroke-width: 4; stroke-linecap: round; }
+.dash-steps line { stroke: var(--steps); stroke-width: 6; stroke-dasharray: 3.6 3; }
+.solid-ramp line { stroke: var(--ramp); stroke-width: 4; stroke-linecap: round; }
+
+.basemap { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.basemap select { padding: 4px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); }
+
+.save {
+  margin-left: auto;
+  padding: 6px 18px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--footway);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.save:disabled { background: var(--rule); color: var(--muted); cursor: default; }
+
+/* ---- Map ---- */
+.map { grid-area: map; position: relative; min-height: 0; }
+.map[data-tool="outdoor-path"] .maplibregl-canvas { cursor: crosshair; }
+
+/* ---- Panel ---- */
+.panel { grid-area: panel; display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-left: 1px solid var(--rule); }
+.tabs { display: flex; border-bottom: 1px solid var(--rule); }
+.tabs [role="tab"] {
+  flex: 1; padding: 10px 0; border: 0; border-bottom: 2px solid transparent;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.tabs [role="tab"][aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+.panel-body { flex: 1; overflow: auto; padding: calc(var(--gap) * 2); }
+.panel-empty { margin: 0; max-width: 32ch; color: var(--muted); }
+
+/* ---- Status bar ---- */
+.status {
+  grid-area: status;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--gap) * 2);
+  padding: 5px calc(var(--gap) * 2);
+  background: var(--ink);
+  color: #dfe5ea;
+  font-size: var(--text-s);
+}
+.status-mode { font-weight: 600; color: #fff; }
+.status-dirty { color: #ffc9a8; }
+.status-message { margin-left: auto; color: #b9c3cc; }
+.notice-info { color: #fff; }
+.notice-error { color: #ffb4ad; }
+
+.load-message { margin: 0; padding: 24px; }
+.load-message.notice-error { color: var(--danger); }
+
+/* Narrow screens: the panel goes under the map. */
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(320px, 1fr) auto auto;
+    grid-template-areas: "toolbar" "map" "panel" "status";
+  }
+  .panel { border-left: 0; border-top: 1px solid var(--rule); max-height: 40vh; }
+  .save { margin-left: 0; }
+}

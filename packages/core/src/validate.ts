@@ -309,9 +309,13 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
   const stopIds = new Set(stops.map((s) => s.feature.id));
   const liftNext = new Map<string, string[]>();
   for (const id of stopIds) liftNext.set(id, []);
-  for (const { edge } of linked) {
-    const { highway, from, to } = edge.properties;
-    if (highway === 'elevator' && stopIds.has(from) && stopIds.has(to)) {
+  // Every elevator edge joins its stops, schema-valid or not (only from / to are read):
+  // a schema error on an elevator edge is reported once, as a schema error, not again as a split.
+  for (const { feature } of campus.features) {
+    const p = isRecord(feature) && isRecord(feature['properties']) ? feature['properties'] : null;
+    if (p === null || p['kind'] !== 'edge' || p['highway'] !== 'elevator') continue;
+    const { from, to } = p;
+    if (typeof from === 'string' && typeof to === 'string' && stopIds.has(from) && stopIds.has(to)) {
       liftNext.get(from)!.push(to);
       liftNext.get(to)!.push(from);
     }

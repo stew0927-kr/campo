@@ -71,8 +71,8 @@ describe('fixture campus-basic', () => {
     expect(nodes.filter((n) => n.properties.building_id === null)).toHaveLength(7); // 6 on the campus paths + a dead end in front of C
     expect(of((f) => f.properties.kind === 'building')).toEqual(['bldg_A', 'bldg_B', 'bldg_C']);
     expect(of((f) => f.properties.highway === 'elevator')).toHaveLength(3); // A 1→2→3→4
-    expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'indoor' && f.properties.from.startsWith('n_A_') && !f.properties.conveying))
-      .toHaveLength(3); // A 1→2→3→4
+    expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'indoor' && f.properties.from.startsWith('n_A_')))
+      .toHaveLength(5); // A 1→2→3→4 flights + the 1→2 escalator pair (up, down)
     expect(of((f) => f.properties.conveying)).toEqual(['e_A_1_esc__A_2_esc_down', 'e_A_1_esc__A_2_esc_up', 'e_out_0002__out_0003_esc']);
     expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'outdoor' && !f.properties.conveying)).toEqual(['e_out_0002__out_0003']);
     expect(of((f) => f.properties.edge_type === 'portal')).toContain('e_portal_A_4_north');
@@ -420,6 +420,29 @@ describe('validateCampus v0.2 errors (SPEC-v0.2 §8)', () => {
     expect(result.errors[0]!.message).toContain('n_A_elevA_L3');
     expect(result.errors[0]!.message).toContain('n_A_elevA_L4');
   });
+
+  it('E11: a schema-invalid elevator edge still joins its stops, but a real gap is still a split', () => {
+    // Invalid but joining L1–L2 (only from / to are read): one schema error, no split.
+    const invalid = broken(({ get }) => {
+      get('e_A_elevA_L1__A_elevA_L2').properties.step_free = 'yes';
+    });
+    expect(codes(invalid.errors)).toEqual([[E.schema, 'e_A_elevA_L1__A_elevA_L2']]);
+    // The same invalid edge plus a missing L2–L3 edge: the schema error and the split, both.
+    const gap = broken(({ get, remove }) => {
+      get('e_A_elevA_L1__A_elevA_L2').properties.step_free = 'yes';
+      remove('e_A_elevA_L2__A_elevA_L3'); // L1 L2 | L3 L4
+    });
+    expect(codes(gap.errors)).toEqual([[E.schema, 'e_A_elevA_L1__A_elevA_L2'], [E.elevatorGroupSplit, 'n_A_elevA_L1']]);
+    expect(gap.errors[1]!.message).toContain('n_A_elevA_L3');
+    expect(gap.errors[1]!.message).toContain('n_A_elevA_L4');
+    // An invalid edge whose from / to do not reach the other stops does not join them.
+    const elsewhere = broken(({ get }) => {
+      const e = get('e_A_elevA_L2__A_elevA_L3');
+      e.properties.to = 'n_A_elevA_L2';
+      e.properties.step_free = 'yes';
+    });
+    expect(codes(elsewhere.errors)).toEqual([[E.schema, 'e_A_elevA_L2__A_elevA_L3'], [E.elevatorGroupSplit, 'n_A_elevA_L1']]);
+  });
 });
 
 describe('validateCampus v0.2 warnings (SPEC-v0.2 §8)', () => {
@@ -577,8 +600,8 @@ describe('escalators and measurements (SPEC-v0.2 2.7, 3.9, 8)', () => {
         get(id).properties.conveying = 'forward';
         get(id).properties.bidirectional = false;
       });
-      // The broken edge leaves the lift graph, so E11 may also report the split; the schema error must be there.
-      expect(codes(result.errors)).toContainEqual([E.schema, id]);
+      // Only the schema error: E11 joins stops by from / to even over a schema-invalid edge.
+      expect(codes(result.errors)).toEqual([[E.schema, id]]);
     }
   });
 

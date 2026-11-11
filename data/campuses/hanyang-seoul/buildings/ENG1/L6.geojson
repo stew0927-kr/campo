@@ -1,0 +1,6 @@
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"n_ENG1_6_stairA","geometry":{"type":"Point","coordinates":[127.04527443770417,37.55666507519126]},"properties":{"kind":"node","node_type":"stair_landing","building_id":"bldg_ENG1","level":6,"source":"estimate"}},
+{"type":"Feature","id":"n_ENG1_6_stairB","geometry":{"type":"Point","coordinates":[127.04587011587995,37.55637624173282]},"properties":{"kind":"node","node_type":"stair_landing","building_id":"bldg_ENG1","level":6,"source":"estimate"}},
+{"type":"Feature","id":"n_ENG1_elevA_L6","geometry":{"type":"Point","coordinates":[127.04549353772245,37.55669626371413]},"properties":{"kind":"node","node_type":"elevator_stop","building_id":"bldg_ENG1","level":6,"shaft_id":"ENG1_elevA","source":"estimate"}},
+{"type":"Feature","id":"n_ENG1_elevB_L6","geometry":{"type":"Point","coordinates":[127.04556029476015,37.55666371916847]},"properties":{"kind":"node","node_type":"elevator_stop","building_id":"bldg_ENG1","level":6,"shaft_id":"ENG1_elevB","source":"estimate"}}
+]}

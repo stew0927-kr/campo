@@ -15,3 +15,4 @@
 - 2026-11-11 · 파일 changeset은 osmChange식 Feature 단위(create/modify/delete, 항목마다 base_rev), 충돌은 rev_mismatch / id_exists / still_referenced, 여러 파일은 파일 이름(날짜) 순서, source는 report_ids 배열, 편집기 되돌리기는 Immer 패치 유지 · 배열 인덱스 패치가 조용히 틀린 곳을 바꾸는 것을 피함 · 윤준혁
 - 2026-11-11 · 구름다리는 bridge 구간(선택 속성 covered)과 building_type: "bridge" 건물로 표현, 점검표 R16과 검사 W10 추가, 편집기에 연결통로 도구(건물·층 고르는 창) 추가 · 층 번호가 다른 건물 연결과 중간 지점 요구를 구조로 해결 · 윤준혁
 - 2026-11-11 · 제보 묶음 거리는 같은 범위 8m, 상수 파일 한 곳에만 둠. 실시간 검사의 바뀐 Feature는 동작의 Immer 패치 경로(path[0]이 nodes/edges/buildings, path[1]이 id)에서 뽑음 · 값과 방법을 한 곳에 고정 · 윤준혁
+- 2026-11-11 · R19: 경사로·엘리베이터도 step_free: false면 step_free 프로필에서 막음(SPEC-v0.2 2.1 뜻), v0.1 데이터의 기본값 false는 작업 3 마이그레이션이 정리 · 모름(null)과 계단·턱 있음(false)을 구분 · 윤준혁

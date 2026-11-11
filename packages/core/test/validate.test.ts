@@ -485,6 +485,18 @@ describe('validateCampus v0.2 warnings (SPEC-v0.2 §8)', () => {
     expect(result.warnings[0]!.file).toBe('overrides.json');
   });
 
+  it('W14: an override pointing at a missing feature warns, an existing one does not', () => {
+    const campus = structuredClone(fixture);
+    campus.overrides = [
+      { feature_id: 'n_A_elevA_L2', status: 'out_of_service', until: '2026-11-12T00:00:00+09:00', report_id: 'rp-1' },
+      { feature_id: 'n_no_such_node', status: 'out_of_service', until: '2026-11-12T00:00:00+09:00', report_id: 'rp-2' },
+    ];
+    const result = validateCampus(campus, { now: new Date('2026-11-11T00:00:00+09:00') });
+    expect(result.errors).toEqual([]);
+    expect(codes(result.warnings)).toEqual([[W.danglingOverride, 'n_no_such_node']]);
+    expect(result.warnings[0]!.message).toContain('overrides.json에서 이 항목을 지우세요');
+  });
+
   it('W8: warns about an elevator stop with no way out into a corridor', () => {
     const result = broken(({ remove }) => {
       remove('e_A_2_hall__A_elevA_L2'); // the routes to 408 and 201 do not use the 2F stop

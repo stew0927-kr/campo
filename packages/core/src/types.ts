@@ -273,6 +273,8 @@ export const WARNING_CODES = {
   escalatorSameScope: 'escalator-same-scope',
   /** W13 */
   observationUnknownTarget: 'observation-unknown-target',
+  /** W14 */
+  danglingOverride: 'dangling-override',
 } as const;
 
 // ---- Overrides (SPEC-v0.2 §2.5) ----

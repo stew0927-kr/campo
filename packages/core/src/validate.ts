@@ -386,6 +386,13 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     }
   }
 
+  // W14. An override must point at an existing feature.
+  for (const o of overrides) {
+    if (!allIds.has(o.feature_id)) {
+      warn(OVERRIDES_FILE, o.feature_id, W.danglingOverride, `override(제보 ${o.report_id})가 없는 Feature "${o.feature_id}"을(를) 가리킵니다. overrides.json에서 이 항목을 지우세요.`);
+    }
+  }
+
   // E12. An escalator is a moving staircase: wheelchairs cannot ride it (SPEC-v0.2 2.7).
   for (const { file, edge } of linked) {
     if (edge.properties.highway === 'steps' && edge.properties.conveying !== undefined && edge.properties.step_free !== false) {

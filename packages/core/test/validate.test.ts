@@ -499,3 +499,20 @@ describe('validateCampus v0.2 warnings (SPEC-v0.2 §8)', () => {
     expect(codes(result.warnings)).toEqual([[W.bridgeSameBuilding, 'e_A_3_north__C_5_bridge']]);
   });
 });
+
+describe('validateCampus v0.2 warnings: W11 (SPEC-v0.2 §8)', () => {
+  it('W11: warns about outdoor stairs without step_count', () => {
+    const result = broken(({ get }) => {
+      delete get('e_out_0002__out_0003').properties.step_count;
+    });
+    expect(result.errors).toEqual([]);
+    expect(codes(result.warnings)).toEqual([[W.outdoorStairsWithoutStepCount, 'e_out_0002__out_0003']]);
+  });
+
+  it('W11: does not ask indoor stairs for a step count', () => {
+    const indoor = fixture.features.map((f) => f.feature as AnyFeature)
+      .filter((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'indoor' && f.properties.step_count === undefined);
+    expect(indoor.length).toBeGreaterThan(0); // the fixture has indoor flights without a count, and still validates clean
+    expect(validateCampus(fixture).warnings).toEqual([]);
+  });
+});

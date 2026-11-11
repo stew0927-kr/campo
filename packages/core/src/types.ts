@@ -220,6 +220,8 @@ export const WARNING_CODES = {
   elevatorSingleLevel: 'elevator-single-level',
   /** W10 */
   bridgeSameBuilding: 'bridge-same-building',
+  /** W11 */
+  outdoorStairsWithoutStepCount: 'outdoor-stairs-without-step-count',
 } as const;
 
 // ---- Overrides (SPEC-v0.2 §2.5) ----

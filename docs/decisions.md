@@ -20,3 +20,7 @@
 - 2026-11-11 · npm run migrate는 형식 변환이라 packages/core/src/edit 동작을 거치지 않음(검사를 통과하지 못하는 v0.1 데이터도 읽어야 함). 두 번 돌려도 결과가 같고, 바뀌는 항목은 --dry-run으로 종류별 개수를 먼저 봄 · AGENTS.md "데이터를 바꾸는 코드는 동작만" 규칙의 예외를 이 한 곳에 한정 · 윤준혁
 - 2026-11-11 · migrate의 elevator_id: 기존 shaft_id 값을 그대로 옮기고, 엘리베이터 구간으로 이어진 한 묶음에 서로 다른 shaft_id가 섞여 있으면 고르지 않고 지점 목록을 보여 주며 멈춤, 값이 없는 묶음만 {건물코드}_elev{안 쓴 가장 앞 알파벳}으로 채움 · 같은 승강로를 잘못 합치거나 쪼개는 일을 막음 · 윤준혁
 - 2026-11-11 · restroom 지점은 restroom_gender와 wheelchair를 필수로 둠(확인 전에는 wheelchair: unknown), overrides.json의 status는 제보 종류가 정해질 때까지 자유 문자열 · 값이 없는 화장실이 길찾기 조건(휠체어 화장실)에서 조용히 빠지는 일을 막음 · 윤준혁
+- 2026-11-11 · 계단 구간 시간은 stairsTimeSec 한 함수로: step_count×0.55초 → 없고 실내면 구간당 16초 → 없고 바깥이면 평면길이÷속도×2.5(최소 10초), 어느 경우든 걷는 시간은 따로 더함. 바깥 계단에 step_count가 없으면 검사 W11 경고, 오르막·내리막 시간 차이는 후속 과제 · 구간 길이를 지점 좌표로만 재면 실내 계단 한 층이 2초 남짓이라 바깥 계단이 항상 밀림 · 윤준혁
+- 2026-11-11 · 길찾기 결과는 nodes/edgeIds/cost/timeSec/distanceM/stairsCount/steps[]/uncertainSegments[]/fallback, step_free가 실패하면 fewest_steps로 다시 찾아 fallback에 피할 수 없는 계단·턱 수를 넣음, 모르는 프로필은 reason "unknown-profile"인 NoRoute · SPEC-v0.2 3.4, 점검표 R15·R21 · 윤준혁
+- 2026-11-11 · overrides는 until이 now보다 뒤인 항목만 적용하고 status는 보지 않으며, 닫힌 Feature는 모든 프로필에서 막음(지점이면 닿는 구간 전부, 엘리베이터 정차 지점이면 승강로 안 hop은 그대로) · 제보 종류가 정해지기 전에 status 해석을 길찾기에 넣지 않으려고 · 윤준혁
+- 2026-11-11 · 구간 길이는 지점 좌표로만 계산하고 직선거리 clamp는 없앰, 어긋난 선은 검사 E4가 잡음 · 데이터 오류를 길찾기가 조용히 덮지 않게 함(점검표 R20) · 윤준혁

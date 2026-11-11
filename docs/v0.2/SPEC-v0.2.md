@@ -85,18 +85,31 @@ v0.2의 목표는 두 가지다. 한 층을 몇십 번의 클릭으로 입력할
 
 v0.1은 "길이×1.5+15"(미터처럼 보임)와 "30+5/층"(초처럼 보임)이 섞여 있었다. 단위가 섞이면 비교 결과를 믿을 수 없고, A* 휴리스틱이 허용 가능(admissible)한지도 따질 수 없다.
 
-`packages/core/src/routing/costs.ts` (상수는 이 파일 하나에만 둔다)
+`packages/core/src/costs.ts` (상수는 이 파일 하나에만 둔다. `validate.ts`가 같은 파일의 `isStepFreePassable`을 쓰므로 `routing/` 아래가 아니라 `src/` 바로 아래에 둔다)
 
 | 상수 | 값 | 비고 |
 |---|---|---|
 | `WALK_SPEED_MPS` | 1.2 | |
 | `RAMP_FACTOR` | 1.2 | 시간 = 길이 / 속도 × 계수 |
-| `STAIRS_FACTOR` | 2.5 | OTP 기본값은 `stairsTimeFactor` 3.0 |
+| `STAIRS_FACTOR` | 2.5 | OTP 기본값은 `stairsTimeFactor` 3.0. 칸 수를 모르는 바깥 계단(아래 규칙 3)에만 쓴다 |
+| `STEP_SEC` | 0.55 | 계단 한 칸 오르는 시간. `step_count`가 있을 때(규칙 1) |
+| `FLOOR_FLIGHT_SEC` | 16 | 칸 수를 모르는 실내 계단 구간 하나(규칙 2) |
+| `OUTDOOR_STAIRS_MIN_SEC` | 10 | 칸 수를 모르는 바깥 계단의 최소 시간(규칙 3) |
 | `ELEVATOR_BOARD_SEC` | 40 | 기다리고 타는 시간. 한 번 탈 때 **한 번만** 더한다 |
 | `ELEVATOR_HOP_SEC` | 4 | 한 층 운행할 때마다 |
 | `ELEVATOR_ALIGHT_SEC` | 3 | |
 | `PORTAL_SEC` | 2 | |
 | `UNKNOWN_STEP_FREE_PENALTY_SEC` | 60 | step_free 프로필에서만 적용하는 선호 비용 |
+| `FEWEST_STEPS_STAIRS_PENALTY_SEC` | 600 | fewest_steps 프로필에서 계단 구간마다 더하는 선호 비용(3.4) |
+
+**계단 구간(`highway: steps`)의 시간**은 구간 길이가 지점 좌표에서 나온다는 점 때문에 별도 규칙이 필요하다. 실내 계단의 두 지점은 거의 같은 자리에 있어서 길이만으로는 한 층이 2초 남짓이 된다. 아래 순서로 정하고, 계산은 `costs.ts`의 함수 하나(`stairsTimeSec`)에 모은다.
+
+1. `step_count`가 있으면 `step_count × STEP_SEC`
+2. `step_count`가 없고 실내 계단(양 끝이 `stair_landing`, `edge_type: indoor`)이면 구간 하나당 `FLOOR_FLIGHT_SEC`
+3. `step_count`가 없는 바깥 계단이면 `평면 길이 ÷ WALK_SPEED_MPS × STAIRS_FACTOR`, 단 `OUTDOOR_STAIRS_MIN_SEC` 이상
+4. 어느 경우든 `평면 길이 ÷ WALK_SPEED_MPS`(걷는 시간)는 따로 더한다
+
+규칙 2와 3 사이에는 나중에 고도 데이터로 칸 수를 추정하는 단계를 끼울 수 있다(9장 후속 과제). 바깥 계단에 `step_count`가 없으면 검사 W11이 경고한다(8장).
 
 - 결과에는 **실제 예상 시간**(`timeSec`)과 **탐색 비용**(`cost`)을 따로 낸다. 선호 때문에 붙인 벌점이 예상 시간에 섞이면 안 된다.
 - 휴리스틱은 측지 직선거리 / `WALK_SPEED_MPS`. 모든 구간 비용이 "기하 길이 / 속도" 이상이므로 허용 가능하다. 구간 길이는 항상 좌표에서 계산하고, 사람이 손으로 넣은 길이 값은 쓰지 않는다.
@@ -476,6 +489,7 @@ Turf 주의 (7.4.0 소스에서 확인):
 | W8 | 경고 | 엘리베이터 정차 지점이 복도 쪽으로 이어진 구간이 없음 (타기만 하고 내릴 곳이 없음) |
 | W9 | 경고 | 같은 `elevator_id`의 정차 지점이 모두 같은 층 |
 | W10 | 경고 | 연결통로(`bridge`) 구간의 양 끝 지점이 같은 건물에 있음 |
+| W11 | 경고 | 바깥 계단(`steps`, `edge_type: outdoor`)에 `step_count`가 없음 (길찾기 시간 계산에 쓰임, 3.1) |
 
 W8과 W9는 OpenTripPlanner가 지도 데이터를 그래프로 만들 때 내는 경고(`OnlyOneConnectionToElevatorNode`, `AllWaysOfElevatorNodeOnSameLevel`)를 참고했다. 검사에서 층 값을 비교하는 것은 길찾기 규칙에 어긋나지 않는다.
 
@@ -497,4 +511,5 @@ W8과 W9는 OpenTripPlanner가 지도 데이터를 그래프로 만들 때 내�
 - 실제 Supabase 연결, 앱 화면
 - 실내 영역(방 외곽선) 전체 그리기. 매크로 입력으로만 선택해서 쓴다
 - 경사도 계산, 고도 데이터 합치기
+- 후속 과제: 오르막과 내리막의 시간 차이(지금은 계단·경사로 모두 방향과 무관하게 같은 시간), 고도 데이터로 계단 칸 수를 추정해 `stairsTimeSec`의 규칙 2와 3 사이에 넣기(3.1)
 - 여러 사람이 실시간으로 함께 편집하기. Git과 PR로 충분하다

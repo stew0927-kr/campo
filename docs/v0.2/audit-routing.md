@@ -1,8 +1,8 @@
 # v0.1 길찾기 점검 결과 (작업 2)
 
-대상: packages/core/src/graph.ts, route.ts, costs.ts, route-text.ts. 코드는 고치지 않았다.
+대상: packages/core/src/graph.ts, route.ts, costs.ts, route-text.ts. 점검 때는 코드를 고치지 않았고, "고침" 열은 그 뒤 고친 결과다(커밋 fix(routing): v0.2 audit).
 테스트: packages/core/test/routing/audit.test.ts, fixture: packages/core/test/routing/fixtures/audit.ts.
-정상은 `it`, 결함은 v0.2 기대값을 단언하는 `it.fails`. 결함 행 16개 = `it.fails` 16개.
+점검 당시(v0.1 코드)에는 정상은 `it`, 결함은 v0.2 기대값을 단언하는 `it.fails`였다. 결함 16개를 모두 고쳐 지금은 `it.fails`가 0개이고 전부 `it`이다("고침" 열).
 
 ## 번호
 점검표 밖 결함은 R17부터 붙였다. R13~R16은 SPEC-v0.2 3.7에 이미 있다(R16은 커밋 ee21e82).
@@ -25,42 +25,51 @@ ngraph aStar는 blocked 검사보다 먼저 이웃을 탐색 목록에 넣는다
 
 ## 점검표
 
-| 번호 | 지금 동작 | 판정 | 근거 파일:줄 | 테스트 이름 |
-|---|---|---|---|---|
-| R1 | 탈 때 board 비용 한 번, 층마다 ride 비용. (1→7) − (1→2) = 5 × ELEVATOR_FLOOR_COST, 시간도 5 × ELEVATOR_FLOOR_S(±6초) | 정상 | graph.ts:75-83, 92 | R1: elevator wait is paid once per ride (1→7 minus 1→2 is five floors of riding) |
-| R2 | 일방 구간은 반대로 못 감 | 정상 | route.ts:44, graph.ts:103 | R2: a one-way edge is not walked backwards |
-| R3 | 계단+경사로 링크 둘 다 있음. shortest는 계단, step_free는 경사로 | 정상 | graph.ts:54, route.ts:122-130 | R3: parallel steps + ramp between the same two points both survive |
-| R4 | 무작위 그래프 200개 × 5쌍 × 2프로필에서 A* 비용 = 다익스트라 비용. 단 clamp(R20) 덕분이다 | 정상 | graph.ts:68-73, route.ts:48 | R4: A* cost equals Dijkstra cost on 200 seeded random graphs |
-| R5 | 출발점 → 도착점 순서 | 정상 | route.ts:62 | R5: route nodes run from start to end |
-| R6 | 비용이 미터 환산이고 `timeSec`이 없다. 1→7층은 비용 60, 54초(v0.2: 67초) | 결함 | costs.ts:2, 9-30, route.ts:15-20 | R6: one unit, seconds: elevator 1→7 has timeSec 67 (40 + 6×4 + 3) and cost in the same unit |
-| R6 | 비용과 시간을 나누지 않아 벌점을 시간에서 뺄 수 없다(이 테스트는 R7도 고쳐야 통과) | 결함 | route.ts:85, 113-115 | R6: timeSec does not include the step_free penalty (cost − timeSec = 60 s for one unknown corridor) |
-| R7 | step_free:null 복도가 계단 없는 길을 막는다 | 결함 | costs.ts:45, 58 | R7: step_free: null indoor corridor does not block the step_free route |
-| R7 | step_free가 빠진 복도도 막는다 | 결함 | costs.ts:45 | R7: indoor corridor without a step_free value does not block the step_free route |
-| R8 | overrides가 없어 고장 엘리베이터를 그대로 쓴다 | 결함 | (없음) graph.ts:53, route.ts:55 | R8: an elevator marked broken in overrides is blocked in both profiles |
-| R9 | 1→7층 엘리베이터 구간 6개가 이어져 나온다. 정차마다 board 링크 하나라 다시 타면 또 기다림 | 정상 | graph.ts:75-83 | R9: a multi-floor ride stays in the car (no alight and re-board on the way) |
-| R10 | tower7, bridgeOffset(두 가지)에서 층 값을 지워도 경로가 같다 | 정상 | route.test.ts:150 (유지) | R10: tower7 and bridgeOffset give the same routes after every level value is deleted |
-| R11 | 같은 지점이면 `[from]`, 비용·거리 0. 없는 id와 `car:` id는 unknown-node | 정상 | route.ts:56-65 | R11: same start and end gives a zero route; unknown ids give unknown-node |
-| R12 | `findNearest`가 없다 | 결함 | (없음) index.ts | R12: findNearest picks the restroom with the lowest travel cost, not the straight-line nearest |
-| R13 | ngraph의 `[도착점]`을 no-route로 바꾼다 | 정상 | route.ts:64 | R13: a target reached only through blocked links is "no route", not the [target] array ngraph returns |
-| R13 | v0.1 테스트 대상에서 원래 결과가 길이 1임을 확인 | 정상 | route.ts:64, route.test.ts:94 | R13: the v0.1 "no route" test really hits the [target] case (campus-basic GATE → n_B_1_hall) |
-| R14 | 방향마다 따로 둔 링크 비용을 그 링크에서 읽는다. board 30 / alight 0 | 정상 | route.ts:46, graph.ts:79-80 | R14: direction-dependent costs are read per link (from → to), not swapped |
-| R15 | `fewest_steps` 프로필이 없다(지금 넣으면 NaN 비용, R21) | 결함 | costs.ts:5 | R15: fewest_steps profile finds the route and counts the unavoidable steps (600 s penalty in cost only) |
-| R15 | step_free가 실패해도 대체 경로와 "계단 N곳" 문장이 없다 | 결함 | route.ts:64-66 | R15: step_free with no route falls back to fewest_steps and says how many steps cannot be avoided |
-| R16 | A동 3층 ↔ C동 5층 연결통로를 두 프로필 모두 쓴다 | 정상 | graph.ts:85-104 | R16: routing uses a bridge between floors with different numbers (A동 3층 ↔ C동 5층) |
-| R16 | 끝에 계단이 있는 다리는 step_free에서 막히고 shortest는 쓴다 | 정상 | costs.ts:38-39 | R16: a bridge that ends in steps is blocked for step_free and still used by shortest |
-| R16 | 문장이 "A동 3층 → 연결통로 → C동 5층" | 결함 | route-text.ts:47 | R16: bridge sentence reads "A동 3층 연결통로를 건너 C동 5층으로" (문장) |
-| R17 | 엘리베이터 비용이 level_from/level_to 차이로 정해진다. 1→7 한 구간짜리는 80, 층 값을 지우면 55 | 결함 | costs.ts:81-86, graph.ts:90, route.ts:94 | R17: express elevator cost unchanged when levels are stripped |
-| R17 | 소스 검사(route.test.ts:175)가 graph.ts·route.ts만 본다. costs.ts에 level이 있다. route-text.ts는 표시용이라 예외 | 결함 | costs.ts:3, 81-86 | R17: no level reads in routing source (graph.ts, route.ts, costs.ts, src/routing/**; route-text.ts exempt) |
-| R18 | 사이 지점이 갈라져도 계단을 합친다("T동 1층 → 계단 → 4층" 한 문장) | 결함 | route-text.ts:37-45 | R18: stairs are not merged across a landing where a corridor branches off (갈림) |
-| R18 | incline을 읽지 않고 방향어가 없다 | 결함 | route-text.ts:42-44 | R18: merged stairs use the direction word from incline, read against travel direction (방향어) |
-| R19 | 경사로는 step_free:false여도 무조건 통과. v0.1 SPEC §6 표와는 맞지만 v0.2 2.1(false = 계단·턱 있음)과 다르다. 엘리베이터도 같다. **결정: v0.2 2.1을 따라 경사로·엘리베이터도 false면 step_free에서 막는다. v0.1 데이터의 기본값 false는 작업 3 마이그레이션이 정리한다(docs/decisions.md)** | 결함 | costs.ts:40-42 | R19: a ramp marked step_free: false (has a step or sill) is blocked for step_free |
-| R20 | 비용을 직선거리 아래로 못 내려가게 clamp해서 데이터 오류를 조용히 덮는다. 끝점이 99m 어긋난 구간이 비용 99.9, distanceM 1, durationMin 0으로 쓰인다. 데이터 오류는 검사(I2)가 잡을 일이다 | 결함 | graph.ts:68-73 | R20: an edge whose line does not reach its nodes is reported or left out, not silently priced by the clamp |
-| R21 | 알 수 없는 프로필 이름이면 `found: true`에 cost NaN이다(`blocked`가 `=== Infinity`만 본다) | 결함 | route.ts:46-47 | R21: an unknown profile name is rejected instead of returning a route with NaN cost |
+| 번호 | 지금 동작 | 판정 | 근거 파일:줄 | 테스트 이름 | 고침 |
+|---|---|---|---|---|---|
+| R1 | 탈 때 board 비용 한 번, 층마다 ride 비용. (1→7) − (1→2) = 5 × ELEVATOR_FLOOR_COST, 시간도 5 × ELEVATOR_FLOOR_S(±6초) | 정상 | graph.ts:75-83, 92 | R1: elevator wait is paid once per ride (1→7 minus 1→2 is five floors of riding) | 해당 없음 |
+| R2 | 일방 구간은 반대로 못 감 | 정상 | route.ts:44, graph.ts:103 | R2: a one-way edge is not walked backwards | 해당 없음 |
+| R3 | 계단+경사로 링크 둘 다 있음. shortest는 계단, step_free는 경사로 | 정상 | graph.ts:54, route.ts:122-130 | R3: parallel steps + ramp between the same two points both survive | 해당 없음 |
+| R4 | 무작위 그래프 200개 × 5쌍 × 2프로필에서 A* 비용 = 다익스트라 비용. 단 clamp(R20) 덕분이다 | 정상 | graph.ts:68-73, route.ts:48 | R4: A* cost equals Dijkstra cost on 200 seeded random graphs | 해당 없음 |
+| R5 | 출발점 → 도착점 순서 | 정상 | route.ts:62 | R5: route nodes run from start to end | 해당 없음 |
+| R6 | 비용이 미터 환산이고 `timeSec`이 없다. 1→7층은 비용 60, 54초(v0.2: 67초) | 결함 | costs.ts:2, 9-30, route.ts:15-20 | R6: one unit, seconds: elevator 1→7 has timeSec 67 (40 + 6×4 + 3) and cost in the same unit | 고침: 비용 단위가 초 하나, `timeSec` 추가. 1→7층 67초(상수는 `costs.ts` 한 곳) |
+| R6 | 비용과 시간을 나누지 않아 벌점을 시간에서 뺄 수 없다(이 테스트는 R7도 고쳐야 통과) | 결함 | route.ts:85, 113-115 | R6: timeSec does not include the step_free penalty (cost − timeSec = 60 s for one unknown corridor) | 고침: `cost`와 `timeSec`을 나눔. 벌점은 `cost`에만 들어감 |
+| R7 | step_free:null 복도가 계단 없는 길을 막는다 | 결함 | costs.ts:45, 58 | R7: step_free: null indoor corridor does not block the step_free route | 고침: null은 막지 않고 +60초 벌점, 결과의 `uncertainSegments`에 표시 |
+| R7 | step_free가 빠진 복도도 막는다 | 결함 | costs.ts:45 | R7: indoor corridor without a step_free value does not block the step_free route | 고침: 값이 없어도 null과 같게 처리 |
+| R8 | overrides가 없어 고장 엘리베이터를 그대로 쓴다 | 결함 | (없음) graph.ts:53, route.ts:55 | R8: an elevator marked broken in overrides is blocked in both profiles | 고침: `buildGraph(campus, { overrides, now })`. until이 now보다 뒤인 항목의 Feature를 모든 프로필에서 막음 |
+| R9 | 1→7층 엘리베이터 구간 6개가 이어져 나온다. 정차마다 board 링크 하나라 다시 타면 또 기다림 | 정상 | graph.ts:75-83 | R9: a multi-floor ride stays in the car (no alight and re-board on the way) | 해당 없음 |
+| R10 | tower7, bridgeOffset(두 가지)에서 층 값을 지워도 경로가 같다 | 정상 | route.test.ts:150 (유지) | R10: tower7 and bridgeOffset give the same routes after every level value is deleted | 해당 없음 |
+| R11 | 같은 지점이면 `[from]`, 비용·거리 0. 없는 id와 `car:` id는 unknown-node | 정상 | route.ts:56-65 | R11: same start and end gives a zero route; unknown ids give unknown-node | 해당 없음 |
+| R12 | `findNearest`가 없다 | 결함 | (없음) index.ts | R12: findNearest picks the restroom with the lowest travel cost, not the straight-line nearest | 고침: `findNearest`(가상 도착점 `~sink`, 공유 그래프는 바꾸지 않음) |
+| R13 | ngraph의 `[도착점]`을 no-route로 바꾼다 | 정상 | route.ts:64 | R13: a target reached only through blocked links is "no route", not the [target] array ngraph returns | 해당 없음 |
+| R13 | v0.1 테스트 대상에서 원래 결과가 길이 1임을 확인 | 정상 | route.ts:64, route.test.ts:94 | R13: the v0.1 "no route" test really hits the [target] case (campus-basic GATE → n_B_1_hall) | 해당 없음 |
+| R14 | 방향마다 따로 둔 링크 비용을 그 링크에서 읽는다. board 30 / alight 0 | 정상 | route.ts:46, graph.ts:79-80 | R14: direction-dependent costs are read per link (from → to), not swapped | 해당 없음 |
+| R15 | `fewest_steps` 프로필이 없다(지금 넣으면 NaN 비용, R21) | 결함 | costs.ts:5 | R15: fewest_steps profile finds the route and counts the unavoidable steps (600 s penalty in cost only) | 고침: `fewest_steps` 프로필(계단 +600초는 `cost`에만) |
+| R15 | step_free가 실패해도 대체 경로와 "계단 N곳" 문장이 없다 | 결함 | route.ts:64-66 | R15: step_free with no route falls back to fewest_steps and says how many steps cannot be avoided | 고침: step_free가 실패하면 fewest_steps로 다시 찾고 `fallback`에 피할 수 없는 계단·턱 수와 문장을 넣음 |
+| R16 | A동 3층 ↔ C동 5층 연결통로를 두 프로필 모두 쓴다 | 정상 | graph.ts:85-104 | R16: routing uses a bridge between floors with different numbers (A동 3층 ↔ C동 5층) | 해당 없음 |
+| R16 | 끝에 계단이 있는 다리는 step_free에서 막히고 shortest는 쓴다 | 정상 | costs.ts:38-39 | R16: a bridge that ends in steps is blocked for step_free and still used by shortest | 해당 없음 |
+| R16 | 문장이 "A동 3층 → 연결통로 → C동 5층" | 결함 | route-text.ts:47 | R16: bridge sentence reads "A동 3층 연결통로를 건너 C동 5층으로" (문장) | 고침: "A동 3층 연결통로를 건너 B동 2층으로 가세요" 형식 |
+| R17 | 엘리베이터 비용이 level_from/level_to 차이로 정해진다. 1→7 한 구간짜리는 80, 층 값을 지우면 55 | 결함 | costs.ts:81-86, graph.ts:90, route.ts:94 | R17: express elevator cost unchanged when levels are stripped | 고침: 엘리베이터를 board / hop / alight 가상 지점으로 펼침. 층 값을 읽지 않고 `elevatorFloors`는 삭제 |
+| R17 | 소스 검사(route.test.ts:175)가 graph.ts·route.ts만 본다. costs.ts에 level이 있다. route-text.ts는 표시용이라 예외 | 결함 | costs.ts:3, 81-86 | R17: no level reads in routing source (graph.ts, route.ts, costs.ts, src/routing/**; route-text.ts exempt) | 고침: 소스 검사를 graph.ts, route.ts, costs.ts, `src/routing/**`로 넓힘(route-text.ts 제외) |
+| R18 | 사이 지점이 갈라져도 계단을 합친다("T동 1층 → 계단 → 4층" 한 문장) | 결함 | route-text.ts:37-45 | R18: stairs are not merged across a landing where a corridor branches off (갈림) | 고침: 사이 지점에 다른 구간이 갈라지거나 엘리베이터가 이어지면 합치지 않음 |
+| R18 | incline을 읽지 않고 방향어가 없다 | 결함 | route-text.ts:42-44 | R18: merged stairs use the direction word from incline, read against travel direction (방향어) | 고침: 방향어는 `incline`(거꾸로 가면 뒤집음) → 표시용 층 이름 → 방향어 생략 순서 |
+| R19 | 경사로는 step_free:false여도 무조건 통과. v0.1 SPEC §6 표와는 맞지만 v0.2 2.1(false = 계단·턱 있음)과 다르다. 엘리베이터도 같다. **결정: v0.2 2.1을 따라 경사로·엘리베이터도 false면 step_free에서 막는다. v0.1 데이터의 기본값 false는 작업 3 마이그레이션이 정리한다(docs/decisions.md)** | 결함 | costs.ts:40-42 | R19: a ramp marked step_free: false (has a step or sill) is blocked for step_free | 고침: false는 계단·경사로·엘리베이터 모두 step_free에서 막음(null은 R7) |
+| R20 | 비용을 직선거리 아래로 못 내려가게 clamp해서 데이터 오류를 조용히 덮는다. 끝점이 99m 어긋난 구간이 비용 99.9, distanceM 1, durationMin 0으로 쓰인다. 데이터 오류는 검사(I2)가 잡을 일이다 | 결함 | graph.ts:68-73 | R20: an edge whose line does not reach its nodes is reported or left out, not silently priced by the clamp | 고침: clamp 삭제, 구간 길이는 지점 좌표에서 계산. 어긋난 선은 검사 E4가 잡음 |
+| R21 | 알 수 없는 프로필 이름이면 `found: true`에 cost NaN이다(`blocked`가 `=== Infinity`만 본다) | 결함 | route.ts:46-47 | R21: an unknown profile name is rejected instead of returning a route with NaN cost | 고침: 모르는 프로필은 `unknown-profile`(NoRoute) |
 
 ## 결정 사항
-- R19: v0.2 2.1 뜻을 따른다(위 표, decisions.md).
-- R4/R20: v0.2에서 clamp를 없애고 구간 길이는 지점 좌표에서 계산한다(SPEC-v0.2 3.1). R4는 지금 clamp 덕분에 통과하므로, clamp를 없앨 때 이 테스트로 다시 확인한다.
-- R21: 모르는 프로필은 `unknown-profile` 오류로 처리한다. 작업 4에서 고친다.
+- R19: v0.2 2.1 뜻을 따른다(위 표, decisions.md). 고침.
+- R4/R20: clamp를 없애고 구간 길이는 지점 좌표에서 계산한다(SPEC-v0.2 3.1). 고침. R4는 clamp 없이도 통과한다.
+- R21: 모르는 프로필은 `unknown-profile`. 고침.
+
+## 고친 뒤 정한 것
+- **계단 시간**: 구간 길이를 지점 좌표로만 재면 실내 계단 한 층이 2초 남짓이라 바깥 계단이 항상 밀렸다. SPEC-v0.2 3.1의 `stairsTimeSec` 규칙(step_count × 0.55초 → 실내 16초 → 바깥 최소 10초, 걷는 시간은 따로 더함)으로 정했다. 바깥 계단에 `step_count`가 없으면 검사 W11이 경고한다.
+- 규칙 4를 문자 그대로 따르면 규칙 3(바깥 계단, 칸 수 모름)에서 걷는 시간이 두 번 들어간다(평면 길이 ÷ 속도 × 2.5 안에 한 번, 따로 한 번). 그대로 두고 테스트로 못 박았다.
+- `STEP_SEC`(0.55초)와 `FLOOR_FLIGHT_SEC`(16초)가 어긋나 보일 수 있다. 칸 수 20짜리 실내 계단(11초)이 칸 수를 모르는 계단(16초)보다 빠르다. 실제 층간 계단은 보통 20칸 안팎이라 값을 맞출지 현장 측정 뒤 정한다.
+- 상수 파일은 `routing/costs.ts`가 아니라 `src/costs.ts`다(`validate.ts`가 같은 파일을 쓴다).
+- overrides: until이 now보다 뒤인 항목만 적용하고 `status`는 보지 않는다. 지점을 닫으면 그 지점에 닿는 구간을 모두 막고, 엘리베이터 정차 지점을 닫아도 승강로 안의 hop은 막지 않는다. `elevator_id`를 `feature_id`로 쓴 항목은 무시한다.
+- 평행한 두 구간(계단과 경사로)은 길이가 같아 경사로(× 1.2)가 항상 계단(× 2.5)보다 빠르다. 구부러진 선의 길이는 반영하지 않으므로, 긴 경사로는 중간 지점을 두어 그려야 한다.
+- 안내 문장: 걷기 "31m 걸어가세요", 경사로 "경사로를 따라 43m 가세요", 출입구 "A동 4층 출입구로 들어가세요", 엘리베이터 "엘리베이터를 타고 4층으로 가세요", 계단 "계단으로 1층 올라가세요", 연결통로 "A동 3층 연결통로를 건너 B동 2층으로 가세요".
 
 ## 참고 (결함으로 세지 않음)
 - graph.ts:87: from/to가 없는 구간은 건너뛴다. 편집 중 미리보기를 위한 의도된 동작이고 주석에 적혀 있다. 검사 E3이 잡는다.

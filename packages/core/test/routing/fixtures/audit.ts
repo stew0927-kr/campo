@@ -1,10 +1,11 @@
-// Code-built campuses for the v0.1 routing audit (SPEC-v0.2 3.7, R1~R20).
+// Code-built campuses for the routing checklist (SPEC-v0.2 3.7, R1~R21).
 //
-// These return LoadedCampus directly instead of a GeoJSON folder, because some
-// cases (step_free: null, a missing step_free, node_type 'restroom', incline)
-// are not allowed by the v0.1 schema yet. Positions are given in metres on a
-// local plane and converted to [lon, lat]; edge coordinates are filled in from
-// the node positions unless a case needs them to be wrong on purpose.
+// These return LoadedCampus directly instead of a GeoJSON folder, so a case can
+// carry data the schema rejects (a missing step_free key) next to valid v0.2
+// features. Positions are given in metres on a local plane and converted to
+// [lon, lat]; edge coordinates are filled in from the node positions unless a
+// case needs them to be wrong on purpose. Routing prices every edge from its
+// node positions only (SPEC-v0.2 3.1), so line bends do not change any cost.
 import type { LoadedCampus, Position } from '../../../src/types.ts';
 
 type XY = [number, number];
@@ -28,7 +29,7 @@ interface BuildingSpec { kind: 'building'; id: string; props: Props }
 type Spec = NodeSpec | EdgeSpec | BuildingSpec;
 
 export function node(id: string, at: XY, props: Props = {}): NodeSpec {
-  return { kind: 'node', id, at, props: { node_type: 'corridor', building_id: null, level: null, source: SOURCE, ...props } };
+  return { kind: 'node', id, at, props: { node_type: 'corridor', building_id: null, level: null, source: SOURCE, rev: 1, ...props } };
 }
 
 export interface EdgeGeometry {
@@ -46,7 +47,7 @@ export function edge(id: string, from: string, to: string, props: Props = {}, ge
     id,
     from,
     to,
-    props: { highway: 'corridor', edge_type: 'indoor', bidirectional: true, step_free: true, source: SOURCE, ...props },
+    props: { highway: 'corridor', edge_type: 'indoor', bidirectional: true, step_free: true, source: SOURCE, rev: 1, ...props },
     via: geometry.via ?? [],
     coords: geometry.coords,
     omit: geometry.omit ?? [],
@@ -57,8 +58,18 @@ export function building(id: string, name: string, code: string, levels: number[
   return {
     kind: 'building',
     id,
-    props: { name, code, levels, ground_levels: levels.slice(0, 1), source: SOURCE, ...props },
+    props: { name, code, levels, ground_levels: levels.slice(0, 1), source: SOURCE, rev: 1, ...props },
   };
+}
+
+/** One overrides.json entry (SPEC-v0.2 2.5). Defaults: out of service until 2099. */
+export function override(featureId: string, extra: Props = {}): Props {
+  return { feature_id: featureId, status: 'out_of_service', until: '2099-01-01T00:00:00Z', report_id: 'rp-audit-0001', ...extra };
+}
+
+/** The same campus with an overrides.json (as loadCampus would read it). */
+export function withOverrides(c: LoadedCampus, overrides: unknown): LoadedCampus {
+  return { ...c, overrides };
 }
 
 export function campus(specs: Spec[]): LoadedCampus {
@@ -93,7 +104,7 @@ export function campus(specs: Spec[]): LoadedCampus {
       }
     }
   });
-  return { meta: { id: 'audit', name: 'audit', center: pos([0, 0]), bbox: [126.99, 36.99, 127.01, 37.01] }, features, fileErrors: [] };
+  return { meta: { id: 'audit', schema_version: '0.2', name: 'audit', center: pos([0, 0]), bbox: [126.99, 36.99, 127.01, 37.01] }, features, fileErrors: [] };
 }
 
 /** Deep copy with every level value removed (level, level_from, level_to, levels, ground_levels). */
@@ -135,15 +146,18 @@ export interface Tower7Options {
    * false: only floors 1 and 7 are connected, so the landings in between have no branch.
    */
   stairBranches?: boolean;
+  /** step_count on every flight (default 20). null: leave it out (stairsTimeSec rule 2). */
+  stepCount?: number | null;
 }
 
 /**
  * 7-floor building "T동". Each floor: hall at (0,0), elevator stop at (10,0)
- * (same position on every floor), stair landing at (-10,0). Neighbouring stops
- * are joined by one elevator edge each (6 edges, SPEC §3), neighbouring
- * landings by one steps edge each (bent through (-15,5), ~14 m, incline 'up').
+ * and stair landing at (-10,0), the same positions on every floor (a stacked
+ * stairwell and shaft, so flights are 0 m long in plan). Neighbouring stops are
+ * joined by one elevator edge each (6 edges, SPEC §3), neighbouring landings by
+ * one steps edge each (incline 'up', drawn from the lower floor).
  */
-export function tower7({ elevator = true, stairBranches = true }: Tower7Options = {}): LoadedCampus {
+export function tower7({ elevator = true, stairBranches = true, stepCount = 20 }: Tower7Options = {}): LoadedCampus {
   const levels = [1, 2, 3, 4, 5, 6, 7];
   const specs: Spec[] = [building('bldg_T', 'T동', 'T', levels)];
   for (const l of levels) {
@@ -152,14 +166,15 @@ export function tower7({ elevator = true, stairBranches = true }: Tower7Options 
     specs.push(node(TOWER.landing(l), [-10, 0], { node_type: 'stair_landing', ...where }));
     if (stairBranches || l === 1 || l === 7) specs.push(edge(TOWER.hallToLanding(l), TOWER.hall(l), TOWER.landing(l)));
     if (elevator) {
-      specs.push(node(TOWER.stop(l), [10, 0], { node_type: 'elevator_stop', shaft_id: TOWER.ELEVATOR_ID, elevator_id: TOWER.ELEVATOR_ID, ...where }));
+      specs.push(node(TOWER.stop(l), [10, 0], { node_type: 'elevator_stop', elevator_id: TOWER.ELEVATOR_ID, ...where }));
       specs.push(edge(TOWER.hallToStop(l), TOWER.hall(l), TOWER.stop(l)));
     }
   }
   for (const l of levels.slice(0, -1)) {
     specs.push(edge(TOWER.stairEdge(l), TOWER.landing(l), TOWER.landing(l + 1), {
-      highway: 'steps', step_free: false, level_from: l, level_to: l + 1, step_count: 20, incline: 'up',
-    }, { via: [[-15, 5]] }));
+      highway: 'steps', step_free: false, level_from: l, level_to: l + 1, incline: 'up',
+      ...(stepCount === null ? {} : { step_count: stepCount }),
+    }));
     if (elevator) {
       specs.push(edge(TOWER.elevatorEdge(l), TOWER.stop(l), TOWER.stop(l + 1), {
         highway: 'elevator', step_free: true, level_from: l, level_to: l + 1,
@@ -174,15 +189,17 @@ export function tower7({ elevator = true, stairBranches = true }: Tower7Options 
 export const PARALLEL = { P: 'n_out_P', Q: 'n_out_Q', STEPS: 'e_out_P__out_Q_steps', RAMP: 'e_out_P__out_Q_ramp' } as const;
 
 /**
- * Outdoor P (0,0) and Q (20,0). Steps straight across (20 m), ramp bent through
- * (10,30) (~63 m), so shortest prefers the steps and step_free must use the ramp.
+ * Outdoor P (0,0) and Q (20,0), joined by a steps edge (12 steps) and a ramp
+ * edge, both 20 m (node positions). The ramp (20 m / 1.2 × 1.2 = 20 s) beats
+ * the steps (12 × 0.55 + 20 m / 1.2 ≈ 23.3 s), so shortest takes the ramp
+ * unless the ramp is closed.
  */
 export function parallelStairsRamp({ rampStepFree = true }: { rampStepFree?: boolean | null } = {}): LoadedCampus {
   return campus([
     node(PARALLEL.P, [0, 0], { node_type: 'outdoor' }),
     node(PARALLEL.Q, [20, 0], { node_type: 'outdoor' }),
     edge(PARALLEL.STEPS, PARALLEL.P, PARALLEL.Q, { highway: 'steps', edge_type: 'outdoor', step_free: false, step_count: 12 }),
-    edge(PARALLEL.RAMP, PARALLEL.P, PARALLEL.Q, { highway: 'ramp', edge_type: 'outdoor', step_free: rampStepFree }, { via: [[10, 30]] }),
+    edge(PARALLEL.RAMP, PARALLEL.P, PARALLEL.Q, { highway: 'ramp', edge_type: 'outdoor', step_free: rampStepFree }),
   ]);
 }
 
@@ -297,8 +314,8 @@ export function restrooms(): LoadedCampus {
     node(R.START, [0, 0], { building_id: 'bldg_R', level: 1 }),
     node(R.SAME_FLOOR, [30, 0], { ...wc, building_id: 'bldg_R', level: 1 }),
     node(R.UPSTAIRS, [1, 0], { ...wc, building_id: 'bldg_R', level: 2 }),
-    node('n_R_elevA_L1', [-20, 0], { node_type: 'elevator_stop', shaft_id: 'R-EV1', elevator_id: 'R-EV1', building_id: 'bldg_R', level: 1 }),
-    node('n_R_elevA_L2', [-20, 0], { node_type: 'elevator_stop', shaft_id: 'R-EV1', elevator_id: 'R-EV1', building_id: 'bldg_R', level: 2 }),
+    node('n_R_elevA_L1', [-20, 0], { node_type: 'elevator_stop', elevator_id: 'R-EV1', building_id: 'bldg_R', level: 1 }),
+    node('n_R_elevA_L2', [-20, 0], { node_type: 'elevator_stop', elevator_id: 'R-EV1', building_id: 'bldg_R', level: 2 }),
     edge('e_R_1_start__R_1_wc', R.START, R.SAME_FLOOR),
     edge('e_R_1_start__R_elevA_L1', R.START, 'n_R_elevA_L1'),
     edge('e_R_elevA_L1__R_elevA_L2', 'n_R_elevA_L1', 'n_R_elevA_L2', { highway: 'elevator', level_from: 1, level_to: 2 }),
@@ -316,8 +333,8 @@ export function expressElevator(): LoadedCampus {
     building('bldg_X', 'X동', 'X', [1, 7]),
     node(X.HALL1, [0, 0], { building_id: 'bldg_X', level: 1 }),
     node(X.HALL7, [0, 0], { building_id: 'bldg_X', level: 7 }),
-    node('n_X_elevA_L1', [10, 0], { node_type: 'elevator_stop', shaft_id: 'X-EV1', building_id: 'bldg_X', level: 1 }),
-    node('n_X_elevA_L7', [10, 0], { node_type: 'elevator_stop', shaft_id: 'X-EV1', building_id: 'bldg_X', level: 7 }),
+    node('n_X_elevA_L1', [10, 0], { node_type: 'elevator_stop', elevator_id: 'X-EV1', building_id: 'bldg_X', level: 1 }),
+    node('n_X_elevA_L7', [10, 0], { node_type: 'elevator_stop', elevator_id: 'X-EV1', building_id: 'bldg_X', level: 7 }),
     edge('e_X_1_hall__X_elevA_L1', X.HALL1, 'n_X_elevA_L1'),
     edge('e_X_7_hall__X_elevA_L7', X.HALL7, 'n_X_elevA_L7'),
     edge(X.EDGE, 'n_X_elevA_L1', 'n_X_elevA_L7', { highway: 'elevator', level_from: 1, level_to: 7 }),
@@ -328,12 +345,15 @@ export function expressElevator(): LoadedCampus {
 
 export const OFFSET = { A: 'n_out_O1', B: 'n_out_O2', EDGE: 'e_out_O1__out_O2' } as const;
 
-/** Nodes 100 m apart; the edge's line is only 1 m long and ends 99 m short of B. */
-export function offsetEdge(): LoadedCampus {
+/**
+ * Nodes 100 m apart; the edge's line is only 1 m long and ends 99 m short of B.
+ * misplaced: false draws the same edge correctly (A → B), for comparison.
+ */
+export function offsetEdge({ misplaced = true }: { misplaced?: boolean } = {}): LoadedCampus {
   return campus([
     node(OFFSET.A, [0, 0], { node_type: 'outdoor' }),
     node(OFFSET.B, [100, 0], { node_type: 'outdoor' }),
-    edge(OFFSET.EDGE, OFFSET.A, OFFSET.B, { highway: 'footway', edge_type: 'outdoor' }, { coords: [[0, 0], [1, 0]] }),
+    edge(OFFSET.EDGE, OFFSET.A, OFFSET.B, { highway: 'footway', edge_type: 'outdoor' }, misplaced ? { coords: [[0, 0], [1, 0]] } : {}),
   ]);
 }
 
@@ -353,11 +373,18 @@ export function prng(seed: number): () => number {
 
 const HIGHWAY_POOL = ['footway', 'footway', 'corridor', 'corridor', 'steps', 'ramp', 'elevator'] as const;
 
+/** 60 % true, 20 % false, 20 % null (unknown, penalised by step_free). */
+function stepFreeRoll(r: number): boolean | null {
+  return r < 0.6 ? true : r < 0.8 ? false : null;
+}
+
 /**
  * Random walkable graph: 4–13 outdoor points in a 150 m square, n..3n edges of
- * mixed highway, random direction and step_free. Some lines bend (longer than
- * straight); about 1 in 10 non-elevator lines is deliberately too short (data
- * error) so the cost clamp in graph.ts is exercised too.
+ * mixed highway, random direction and step_free (true / false / null). Some
+ * lines bend and about 1 in 10 non-elevator lines is deliberately too short
+ * (data error): routing ignores line geometry, so neither changes a cost.
+ * Elevator edges join points far apart in plan (an I5 data error), which is
+ * what the heuristic speed guard in graph.ts has to survive.
  */
 export function randomCampus(seed: number): { campus: LoadedCampus; nodeIds: string[] } {
   const rnd = prng(seed);
@@ -383,7 +410,7 @@ export function randomCampus(seed: number): { campus: LoadedCampus; nodeIds: str
       highway,
       edge_type: highway === 'elevator' ? 'indoor' : 'outdoor',
       bidirectional: rnd() < 0.7,
-      step_free: highway === 'steps' ? false : rnd() < 0.7,
+      step_free: highway === 'steps' ? false : stepFreeRoll(rnd()),
     };
     const roll = rnd();
     let geometry: EdgeGeometry = {};

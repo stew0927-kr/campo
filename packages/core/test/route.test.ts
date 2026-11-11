@@ -2,13 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
-  ELEVATOR_BOARDING_COST,
-  ELEVATOR_FLOOR_COST,
-  ELEVATOR_FLOOR_S,
-  ELEVATOR_WAIT_S,
-  WALKING_SPEED_M_PER_S,
+  ELEVATOR_ALIGHT_SEC,
+  ELEVATOR_BOARD_SEC,
+  ELEVATOR_HOP_SEC,
+  PORTAL_SEC,
+  STEP_SEC,
+  WALK_SPEED_MPS,
   buildGraph,
-  elevatorFloors,
   findRoute,
   type CampusGraph,
   type LoadedCampus,
@@ -39,35 +39,42 @@ function route(from: string, to: string, profile: Profile, g = graph): Route {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyFeature = any;
 const edgeOf = (id: string): AnyFeature => campus.features.map((f) => f.feature as AnyFeature).find((f) => f.id === id);
+const kinds = (r: Route) => r.steps.map((s) => s.kind);
+const texts = (r: Route) => r.steps.map((s) => s.text);
 
 describe('findRoute: gate → A동 4층 408호', () => {
   it('shortest climbs the outdoor stairs and enters at 4F', () => {
     const r = route(GATE, ROOM_408, 'shortest');
     expect(r.edgeIds).toEqual(['e_out_0001__out_0002', 'e_out_0002__out_0003', 'e_portal_A_4_north', 'e_A_4_north__A_4_408door']);
-    expect(r.nodeIds).toEqual([GATE, 'n_out_0002', 'n_out_0003', 'n_A_4_north', ROOM_408]);
-    expect(r.stairCount).toBe(1);
-    expect(r.floorChanges).toEqual(['바깥 → A동 4층 출입구']);
+    expect(r.nodes).toEqual([GATE, 'n_out_0002', 'n_out_0003', 'n_A_4_north', ROOM_408]);
+    expect(r.stairsCount).toBe(1);
+    expect(kinds(r)).toEqual(['walk', 'stairs', 'portal', 'walk']);
+    expect(texts(r)).toContain('A동 4층 출입구로 들어가세요');
   });
 
   it('step_free takes no stairs and still enters through the 4F portal', () => {
     const r = route(GATE, ROOM_408, 'step_free');
-    expect(r.stairCount).toBe(0);
+    expect(r.stairsCount).toBe(0);
     expect(r.edgeIds).not.toContain('e_out_0002__out_0003');
     expect(r.edgeIds).toContain('e_out_0004__out_0005'); // the ramp round the hill
     expect(r.edgeIds).toContain('e_portal_A_4_north');
     expect(r.edgeIds.some((id) => edgeOf(id).properties.highway === 'steps')).toBe(false);
-    expect(r.floorChanges).toEqual(['바깥 → A동 4층 출입구']);
+    expect(kinds(r)).toEqual(['walk', 'ramp', 'walk', 'portal', 'walk']);
+    expect(texts(r)).toContain('A동 4층 출입구로 들어가세요');
+    expect(r.fallback).toBeNull();
   });
 
-  it('reports distance, time and cost consistent with SPEC §6', () => {
+  it('reports distance, time and cost in seconds (SPEC-v0.2 3.1)', () => {
     const short = route(GATE, ROOM_408, 'shortest');
     const free = route(GATE, ROOM_408, 'step_free');
     expect(free.distanceM).toBeGreaterThan(short.distanceM);
-    expect(free.cost).toBeGreaterThan(short.cost);
-    // No elevator on either route: time is just walking at 1.2 m/s.
-    expect(short.durationMin).toBeCloseTo(short.distanceM / WALKING_SPEED_M_PER_S / 60, 1);
-    // Steps cost length × 1.5 + 15, portal adds 2.
-    expect(short.cost).toBeGreaterThan(short.distanceM + 15 + 2);
+    expect(free.timeSec).toBeGreaterThan(short.timeSec);
+    // Walking 105.7 m at 1.2 m/s, the 24 outdoor steps at 0.55 s each, and the portal.
+    expect(short.timeSec).toBeCloseTo(short.distanceM / WALK_SPEED_MPS + 24 * STEP_SEC + PORTAL_SEC, 0);
+    // The steps add up to the total, and with no penalty on this route cost is the time.
+    expect(short.steps.reduce((sum, s) => sum + s.timeSec, 0)).toBeCloseTo(short.timeSec, 0);
+    expect(short.cost).toBe(short.timeSec);
+    expect(free.cost).toBe(free.timeSec);
   });
 });
 
@@ -75,31 +82,53 @@ describe('findRoute: gate → B동 2층 201호', () => {
   it('step_free rides the A동 elevator to 3F and crosses the bridge', () => {
     const r = route(GATE, ROOM_201, 'step_free');
     expect(r.edgeIds).toEqual(expect.arrayContaining(['e_portal_A_4_north', 'e_A_elevA_L3__A_elevA_L4', 'e_A_3_bridge__B_2_bridge']));
-    expect(r.stairCount).toBe(0);
-    expect(r.floorChanges).toEqual([
-      '바깥 → A동 4층 출입구',
-      'A동 4층 → 엘리베이터 → 3층',
-      'A동 3층 → 연결통로 → B동 2층',
-    ]);
+    expect(r.stairsCount).toBe(0);
+    expect(kinds(r)).toEqual(['walk', 'ramp', 'walk', 'portal', 'walk', 'elevator', 'walk', 'bridge', 'walk']);
+    expect(texts(r)).toEqual(expect.arrayContaining([
+      'A동 4층 출입구로 들어가세요',
+      '엘리베이터를 타고 3층으로 가세요',
+      'A동 3층 연결통로를 건너 B동 2층으로 가세요',
+    ]));
   });
 
   it('shortest goes in at B동 1층 and takes the stairs', () => {
     const r = route(GATE, ROOM_201, 'shortest');
-    expect(r.stairCount).toBe(1);
-    expect(r.floorChanges).toEqual(['바깥 → B동 1층 출입구', 'B동 1층 → 계단 → 2층']);
+    expect(r.stairsCount).toBe(1);
+    expect(kinds(r)).toEqual(['walk', 'portal', 'walk', 'stairs', 'walk']);
+    expect(texts(r)).toEqual(expect.arrayContaining(['B동 1층 출입구로 들어가세요', '계단으로 1층 올라가세요']));
   });
 });
 
-describe('findRoute: no route', () => {
-  it('step_free to a place reachable only by stairs returns "no route"', () => {
-    const result = findRoute(graph, GATE, 'n_B_1_hall', 'step_free');
-    expect(result).toEqual({
-      found: false,
-      profile: 'step_free',
-      reason: 'no-route',
-      message: expect.stringContaining('계단 없는 경로가 없습니다'),
+describe('findRoute: no route, fallback and one-way edges', () => {
+  it('step_free to a place behind a sill falls back to fewest_steps and says what it could not avoid (R15)', () => {
+    // v0.1 said "no route" here. B동 1층's only way in is the portal e_portal_B_1_main, step_free: false.
+    const r = route(GATE, 'n_B_1_hall', 'step_free');
+    expect(r.profile).toBe('step_free'); // what was asked for
+    expect(r.fallback).toMatchObject({ profile: 'fewest_steps', stairsCount: 0, barrierCount: 1 });
+    expect(r.fallback!.message).toContain('턱이 있는 구간 1곳');
+    expect(r.edgeIds).toContain('e_portal_B_1_main');
+    expect(findRoute(graph, GATE, 'n_B_1_hall', 'shortest')).toMatchObject({ found: true });
+  });
+
+  it('returns "no route" when closed doors leave no way at all', () => {
+    // B동 is reached through its 1F portal, the A동 3F bridge, or the C동 bridge that ends in two steps; with all closed there is no way in.
+    const until = '2026-12-31T00:00:00+09:00';
+    const closed = buildGraph(campus, {
+      now: new Date('2026-11-11T00:00:00+09:00'),
+      overrides: [
+        { feature_id: 'e_portal_B_1_main', status: 'closed', until, report_id: 'rp-1' },
+        { feature_id: 'e_A_3_bridge__B_2_bridge', status: 'closed', until, report_id: 'rp-2' },
+        { feature_id: 'e_C_5_east__B_2_steps', status: 'closed', until, report_id: 'rp-3' },
+      ],
     });
-    expect(findRoute(graph, GATE, 'n_B_1_hall', 'shortest').found).toBe(true);
+    for (const profile of ['step_free', 'shortest'] as const) {
+      expect(findRoute(closed, GATE, 'n_B_1_hall', profile)).toMatchObject({
+        found: false,
+        profile,
+        reason: 'no-route',
+        message: expect.stringContaining('경로가 없습니다'),
+      });
+    }
   });
 
   it('respects one-way edges', () => {
@@ -107,8 +136,14 @@ describe('findRoute: no route', () => {
     const portal = oneWay.features.map((f) => f.feature as AnyFeature).find((f) => f.id === 'e_portal_A_4_north');
     portal.properties.bidirectional = false; // n_A_4_north → n_out_0003 only: exit, no entry
     const g = buildGraph(oneWay);
-    expect(findRoute(g, GATE, ROOM_408, 'step_free').found).toBe(false);
-    expect(findRoute(g, ROOM_408, GATE, 'step_free').found).toBe(true);
+    // No way in through the 4F door any more: step_free has to use the 1F portal (a sill), so it is a fallback.
+    const inbound = route(GATE, ROOM_408, 'step_free', g);
+    expect(inbound.edgeIds).not.toContain('e_portal_A_4_north');
+    expect(inbound.fallback).toMatchObject({ profile: 'fewest_steps' });
+    // Going out through it is still allowed, and stays a clean step-free route.
+    const outbound = route(ROOM_408, GATE, 'step_free', g);
+    expect(outbound.edgeIds).toContain('e_portal_A_4_north');
+    expect(outbound.fallback).toBeNull();
   });
 
   it('returns unknown-node for ids that are not nodes', () => {
@@ -118,19 +153,14 @@ describe('findRoute: no route', () => {
 });
 
 describe('elevator', () => {
-  it('pays the boarding cost and the wait once per ride, not once per floor', () => {
+  it('pays the boarding time once per ride, not once per floor', () => {
     const r = route('n_A_1_hall', 'n_A_4_hall', 'step_free');
-    expect(r.floorChanges).toEqual(['A동 1층 → 엘리베이터 → 4층']);
+    expect(kinds(r)).toEqual(['walk', 'elevator', 'walk']);
+    expect(texts(r)).toContain('엘리베이터를 타고 4층으로 가세요');
     expect(r.edgeIds.filter((id) => id.startsWith('e_A_elevA_'))).toHaveLength(3);
-    expect(r.cost).toBeCloseTo(r.distanceM + ELEVATOR_BOARDING_COST + 3 * ELEVATOR_FLOOR_COST, 0);
-    expect(r.durationMin).toBeCloseTo((r.distanceM / WALKING_SPEED_M_PER_S + ELEVATOR_WAIT_S + 3 * ELEVATOR_FLOOR_S) / 60, 1);
-  });
-
-  it('counts floors without a floor 0', () => {
-    expect(elevatorFloors({ level_from: 1, level_to: 3 })).toBe(2);
-    expect(elevatorFloors({ level_from: -1, level_to: 1 })).toBe(1);
-    expect(elevatorFloors({ level_from: 2, level_to: -2 })).toBe(3);
-    expect(elevatorFloors({})).toBe(1);
+    // board once, one hop per elevator edge, alight once: 40 + 3 × 4 + 3
+    expect(r.timeSec).toBeCloseTo(r.distanceM / WALK_SPEED_MPS + ELEVATOR_BOARD_SEC + 3 * ELEVATOR_HOP_SEC + ELEVATOR_ALIGHT_SEC, 0);
+    expect(r.cost).toBe(r.timeSec);
   });
 });
 
@@ -140,11 +170,11 @@ describe('routing never compares floor numbers (AGENTS.md)', () => {
     ['n_A_1_hall', 'n_A_4_hall'], [ROOM_408, ROOM_201], ['n_B_1_main', 'n_A_1_main'],
   ];
 
-  /** Everything except floorChanges, which prints floor numbers for people to read. */
+  /** Everything except the steps' display text and floor names, which print floor numbers for people to read. */
   const comparable = (r: RouteResult) => {
     if (!r.found) return r;
-    const { floorChanges: _ignored, ...rest } = r;
-    return rest;
+    const { steps, ...rest } = r;
+    return { ...rest, stepKinds: steps.map((s) => s.kind), stepTimes: steps.map((s) => s.timeSec) };
   };
 
   it('gives the same routes after every level value is deleted from the data', () => {

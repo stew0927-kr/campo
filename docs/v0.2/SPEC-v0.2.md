@@ -428,7 +428,7 @@ Turf 주의 (7.4.0 소스에서 확인):
 - 대표 제보(`is_primary: true`)가 changeset의 `report_ids` 첫 항목이다. 나머지 구성원은 같은 `bundle_id`를 가지고 대표의 처리를 따른다.
 - 묶음에서 제보를 빼면 `new`로 돌아간다.
 - 일시 제보는 묶지 않고, 같은 `feature_id`에 활성 override가 이미 있으면 `duplicate`로 처리한다.
-- 묶는 거리 기준은 구현 때 정한다(추정: 같은 범위에서 8m 안).
+- 묶는 거리 기준은 같은 범위에서 8m 안이다. 이 값은 상수 파일 한 곳에만 둔다(`packages/core/src/reports/` 아래, 예: `BUNDLE_DISTANCE_M`).
 
 **제보 상태** (MapRoulette 상태를 캠포 용어로 옮긴 것):
 
@@ -488,7 +488,7 @@ W8과 W9는 OpenTripPlanner가 지도 데이터를 그래프로 만들 때 내�
 - 무거우면 한 번에 100개씩 묶어 브라우저 유휴 시간(`requestIdleCallback`)에 처리한다. iD가 이렇게 한다.
 - 검사 결과의 id는 `규칙코드:정렬한 Feature id들`로 정해서, 같은 문제가 다시 나와도 같은 id가 되게 한다.
 - 화면은 오류와 경고 두 목록이다. 항목에 마우스를 올리면 관련 Feature가 강조되고, 클릭하면 그 자리로 이동한다.
-- 바뀐 Feature를 알아내는 방법(상태 비교 또는 Immer 패치 경로)은 구현 때 정한다. 이것은 확인되지 않은 부분이다.
+- **바뀐 Feature는 동작의 Immer 패치 경로에서 뽑는다.** 패치 경로의 `path[0]`이 `nodes` / `edges` / `buildings`이고 `path[1]`이 id다. 같은 id는 한 번만 센다. 이웃(이어진 구간과 지점)은 이 id들에서 상태를 따라가며 모은다.
 
 ---
 

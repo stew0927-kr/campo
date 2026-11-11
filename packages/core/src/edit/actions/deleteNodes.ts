@@ -1,5 +1,5 @@
 import type { EdgeProperties, Position } from '../../types.ts';
-import { bumpRev, defineAction, deletionWarnings, type Action, type EditContext } from '../action.ts';
+import { bumpRev, defineAction, deletionWarnings, observationMessage, type Action, type EditContext } from '../action.ts';
 import { lineLength } from '../geo.ts';
 import { deepEqual, edgeCoords, edgesAt, type EditEdge, type EditState } from '../state.ts';
 import { missing } from './common.ts';
@@ -100,7 +100,24 @@ export function deleteNodes(ids: readonly string[], options: DeleteNodesOptions 
         delete draft.nodes[id];
       }
     },
-    warnings: (state) => deletionWarnings(action, ctx, state),
+    warnings(state) {
+      const out = deletionWarnings(action, ctx, state);
+      if (options.heal && ctx?.observationTargets) {
+        // A healed edge changes length, so measurements on either of the two joined edges are stale.
+        const seen = new Set<string>();
+        for (const id of list) {
+          const plan = state.nodes[id] ? healPlan(state, id) : null;
+          if (!plan) continue;
+          for (const edgeId of [plan.keep, plan.drop]) {
+            if (!seen.has(edgeId) && ctx.observationTargets.has(`edge:${edgeId}`)) {
+              seen.add(edgeId);
+              out.push(observationMessage(edgeId));
+            }
+          }
+        }
+      }
+      return out;
+    },
   });
   return action;
 }

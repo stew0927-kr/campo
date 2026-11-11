@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkInvariants, deleteNodes, healPlan, type EdgeProperties, type EditState } from '../../src/index.ts';
+import { OBSERVATION_CHANGED_MESSAGE, checkInvariants, deleteNodes, healPlan, type EdgeProperties, type EditState } from '../../src/index.ts';
 import { ctx, deepFreeze, expectInputUntouched, expectUndoRedo, fixtureState } from './helpers.ts';
 
 function edge(id: string, from: string, to: string, extra: Partial<EdgeProperties> = {}) {
@@ -45,6 +45,15 @@ describe('deleteNodes', () => {
     expect(Object.keys(next.edges)).toEqual(['e2']);
     expect(next.edges['e2']!.props).toMatchObject({ from: 'a', to: 'b', step_count: 7, rev: 2 });
     expect(next.edges['e2']!.vertices).toEqual([[127.0001, 37]]);
+  });
+
+  it('heal warns that measurements on the joined edges must be redone, plain delete does not', async () => {
+    const s = await fixtureState();
+    const targets = new Set(['edge:e_A_4_hall__A_4_408door']);
+    const heal = deleteNodes(['n_A_4_408door'], { heal: true }, ctx(1, { observationTargets: targets }));
+    expect(heal.warnings!(s)).toEqual([`구간 "e_A_4_hall__A_4_408door": ${OBSERVATION_CHANGED_MESSAGE}.`]);
+    expect(OBSERVATION_CHANGED_MESSAGE).toBe('이 구간의 측정은 바뀌기 전 길이 기준이라 다시 재야 합니다');
+    expect(deleteNodes(['n_A_4_408door'], {}, ctx(1, { observationTargets: targets })).warnings!(s)).toEqual([]);
   });
 
   it('no heal when the direction through n differs (one-way, or incline)', () => {

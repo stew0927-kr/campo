@@ -5,5 +5,6 @@ export default defineProject({
     name: 'core',
     environment: 'node',
     include: ['test/**/*.test.ts'],
+    setupFiles: ['./vitest.setup.ts'],
   },
 });

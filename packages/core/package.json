@@ -12,10 +12,19 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json"
   },
   "dependencies": {
+    "@turf/along": "7.4.0",
     "@turf/distance": "7.4.0",
+    "@turf/helpers": "7.4.0",
     "@turf/length": "7.4.0",
+    "@turf/line-slice-along": "7.4.0",
+    "@turf/nearest-point-on-line": "7.4.0",
     "ajv": "8.20.0",
+    "immer": "11.2.10",
     "ngraph.graph": "20.1.2",
-    "ngraph.path": "1.6.1"
+    "ngraph.path": "1.6.1",
+    "rbush": "4.0.1"
+  },
+  "devDependencies": {
+    "fast-check": "4.10.2"
   }
 }

@@ -4,6 +4,7 @@ import { fetchCampus, saveCampus } from './api.ts';
 import type { RouteLine } from './map/layers.ts';
 import { MapView, type FocusRequest, type MapClick } from './map/MapView.tsx';
 import { addBuilding, buildingAt } from './model/building.ts';
+import { countDeleted, deleteFeature } from './model/delete.ts';
 import type { CampusDoc } from './model/document.ts';
 import { docToCampus, docToFiles } from './model/files.ts';
 import { getBuilding } from './model/ids.ts';
@@ -191,6 +192,39 @@ export function App() {
     setFocus((prev) => ({ position: featureCenter(f), seq: (prev?.seq ?? 0) + 1 }));
   };
 
+  /** 삭제: the feature plus whatever would dangle without it (model/delete.ts). */
+  const onDelete = useCallback((featureId: string) => {
+    if (!doc) return;
+    const target = doc.features.get(featureId);
+    if (!target) return;
+    const { doc: next, deletedIds } = deleteFeature(doc, featureId);
+    const gone = new Set(deletedIds);
+    const { nodes, edges } = countDeleted(doc, deletedIds);
+    const p = target.properties;
+    const text = p.kind === 'building'
+      ? `${p.name} 건물과 그 안의 지점 ${nodes}개, 구간 ${edges}개를 삭제했습니다.`
+      : p.kind === 'node'
+        ? (edges > 0 ? `${featureId} 지점과 이어진 구간 ${edges}개를 삭제했습니다.` : `${featureId} 지점을 삭제했습니다.`)
+        : `${featureId} 구간을 삭제했습니다.`;
+
+    setDoc(next);
+    // Screen state that pointed at what is gone, so the panel and the next click do not use a dead id.
+    setUi((u) => {
+      const scope = u.scope.kind === 'building' && gone.has(u.scope.buildingId) ? OUTDOOR : u.scope;
+      return {
+        ...u,
+        scope,
+        selectedId: null,
+        pickFrom: u.pickFrom && gone.has(u.pickFrom) ? null : u.pickFrom,
+        selectedBuildingId: u.selectedBuildingId && gone.has(u.selectedBuildingId) ? null : u.selectedBuildingId,
+        routeFrom: u.routeFrom && gone.has(u.routeFrom) ? null : u.routeFrom,
+        routeTo: u.routeTo && gone.has(u.routeTo) ? null : u.routeTo,
+        tool: toolAvailable(u.tool, scope) ? u.tool : 'pan',
+      };
+    });
+    setNotice({ text, tone: 'info' });
+  }, [doc]);
+
   const onSave = useCallback(async () => {
     if (!doc || saving) return;
     const files = docToFiles(doc);
@@ -219,11 +253,15 @@ export function App() {
       } else if (e.key === 'Escape' && ui.pickFrom) {
         patchUi({ pickFrom: null });
         setNotice(null);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && !dialog && ui.selectedId && !isTextEntry(e.target)) {
+        // Delete/Backspace remove the selected feature; never while typing in a field or over an open dialog.
+        e.preventDefault();
+        onDelete(ui.selectedId);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onSave, ui.pickFrom]);
+  }, [onSave, ui.pickFrom, ui.selectedId, dialog, onDelete]);
 
   const highlight = useMemo(() => new Set([ui.pickFrom, ui.selectedId].filter((id): id is string => !!id)), [ui.pickFrom, ui.selectedId]);
 
@@ -294,6 +332,7 @@ export function App() {
           <PropertiesPanel
             feature={ui.selectedId ? doc.features.get(ui.selectedId) : undefined}
             onEdit={(edits) => ui.selectedId && setDoc(updateProperties(doc, ui.selectedId, edits))}
+            onDelete={onDelete}
           />
         )}
         {ui.panelTab === 'checks' && <ChecksPanel result={checks} onLocate={onLocate} />}
@@ -360,4 +399,10 @@ export function App() {
       )}
     </div>
   );
+}
+
+/** Text fields and other editable areas keep Delete and Backspace for themselves. */
+function isTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
 }

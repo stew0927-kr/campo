@@ -12,13 +12,14 @@ import {
   type ErrorCode,
   type LoadedCampus,
   type NodeFeature,
+  type Observation,
   type Override,
   type Position,
   type ValidationIssue,
   type ValidationResult,
   type WarningCode,
 } from './types.ts';
-import { CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
+import { CALIBRATION_FILE, CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
 import { isStepFreePassable } from './costs.ts';
 
 /** Max distance (m) between an edge's line ends and its from/to nodes (§7 error 4). */
@@ -29,6 +30,8 @@ ajv.addSchema(schema);
 const validateFeatureSchema = schemaFor<CampoFeature>('feature');
 const validateMetaSchema = schemaFor<CampusMeta>('campus');
 const validateOverridesSchema = schemaFor<Override[]>('overrides');
+const validateObservationSchema = schemaFor<Observation>('observation');
+const validateCalibrationSchema = schemaFor<Record<string, unknown>>('calibration');
 
 function schemaFor<T>(def: string): ValidateFunction<T> {
   const fn = ajv.getSchema<T>(`${schema.$id}#/$defs/${def}`);
@@ -74,6 +77,15 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
   if (campus.overrides !== undefined) {
     if (validateOverridesSchema(campus.overrides)) overrides = campus.overrides;
     else error(OVERRIDES_FILE, null, E.schema, formatSchemaErrors(validateOverridesSchema.errors));
+  }
+
+  if (campus.calibration !== undefined && !validateCalibrationSchema(campus.calibration)) {
+    error(CALIBRATION_FILE, null, E.schema, formatSchemaErrors(validateCalibrationSchema.errors));
+  }
+  const observations: Located<Observation>[] = [];
+  for (const { file, line, record } of campus.observations ?? []) {
+    if (validateObservationSchema(record)) observations.push({ file, feature: record });
+    else error(`${file}:${line}`, null, E.schema, formatSchemaErrors(validateObservationSchema.errors));
   }
 
   const valid: Located<CampoFeature>[] = [];
@@ -368,6 +380,29 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     } else if (until < now) {
       warn(OVERRIDES_FILE, o.feature_id, W.expiredOverride, `override(제보 ${o.report_id})가 ${o.until}에 만료되었습니다. 지워 주세요.`);
     }
+  }
+
+  // E12. An escalator is a moving staircase: wheelchairs cannot ride it (SPEC-v0.2 2.7).
+  for (const { file, edge } of linked) {
+    if (edge.properties.highway === 'steps' && edge.properties.conveying !== undefined && edge.properties.step_free !== false) {
+      error(file, edge.id, E.escalatorNotStepFree, '에스컬레이터(conveying이 있는 계단)의 step_free는 false여야 합니다.');
+    }
+  }
+
+  // W12. An indoor escalator should change floors. Outdoor ones have a single scope, so they are skipped
+  // (a hill's height can only be checked once elevation data is joined).
+  for (const { file, edge, from, to } of linked) {
+    if (edge.properties.highway !== 'steps' || edge.properties.conveying === undefined) continue;
+    if (from.properties.building_id === null || to.properties.building_id === null) continue;
+    if (scopeOf(from) === scopeOf(to)) warn(file, edge.id, W.escalatorSameScope, '에스컬레이터가 같은 건물, 같은 층 안에서 끝납니다(층이 바뀌지 않습니다).');
+  }
+
+  // W13. A measurement must point at an existing edge or elevator.
+  const edgeIds = new Set(edges.map((e) => e.feature.id));
+  for (const { file, feature: o } of observations) {
+    const id = o.target.slice(o.target.indexOf(':') + 1);
+    const exists = o.target.startsWith('edge:') ? edgeIds.has(id) : stopsById.has(id);
+    if (!exists) warn(file, null, W.observationUnknownTarget, `측정 대상 "${o.target}"이(가) 없는 구간 또는 엘리베이터입니다.`);
   }
 
   // W10. A bridge exists to join two buildings.

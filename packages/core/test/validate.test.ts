@@ -71,9 +71,10 @@ describe('fixture campus-basic', () => {
     expect(nodes.filter((n) => n.properties.building_id === null)).toHaveLength(7); // 6 on the campus paths + a dead end in front of C
     expect(of((f) => f.properties.kind === 'building')).toEqual(['bldg_A', 'bldg_B', 'bldg_C']);
     expect(of((f) => f.properties.highway === 'elevator')).toHaveLength(3); // A 1→2→3→4
-    expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'indoor' && f.properties.from.startsWith('n_A_')))
+    expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'indoor' && f.properties.from.startsWith('n_A_') && !f.properties.conveying))
       .toHaveLength(3); // A 1→2→3→4
-    expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'outdoor')).toEqual(['e_out_0002__out_0003']);
+    expect(of((f) => f.properties.conveying)).toEqual(['e_A_1_esc__A_2_esc_down', 'e_A_1_esc__A_2_esc_up', 'e_out_0002__out_0003_esc']);
+    expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'outdoor' && !f.properties.conveying)).toEqual(['e_out_0002__out_0003']);
     expect(of((f) => f.properties.edge_type === 'portal')).toContain('e_portal_A_4_north');
     expect(of((f) => f.properties.edge_type === 'bridge')).toEqual([
       'e_A_3_bridge__B_2_bridge', 'e_A_3_north__C_5_bridge', 'e_C_5_east__B_2_steps',
@@ -533,5 +534,130 @@ describe('schema v0.2: flight_sec (SPEC-v0.2 3.1)', () => {
       [E.schema, 'e_out_0001__out_0002'],
       [E.schema, 'e_out_0002__out_0003'],
     ]);
+  });
+});
+
+describe('escalators and measurements (SPEC-v0.2 2.7, 3.9, 8)', () => {
+  const obs = (target: string, extra: object = {}) => ({
+    target, duration_sec: 21, source: 'field', measured_at: '2026-11-12T09:10:00+09:00', ...extra,
+  });
+
+  it('the fixture has an indoor pair and an outdoor escalator and validates clean', () => {
+    const props = (id: string) => (fixture.features.map((f) => f.feature as AnyFeature).find((f) => f.id === id)).properties;
+    expect(props('e_A_1_esc__A_2_esc_up')).toMatchObject({ highway: 'steps', conveying: 'forward', bidirectional: false, step_free: false });
+    expect(props('e_A_1_esc__A_2_esc_down')).toMatchObject({ highway: 'steps', conveying: 'backward', bidirectional: false });
+    expect(props('e_out_0002__out_0003_esc')).toMatchObject({ edge_type: 'outdoor', conveying: 'forward' });
+    expect(validateCampus(fixture)).toEqual({ errors: [], warnings: [] });
+  });
+
+  it('E12: an escalator whose step_free is not false is an error (null and true)', () => {
+    for (const value of [null, true]) {
+      const result = broken(({ get }) => {
+        get('e_A_1_esc__A_2_esc_up').properties.step_free = value;
+      });
+      expect(codes(result.errors), `step_free ${String(value)}`).toEqual([[E.escalatorNotStepFree, 'e_A_1_esc__A_2_esc_up']]);
+    }
+  });
+
+  it('W12: an indoor escalator that stays on one floor warns; the outdoor one never does', () => {
+    const result = broken(({ get }) => {
+      // Move the upper end onto the lower floor (a node on A 1F), so both ends share a scope.
+      const edge = get('e_A_1_esc__A_2_esc_up');
+      edge.properties.to = 'n_A_1_stair';
+      edge.properties.level_to = 1;
+      edge.geometry.coordinates[1] = get('n_A_1_stair').geometry.coordinates;
+    });
+    expect(codes(result.warnings)).toContainEqual([W.escalatorSameScope, 'e_A_1_esc__A_2_esc_up']);
+    expect(result.warnings.filter((w) => w.code === W.escalatorSameScope)).toHaveLength(1);
+  });
+
+  it('schema: conveying on an elevator is rejected', () => {
+    for (const id of ['e_A_elevA_L1__A_elevA_L2']) {
+      const result = broken(({ get }) => {
+        get(id).properties.conveying = 'forward';
+        get(id).properties.bidirectional = false;
+      });
+      // The broken edge leaves the lift graph, so E11 may also report the split; the schema error must be there.
+      expect(codes(result.errors)).toContainEqual([E.schema, id]);
+    }
+  });
+
+  it('schema: forward / backward need bidirectional false, reversible needs true', () => {
+    const forward = broken(({ get }) => { get('e_A_1_esc__A_2_esc_up').properties.bidirectional = true; });
+    expect(codes(forward.errors)).toEqual([[E.schema, 'e_A_1_esc__A_2_esc_up']]);
+    const reversibleOneWay = broken(({ get }) => { get('e_A_1_esc__A_2_esc_up').properties.conveying = 'reversible'; });
+    expect(codes(reversibleOneWay.errors)).toEqual([[E.schema, 'e_A_1_esc__A_2_esc_up']]);
+    const reversible = broken(({ get }) => {
+      get('e_A_1_esc__A_2_esc_up').properties.conveying = 'reversible';
+      get('e_A_1_esc__A_2_esc_up').properties.bidirectional = true;
+    });
+    expect(reversible.errors).toEqual([]);
+  });
+
+  it('schema: an unknown conveying value is rejected', () => {
+    const result = broken(({ get }) => { get('e_A_1_esc__A_2_esc_up').properties.conveying = 'sideways'; });
+    expect(codes(result.errors)).toEqual([[E.schema, 'e_A_1_esc__A_2_esc_up']]);
+  });
+
+  it('W13: a measurement of an existing edge or elevator is fine, an unknown one warns', () => {
+    const ok = broken(({ campus }) => {
+      campus.observations = [
+        { file: 'observations/a.jsonl', line: 1, record: obs('edge:e_A_1_esc__A_2_esc_up') },
+        { file: 'observations/a.jsonl', line: 2, record: obs('elevator:A_elevA') },
+      ];
+    });
+    expect(ok).toEqual({ errors: [], warnings: [] });
+
+    const bad = broken(({ campus }) => {
+      campus.observations = [
+        { file: 'observations/a.jsonl', line: 1, record: obs('edge:e_nope') },
+        { file: 'observations/a.jsonl', line: 2, record: obs('elevator:nope') },
+      ];
+    });
+    expect(bad.errors).toEqual([]);
+    expect(bad.warnings.map((w) => w.code)).toEqual([W.observationUnknownTarget, W.observationUnknownTarget]);
+  });
+
+  it('an observation line breaks the schema when it has an unknown field, a bad time or no source', () => {
+    const cases: object[] = [
+      obs('edge:e_A_1_esc__A_2_esc_up', { user_id: 'u1' }),
+      obs('edge:e_A_1_esc__A_2_esc_up', { duration_sec: 0 }),
+      obs('edge:e_A_1_esc__A_2_esc_up', { measured_at: 'yesterday' }),
+      obs('edge:e_A_1_esc__A_2_esc_up', { source: 'friend' }),
+      obs('stairs:x'),
+      { target: 'edge:e_A_1_esc__A_2_esc_up', duration_sec: 20, measured_at: '2026-11-12T09:10:00+09:00' },
+    ];
+    for (const record of cases) {
+      const result = broken(({ campus }) => {
+        campus.observations = [{ file: 'observations/a.jsonl', line: 7, record }];
+      });
+      expect(codes(result.errors)).toEqual([[E.schema, null]]);
+      expect(result.errors[0]!.file).toBe('observations/a.jsonl:7');
+    }
+  });
+
+  it('a calibration.json that breaks the schema is an error', () => {
+    const good = { 'edge:e_A_1_esc__A_2_esc_up': { prior_sec: 19, median_sec: 22, n: 5, estimate_sec: 20.9, updated_at: '2026-11-12' } };
+    expect(broken(({ campus }) => { campus.calibration = good; }).errors).toEqual([]);
+    for (const bad of [
+      { 'edge:x': { ...good['edge:e_A_1_esc__A_2_esc_up'], n: 0 } },
+      { 'edge:x': { prior_sec: 19 } },
+      { 'nonsense': good['edge:e_A_1_esc__A_2_esc_up'] },
+      [],
+    ]) {
+      const result = broken(({ campus }) => { campus.calibration = bad; });
+      expect(codes(result.errors)).toEqual([[E.schema, null]]);
+    }
+  });
+
+  it('parseCampus reads observations/*.jsonl line by line and reports a broken line with its number', () => {
+    const line = JSON.stringify(obs('edge:e_A_1_esc__A_2_esc_up'));
+    const campus = parseCampus([
+      { path: 'observations/a.jsonl', text: `${line}\n\nnot json\n${line}\n` },
+      { path: 'calibration.json', text: '{}' },
+    ]);
+    expect(campus.observations?.map((o) => [o.file, o.line])).toEqual([['observations/a.jsonl', 1], ['observations/a.jsonl', 4]]);
+    expect(campus.fileErrors.map((e) => e.file)).toEqual(['observations/a.jsonl:3']);
+    expect(campus.calibration).toEqual({});
   });
 });

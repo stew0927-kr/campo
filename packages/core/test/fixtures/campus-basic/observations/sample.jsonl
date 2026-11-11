@@ -1,0 +1,6 @@
+{"target":"edge:e_out_0002__out_0003_esc","duration_sec":82,"source":"field","measured_at":"2026-11-12T09:10:00+09:00","note":"서서 탐"}
+{"target":"edge:e_out_0002__out_0003_esc","duration_sec":88,"source":"field","measured_at":"2026-11-12T09:20:00+09:00"}
+{"target":"edge:e_out_0002__out_0003_esc","duration_sec":85,"source":"app","measured_at":"2026-11-12T12:00:00+09:00"}
+{"target":"edge:e_A_1_esc__A_2_esc_up","duration_sec":22,"source":"field","measured_at":"2026-11-12T10:00:00+09:00"}
+{"target":"edge:e_A_1_esc__A_2_esc_up","duration_sec":21,"source":"field","measured_at":"2026-11-12T10:05:00+09:00"}
+{"target":"edge:e_A_1_esc__A_2_esc_down","duration_sec":19,"direction":"backward","source":"field","measured_at":"2026-11-12T10:10:00+09:00"}

@@ -6,11 +6,13 @@
   "description": "Command-line tools: validate CLI, later elevation join scripts.",
   "bin": {
     "campo-validate": "./src/validate.ts",
-    "campo-migrate": "./src/migrate.ts"
+    "campo-migrate": "./src/migrate.ts",
+    "campo-calibrate": "./src/calibrate.ts"
   },
   "scripts": {
     "validate": "tsx src/validate.ts",
     "migrate": "tsx src/migrate.ts",
+    "calibrate": "tsx src/calibrate.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

@@ -2,9 +2,10 @@
 // One unit: seconds. Link time is the expected travel time; profile penalties
 // are added to the search cost only, never to the time.
 //
-// Decisions here use an edge's own highway / edge_type / step_free and nothing
-// else: no floor numbers (AGENTS.md; a test checks this file).
-import type { EdgeProperties, NodeType } from './types.ts';
+// Decisions here use an edge's own properties (highway, edge_type, step_free,
+// conveying, …) and its end node types, nothing else: no floor numbers
+// (AGENTS.md; a test checks this file).
+import { CONVEYING_VALUES, type Conveying, type EdgeProperties, type NodeType } from './types.ts';
 
 export const PROFILES = ['shortest', 'step_free', 'fewest_steps'] as const;
 /**
@@ -42,6 +43,14 @@ export const OUTDOOR_STAIRS_SEC_PER_M = 2;
 export const OUTDOOR_STAIRS_MIN_SEC = 10;
 /** Going down a flight takes this share of the time going up (every stairs rule). */
 export const DOWNHILL_STAIRS_FACTOR = 2 / 3;
+/** Escalator belt speed along its slope, m/s (standing, not walking up). Only a first guess: see calibration. */
+export const ESCALATOR_SPEED_MPS = 0.5;
+/** Getting on and off an escalator. */
+export const ESCALATOR_BOARD_SEC = 3;
+/** Lower bound for an escalator edge drawn too short. */
+export const ESCALATOR_MIN_SEC = 8;
+/** Slope of most escalators; slope length = plan length / cos(this). */
+export const ESCALATOR_SLOPE_DEG = 30;
 /** Waiting for and getting into the car. Paid once per ride, on the board link. */
 export const ELEVATOR_BOARD_SEC = 40;
 /** Riding along one elevator edge (neighbouring stops). */
@@ -58,7 +67,33 @@ export const UNKNOWN_STEP_FREE_PENALTY_SEC = 60;
 /** fewest_steps: each steps edge (Valhalla's wheelchair stairs penalty default). */
 export const FEWEST_STEPS_STAIRS_PENALTY_SEC = 600;
 
+/** fewest_steps: an escalator (highway=steps + conveying) costs a tenth of a flight of stairs. */
+export const FEWEST_STEPS_ESCALATOR_PENALTY_SEC = FEWEST_STEPS_STAIRS_PENALTY_SEC / 10;
+
+// ---- Calibration (SPEC-v0.2 3.9) ----
+
+/** Blend weight of the prior: estimate = (K × prior + n × median) / (K + n). */
+export const CALIBRATION_K = 3;
+/** A measurement under prior / this or over prior × this is thrown away. */
+export const OUTLIER_RATIO = 3;
+
 type StepFreeFacts = Pick<EdgeProperties, 'highway' | 'step_free'>;
+type PenaltyFacts = Pick<EdgeProperties, 'highway' | 'step_free' | 'conveying'>;
+
+/**
+ * The edge's moving-belt direction (SPEC-v0.2 2.7), or null when it has none.
+ * A value that is not one of CONVEYING_VALUES (unvalidated data) counts as none,
+ * so the graph links and the time rule always agree on what is a belt.
+ */
+export function conveyingOf(edge: Pick<EdgeProperties, 'conveying'>): Conveying | null {
+  const c = edge.conveying;
+  return (CONVEYING_VALUES as readonly unknown[]).includes(c) ? (c as Conveying) : null;
+}
+
+/** An escalator: a steps edge with conveying (SPEC-v0.2 2.7). A moving walkway is not one. */
+export function isEscalator(edge: Pick<EdgeProperties, 'highway' | 'conveying'>): boolean {
+  return edge.highway === 'steps' && conveyingOf(edge) !== null;
+}
 
 /**
  * Can a step-free traveller use this edge? (SPEC-v0.2 2.1, audit R19)
@@ -89,7 +124,7 @@ export function walkTimeSec(edge: Pick<EdgeProperties, 'highway' | 'edge_type'>,
 }
 
 export interface StairsTimeInput {
-  edge: Pick<EdgeProperties, 'edge_type' | 'step_count' | 'flight_sec' | 'incline'>;
+  edge: Pick<EdgeProperties, 'edge_type' | 'step_count' | 'flight_sec' | 'incline' | 'conveying'>;
   /** node_type of the edge's from and to nodes (undefined when unknown). */
   endNodeTypes: readonly [NodeType | undefined, NodeType | undefined];
   /** Geodesic distance between the from / to node positions. */
@@ -100,7 +135,11 @@ export interface StairsTimeInput {
 
 /**
  * Expected time on a highway=steps edge, in seconds (user decision, 2026-11-11).
- * The time going up:
+ * An escalator (conveying, SPEC-v0.2 3.8) comes before every stairs rule:
+ *   max(plan length / cos(ESCALATOR_SLOPE_DEG) / ESCALATOR_SPEED_MPS + ESCALATOR_BOARD_SEC,
+ *   ESCALATOR_MIN_SEC), the same both ways it runs (no downhill factor; step_count,
+ *   flight_sec, incline and edge_type are not read). Which ways it runs is the graph's job.
+ * Otherwise the time going up:
  *   - outdoor (edge_type 'outdoor'): plan length only, max(plan length ×
  *     OUTDOOR_STAIRS_SEC_PER_M, OUTDOOR_STAIRS_MIN_SEC). step_count is ignored.
  *   - indoor flight (edge_type 'indoor', both ends stair_landing): a positive
@@ -116,6 +155,10 @@ export interface StairsTimeInput {
  * A portal's PORTAL_SEC is not part of this; the graph adds it.
  */
 export function stairsTimeSec({ edge, endNodeTypes, planLengthM, traversal }: StairsTimeInput): number {
+  if (conveyingOf(edge) !== null) {
+    const slopeM = planLengthM / Math.cos((ESCALATOR_SLOPE_DEG * Math.PI) / 180);
+    return Math.max(slopeM / ESCALATOR_SPEED_MPS + ESCALATOR_BOARD_SEC, ESCALATOR_MIN_SEC);
+  }
   const steps = edge.step_count;
   const flight = edge.flight_sec;
   const bySteps = typeof steps === 'number' && Number.isFinite(steps) && steps > 0 ? steps * STEP_SEC : null;
@@ -149,8 +192,12 @@ export function isClosedFor(edge: StepFreeFacts | null, profile: Profile): boole
   return profile === 'step_free' && !isStepFreePassable(edge);
 }
 
-/** Preference penalty in seconds for a link over `edge`, added to the cost only. */
-export function penaltySec(edge: StepFreeFacts | null, profile: Profile): number {
+/**
+ * Preference penalty in seconds for a link over `edge`, added to the cost only.
+ * fewest_steps: FEWEST_STEPS_ESCALATOR_PENALTY_SEC on an escalator,
+ * FEWEST_STEPS_STAIRS_PENALTY_SEC on any other steps edge.
+ */
+export function penaltySec(edge: PenaltyFacts | null, profile: Profile): number {
   if (edge === null) return 0;
   switch (profile) {
     case 'shortest':
@@ -158,6 +205,7 @@ export function penaltySec(edge: StepFreeFacts | null, profile: Profile): number
     case 'step_free':
       return isStepFreeUnknown(edge) ? UNKNOWN_STEP_FREE_PENALTY_SEC : 0;
     case 'fewest_steps':
-      return edge.highway === 'steps' ? FEWEST_STEPS_STAIRS_PENALTY_SEC : 0;
+      if (edge.highway !== 'steps') return 0;
+      return isEscalator(edge) ? FEWEST_STEPS_ESCALATOR_PENALTY_SEC : FEWEST_STEPS_STAIRS_PENALTY_SEC;
   }
 }

@@ -9,6 +9,7 @@ import {
   ELEVATOR_BOARD_SEC,
   ELEVATOR_HOP_SEC,
   WALK_SPEED_MPS,
+  conveyingOf,
   isClosedFor,
   penaltySec,
   perProfile,
@@ -17,6 +18,7 @@ import {
   walkTimeSec,
   type Profile,
 } from './costs.ts';
+import { edgeTargetKey, elevatorTargetKey, measuredTimes } from './routing/measured.ts';
 import { activeClosures } from './routing/overrides.ts';
 import type { BuildingFeature, EdgeFeature, EdgeProperties, LoadedCampus, NodeFeature, Position } from './types.ts';
 
@@ -86,6 +88,11 @@ export interface BuildGraphOptions {
   overrides?: unknown;
   /** The clock that decides which overrides are still active. Default: new Date(). */
   now?: Date;
+  /**
+   * calibration.json, unvalidated (SPEC-v0.2 3.9). Default: campus.calibration.
+   * Pass {} to build with the predicted times only (what predictedTimeSec should read).
+   */
+  calibration?: unknown;
 }
 
 /** Graph id of the elevator car standing at stop `nodeId`. Campus ids never contain '~'. */
@@ -103,6 +110,15 @@ export function carId(nodeId: string): string {
  * positions. The edge's line is not read: a line that misses its nodes is a
  * data error for validation (E4) and does not change the route. No cost is
  * clamped; heuristicSpeedMps adapts to the fastest link instead.
+ *
+ * Edges with conveying get links by conveying only: forward from → to,
+ * backward to → from, reversible both (SPEC-v0.2 2.7); the rest by bidirectional.
+ *
+ * Measured times (options.calibration, SPEC-v0.2 3.9) replace the predicted
+ * timeSec of a walk link (key "edge:<id>" as drawn, "edge:<id>#backward"
+ * against it) and of the board links of an elevator ("elevator:<elevator_id>",
+ * read from the stop's elevator_id). The preference penalty is still added:
+ * cost = timeSec + penalty. Hop and alight links are not calibrated.
  */
 export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}): CampusGraph {
   const graph = createGraph<GraphNodeData, GraphLinkData>({ multigraph: true });
@@ -110,6 +126,7 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
   const buildings = new Map<string, BuildingFeature>();
   const edges: EdgeFeature[] = [];
   const closed = activeClosures(options.overrides !== undefined ? options.overrides : campus.overrides, options.now ?? new Date());
+  const measured = measuredTimes(options.calibration !== undefined ? options.calibration : campus.calibration);
   let heuristicSpeedMps = WALK_SPEED_MPS;
 
   for (const { feature } of campus.features) {
@@ -146,7 +163,9 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     if (!graph.hasNode(id)) {
       graph.addNode(id, { nodeId: stopId, position: at(stopId) });
       const stopClosed = closed.has(stopId);
-      link(stopId, id, { kind: 'board', stopId, ...costs(ELEVATOR_BOARD_SEC, null, stopClosed) });
+      const elevatorId = nodes.get(stopId)!.properties.elevator_id;
+      const boardSec = (typeof elevatorId === 'string' ? measured.get(elevatorTargetKey(elevatorId)) : undefined) ?? ELEVATOR_BOARD_SEC;
+      link(stopId, id, { kind: 'board', stopId, ...costs(boardSec, null, stopClosed) });
       link(id, stopId, { kind: 'alight', stopId, ...costs(ELEVATOR_ALIGHT_SEC, null, stopClosed) });
     }
     return id;
@@ -156,16 +175,19 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     link(ensureCar(fromStop), ensureCar(toStop), { kind: 'hop', edge, ...costs(ELEVATOR_HOP_SEC, edge.properties, closed.has(edge.id)) });
   };
 
+  /** A measured time replaces the predicted one (SPEC-v0.2 3.9); penalties are added on top by costs(). */
   const walk = (from: string, to: string, edge: EdgeFeature) => {
     const lengthM = straight(at(from), at(to));
-    const timeSec = edge.properties.highway === 'steps'
+    const traversal = from === edge.properties.from ? 'along' : 'against';
+    const predicted = edge.properties.highway === 'steps'
       ? stairsTimeSec({
         edge: edge.properties,
         endNodeTypes: [nodes.get(from)!.properties.node_type, nodes.get(to)!.properties.node_type],
         planLengthM: lengthM,
-        traversal: from === edge.properties.from ? 'along' : 'against',
+        traversal,
       }) + portalSec(edge.properties)
       : walkTimeSec(edge.properties, lengthM);
+    const timeSec = measured.get(edgeTargetKey(edge.id, traversal)) ?? predicted;
     const isClosed = closed.has(edge.id) || closed.has(from) || closed.has(to);
     link(from, to, { kind: 'walk', edge, lengthM, ...costs(timeSec, edge.properties, isClosed) });
   };
@@ -174,11 +196,51 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     const { from, to, bidirectional, highway } = edge.properties;
     if (!nodes.has(from) || !nodes.has(to)) continue;
     const add = highway === 'elevator' ? hop : walk;
-    add(from, to, edge);
-    if (bidirectional) add(to, from, edge);
+    // A moving belt (escalator, moving walkway) runs where conveying says; bidirectional is not read (SPEC-v0.2 2.7).
+    const conveying = conveyingOf(edge.properties);
+    const along = conveying !== 'backward';
+    const against = conveying === null ? bidirectional : conveying !== 'forward';
+    if (along) add(from, to, edge);
+    if (against) add(to, from, edge);
   }
 
   return { graph, nodes, buildings, closed, heuristicSpeedMps };
+}
+
+/**
+ * The time the graph gives a calibration target (SPEC-v0.2 3.9), for
+ * npm run calibrate's prior. Pass a graph built with { calibration: {} } to get
+ * the prediction; on a calibrated graph this reads the calibrated time.
+ * - "edge:<edge id>": timeSec of the walk link over that edge, travelled as
+ *   drawn ('forward', the default) or against it ('backward'). undefined when
+ *   there is no such link: no such edge, a one-way edge or belt the other way,
+ *   or an elevator edge (elevators are timed per elevator, below).
+ * - "elevator:<elevator_id>": timeSec of the board link (the wait) at a stop
+ *   with that elevator_id; undefined when no stop has it.
+ * Anything else is undefined.
+ */
+export function predictedTimeSec(g: CampusGraph, target: string, direction: 'forward' | 'backward' = 'forward'): number | undefined {
+  let found: number | undefined;
+  if (target.startsWith('edge:')) {
+    const edgeId = target.slice('edge:'.length);
+    if (edgeId === '') return undefined;
+    g.graph.forEachLink((l) => {
+      if (l.data.kind !== 'walk' || l.data.edge.id !== edgeId) return false;
+      const along = l.fromId === l.data.edge.properties.from;
+      if (along !== (direction === 'forward')) return false;
+      found = l.data.timeSec;
+      return true;
+    });
+  } else if (target.startsWith('elevator:')) {
+    const elevatorId = target.slice('elevator:'.length);
+    if (elevatorId === '') return undefined;
+    g.graph.forEachLink((l) => {
+      if (l.data.kind !== 'board' || g.nodes.get(l.data.stopId)?.properties.elevator_id !== elevatorId) return false;
+      found = l.data.timeSec;
+      return true;
+    });
+  }
+  return found;
 }
 
 /** Geodesic straight-line distance in metres. */

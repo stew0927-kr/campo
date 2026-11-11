@@ -479,7 +479,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     expect(Object.keys(core).filter((k) => /stairs/i.test(k) && typeof (core as Record<string, unknown>)[k] === 'function')).toEqual(['stairsTimeSec']);
   });
 
-  it('R6: with stairsTimeSec, campus-basic shortest gate → 408 takes the outdoor stairs (69 s by plan length, 130.4 s total) instead of the indoor stairwell (165.6 s)', async () => {
+  it('R6: with stairsTimeSec, campus-basic shortest gate → 408 takes the outdoor stairs (69 s by plan length, 130.4 s total) instead of the outdoor escalator (144.1 s) or the indoor stairwell (165.6 s)', async () => {
     const basic = await loadCampus(BASIC_DIR);
     const g = buildGraph(basic);
     const r = route(g, 'n_out_0001', 'n_A_4_408door', 'shortest');
@@ -487,11 +487,16 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     // 34.5 m × 2 s/m; its step_count 24 is not used.
     expect(r.steps.find((s) => s.kind === 'stairs')).toMatchObject({ timeSec: 69, edgeIds: ['e_out_0002__out_0003'] });
     expect(r.timeSec).toBeCloseTo(130.4, 1);
-    // Without the outdoor stairs, shortest goes in at A동 1층 and climbs three indoor flights (3 × 18 s): slower.
-    const indoor = route(buildGraph(basic, { overrides: [override('e_out_0002__out_0003')] }), 'n_out_0001', 'n_A_4_408door', 'shortest');
+    // Without the outdoor stairs, shortest rides the parallel outdoor escalator (≈ 82.7 s, task 4.5 fixture): slower.
+    const escalator = route(buildGraph(basic, { overrides: [override('e_out_0002__out_0003')] }), 'n_out_0001', 'n_A_4_408door', 'shortest');
+    expect(escalator.edgeIds).toEqual(['e_out_0001__out_0002', 'e_out_0002__out_0003_esc', 'e_portal_A_4_north', 'e_A_4_north__A_4_408door']);
+    expect(escalator.timeSec).toBeCloseTo(144.1, 1);
+    // Without both, shortest goes in at A동 1층 and climbs three indoor flights (3 × 18 s): slower still.
+    const indoor = route(buildGraph(basic, { overrides: [override('e_out_0002__out_0003'), override('e_out_0002__out_0003_esc')] }), 'n_out_0001', 'n_A_4_408door', 'shortest');
     expect(indoor.edgeIds).toEqual(expect.arrayContaining(['e_portal_A_1_main', 'e_A_1_stair__A_2_stair', 'e_A_2_stair__A_3_stair', 'e_A_3_stair__A_4_stair']));
     expect(indoor.timeSec).toBeCloseTo(165.6, 1);
-    expect(indoor.timeSec).toBeGreaterThan(r.timeSec);
+    expect(indoor.timeSec).toBeGreaterThan(escalator.timeSec);
+    expect(escalator.timeSec).toBeGreaterThan(r.timeSec);
     // step_free goes round by the ramp: longer, slower, no stairs.
     const free = route(g, 'n_out_0001', 'n_A_4_408door', 'step_free');
     expect(free.stairsCount).toBe(0);
@@ -618,7 +623,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     for (const profile of PROFILES) {
       expect(findRoute(g, TOWER.hall(3), TOWER.hall(3), profile)).toEqual({
         found: true, profile, nodes: [TOWER.hall(3)], edgeIds: [], cost: 0, timeSec: 0, distanceM: 0, stairsCount: 0,
-        steps: [], uncertainSegments: [], fallback: null,
+        escalatorCount: 0, steps: [], uncertainSegments: [], fallback: null,
       });
     }
     const missing = findRoute(g, 'n_nowhere', TOWER.hall(1), 'shortest');
@@ -772,6 +777,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     expect(r.fallback).toEqual({
       profile: 'fewest_steps',
       stairsCount: 1,
+      escalatorCount: 0,
       barrierCount: 0,
       message: '계단 없는 경로가 없어 계단이 가장 적은 경로를 안내합니다. 계단 1곳을 피할 수 없습니다.',
     });
@@ -892,7 +898,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     const r = route(g, PARALLEL.P, PARALLEL.Q, 'step_free');
     expect(r.edgeIds).toEqual([PARALLEL.RAMP]);
     expect(r.fallback).toEqual({
-      profile: 'fewest_steps', stairsCount: 0, barrierCount: 1,
+      profile: 'fewest_steps', stairsCount: 0, escalatorCount: 0, barrierCount: 1,
       message: '계단 없는 경로가 없어 턱이 있는 구간을 지나는 경로를 안내합니다. 턱이 있는 구간 1곳을 피할 수 없습니다.',
     });
   });

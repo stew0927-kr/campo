@@ -78,6 +78,24 @@ v0.2의 목표는 두 가지다. 한 층을 몇십 번의 클릭으로 입력할
 - 층 번호가 다른 두 건물(A동 3층 ↔ C동 5층)도 `level_from` / `level_to` 값만 다르게 두면 이어진다. 길찾기는 층 번호를 비교하지 않고 구간 연결만 따른다.
 - 이 속성들을 `data/schema/campo.schema.json`, fixture, 테스트에 넣는 일은 스키마 작업(작업 3)에서 한다. 이 문서는 명세만 바꾼다.
 
+### 2.7 에스컬레이터 (`conveying`)
+
+OSM 방식을 따른다. 에스컬레이터는 **움직이는 계단**이다.
+
+| 속성 | 값 | 뜻 |
+|---|---|---|
+| `highway` | `steps` | 계단과 같은 종류 |
+| `conveying` | `forward` / `backward` / `reversible` | 움직이는 방향. 구간을 그린 방향(`from` → `to`) 기준. `reversible`은 시간에 따라 방향이 바뀜 |
+| `step_free` | 항상 `false` | 휠체어는 못 탄다(검사 E12) |
+| `bidirectional` | `forward` / `backward`는 `false`, `reversible`은 `true` | `conveying`이 방향을 정한다. 스키마가 이 짝을 강제한다 |
+
+- 상행과 하행 에스컬레이터는 **구간 두 개**로 그린다. 같은 두 지점을 잇는 평행 구간이다(multigraph라 문제없음). 하행은 같은 방향으로 그리고 `conveying: backward`로 하거나, 반대 방향으로 그리고 `forward`로 한다.
+- 바깥 에스컬레이터와 실내 에스컬레이터는 데이터가 같다. 범위(바깥 / 건물+층)만 다르다.
+- 무빙워크(평지)는 `highway: footway` 또는 `corridor` + `conveying`으로 같은 규칙(방향)을 쓴다. 시간은 걷는 시간 그대로다.
+- `conveying`은 `steps`, `footway`, `corridor`에만 쓸 수 있다(스키마).
+- `conveying`이 없는 계단은 보통 계단이다. 기존 데이터는 바뀌지 않는다.
+- `incline`은 안내 문장의 방향어(3.6)에만 쓴다. 에스컬레이터에는 내리막 시간 계수(3.1 규칙 4)를 쓰지 않는다. 벨트 속도가 일정하기 때문이다.
+
 ---
 
 ## 3. 길찾기 v0.2
@@ -98,15 +116,23 @@ v0.1은 "길이×1.5+15"(미터처럼 보임)와 "30+5/층"(초처럼 보임)이
 | `OUTDOOR_STAIRS_SEC_PER_M` | 2 | 바깥 계단을 오르는 시간, 평면 길이 1m당 초(규칙 3). 지금은 평면 길이만 보며, 이 관계식은 나중에 바뀔 수 있다 |
 | `OUTDOOR_STAIRS_MIN_SEC` | 10 | 바깥 계단의 최소 시간(규칙 3) |
 | `DOWNHILL_STAIRS_FACTOR` | 2/3 | 계단을 내려갈 때 시간 계수(규칙 4) |
+| `ESCALATOR_SPEED_MPS` | 0.5 | 에스컬레이터 벨트 속도(경사 방향). 분당 30m. 걸어 오르지 않고 서서 타는 것으로 가정한 처음 예측값 |
+| `ESCALATOR_BOARD_SEC` | 3 | 타고 내리는 시간 |
+| `ESCALATOR_MIN_SEC` | 8 | 평면 길이를 너무 짧게 그렸을 때의 하한 |
+| `ESCALATOR_SLOPE_DEG` | 30 | 국내 에스컬레이터 경사 대부분 30°. 경사 길이 = 평면 길이 ÷ cos(30°) |
 | `ELEVATOR_BOARD_SEC` | 40 | 기다리고 타는 시간. 한 번 탈 때 **한 번만** 더한다 |
 | `ELEVATOR_HOP_SEC` | 4 | 한 층 운행할 때마다 |
 | `ELEVATOR_ALIGHT_SEC` | 3 | |
 | `PORTAL_SEC` | 2 | |
 | `UNKNOWN_STEP_FREE_PENALTY_SEC` | 60 | step_free 프로필에서만 적용하는 선호 비용 |
 | `FEWEST_STEPS_STAIRS_PENALTY_SEC` | 600 | fewest_steps 프로필에서 계단 구간마다 더하는 선호 비용(3.4) |
+| `FEWEST_STEPS_ESCALATOR_PENALTY_SEC` | 60 | fewest_steps 프로필에서 에스컬레이터 구간마다 더하는 선호 비용(계단의 1/10, 3.4) |
+| `CALIBRATION_K` | 3 | 측정값과 섞을 때 예측값의 무게(3.9) |
+| `OUTLIER_RATIO` | 3 | 예측값의 1/3보다 작거나 3배보다 큰 측정값은 버린다(3.9) |
 
-**계단 구간(`highway: steps`)의 시간**은 구간 길이가 지점 좌표에서 나온다는 점 때문에 별도 규칙이 필요하다. 실내 계단의 두 지점은 거의 같은 자리에 있어서 길이만으로는 한 층이 2초 남짓이 된다. 아래 순서로 올라갈 때의 시간을 정하고, 계산은 `costs.ts`의 함수 하나(`stairsTimeSec`)에 모은다. 걷는 시간(평면 길이 ÷ 속도)은 따로 더하지 않는다. 계단 시간이 그 구간의 전체 시간이다.
+**계단 구간(`highway: steps`)의 시간**은 구간 길이가 지점 좌표에서 나온다는 점 때문에 별도 규칙이 필요하다. 실내 계단의 두 지점은 거의 같은 자리에 있어서 길이만으로는 한 층이 2초 남짓이 된다. 아래 순서로 올라갈 때의 시간을 정하고(규칙 0은 에스컬레이터), 계산은 `costs.ts`의 함수 하나(`stairsTimeSec`)에 모은다. 걷는 시간(평면 길이 ÷ 속도)은 따로 더하지 않는다. 계단 시간이 그 구간의 전체 시간이다.
 
+0. `conveying`이 있으면(에스컬레이터, 3.8) 다른 규칙보다 먼저 `max(평면 길이 ÷ cos(ESCALATOR_SLOPE_DEG) ÷ ESCALATOR_SPEED_MPS + ESCALATOR_BOARD_SEC, ESCALATOR_MIN_SEC)`. 방향과 상관없이 같고, 내리막 계수(규칙 4)는 곱하지 않는다
 1. 바깥 계단(`edge_type: outdoor`)이면 `step_count`와 상관없이 `평면 길이(m) × OUTDOOR_STAIRS_SEC_PER_M`, 단 `OUTDOOR_STAIRS_MIN_SEC` 이상. 바깥 계단은 지금은 평면 길이만 본다.
 2. 실내 계단(양 끝이 `stair_landing`, `edge_type: indoor`)이면 `step_count`가 있을 때 `step_count × STEP_SEC`, 없으면 구간의 `flight_sec`(0~30초), 그것도 없으면 `FLOOR_FLIGHT_SEC`(18초)
 3. 그 밖의 계단(바깥도 아니고 실내 계단 구간도 아닌 경우)은 `step_count × STEP_SEC`, `step_count`가 없으면 규칙 1의 평면 길이 식
@@ -159,11 +185,11 @@ s ──board(40s)──▶ ~car:s ──alight(3s)──▶ s
 
 ### 3.4 프로필
 
-| 프로필 | 계단 | `step_free: null` | 고장(overrides) |
-|---|---|---|---|
-| `shortest` | 시간 비용 | 그대로 | 막음 |
-| `step_free` | 막음 | +60초 벌점, 결과에 `uncertainSegments`로 표시 | 막음 |
-| `fewest_steps` (대체) | +600초 벌점 | 그대로 | 막음 |
+| 프로필 | 계단 | 에스컬레이터 | `step_free: null` | 고장(overrides) |
+|---|---|---|---|---|
+| `shortest` | 시간 비용 | 시간 비용 | 그대로 | 막음 |
+| `step_free` | 막음 | 막음 | +60초 벌점, 결과에 `uncertainSegments`로 표시 | 막음 |
+| `fewest_steps` (대체) | +600초 벌점 | +60초 벌점(계단의 1/10) | 그대로 | 막음 |
 
 - `step_free`로 경로가 없으면 `fewest_steps`로 한 번 더 찾는다. 결과에 "계단 N곳을 피할 수 없습니다"를 붙여서 낸다. 600초는 Valhalla 보행 비용의 휠체어 계단 벌점 기본값이다.
 - Valhalla도 계단·엘리베이터 벌점을 비용에만 더하고 시간에는 더하지 않는다(`{penalty, 0}`). 3.1의 `cost` / `timeSec` 분리와 같은 방식이다.
@@ -207,6 +233,70 @@ s ──board(40s)──▶ ~car:s ──alight(3s)──▶ s
 | R14 | 방향에 따라 비용이 다른 구간에서 비용이 `link.fromId` 기준으로 계산된다. A→B 비용과 B→A 비용이 바뀌어 들어가지 않는다 |
 | R15 | `step_free` 실패 시 `fewest_steps` 대체 경로와 피할 수 없는 계단 수가 나온다 |
 | R16 | 층 번호가 다른 두 건물을 잇는 연결통로를 길찾기가 쓴다. 끝에 계단이 있는 다리는 `step_free`에서 막힌다. 안내 문장이 "A동 3층 연결통로를 건너 C동 5층으로"처럼 나온다 |
+
+### 3.8 에스컬레이터 길찾기
+
+**방향.** `conveying`이 방향을 정한다(`bidirectional`은 보지 않는다).
+
+- `forward`: 그린 방향으로만 링크 하나.
+- `backward`: 반대 방향으로만 링크 하나.
+- `reversible`: 양쪽 링크를 넣고, 안내 문장에 "운행 방향이 바뀔 수 있습니다"를 붙인다. 시간표(아침 상행 등)는 나중에 overrides로 다룬다.
+
+**시간 예측값**(측정값이 없을 때)은 `stairsTimeSec` 안의 규칙 0(3.1)이다. 실내 한 층(높이 약 4m)이면 평면 길이 약 6.9m → 약 19초.
+
+**프로필**은 3.4 표와 같다. 고장은 엘리베이터처럼 overrides로 막는다. 멈춘 에스컬레이터를 "계단으로 쓸 수 있음"으로 바꾸는 처리는 나중에 한다.
+
+**결과.** 에스컬레이터는 `stairsCount`에 세지 않고 `escalatorCount`로 따로 센다. `step_free`가 실패해 `fewest_steps`로 대체할 때 안내 문장에 "에스컬레이터 N곳"을 붙인다.
+
+**안내 문장.** "에스컬레이터를 타고 3층으로 올라가세요". 방향어는 계단 규칙(3.6)과 같다. 이어진 에스컬레이터 구간은 한 문장으로 합친다.
+
+### 3.9 측정 기반 시간 보정
+
+모든 시간 상수는 **처음 예측값(prior)** 일 뿐이다. 실제로 재어 본 값이 쌓이면 그쪽으로 옮겨 간다.
+
+**무엇을 보정하나.**
+
+| 대상 | `target` 형식 | 바뀌는 시간 |
+|---|---|---|
+| 구간 하나를 지나는 시간 | `edge:<edge id>` | 에스컬레이터, 긴 바깥 계단, 언덕길. 그린 방향 기준 |
+| 구간을 반대로 지나는 시간 | `edge:<edge id>#backward` | 보정값 키에서만 쓴다. 측정 기록에서는 `direction: backward` |
+| 엘리베이터 대기 시간 | `elevator:<elevator_id>` | 정차 지점의 타는 링크(`ELEVATOR_BOARD_SEC` 자리). 방향은 무시 |
+
+**측정 기록** `data/campuses/{id}/observations/*.jsonl` (한 줄에 하나):
+
+```json
+{"target":"edge:e-ENG1-esc-up","duration_sec":21.4,"direction":"forward","source":"field","measured_at":"2026-11-12T09:10:00+09:00","note":"서서 탐"}
+```
+
+- `direction`(선택): `forward`(기본, 그린 방향) / `backward`. 구간 대상에만 뜻이 있다.
+- `source`: `field`(팀원이 현장에서 잼) / `app`(나중에 앱 사용자 제보)
+- 개인을 알아볼 수 있는 값(사용자 id, 기기 id, 위치 기록)은 저장하지 않는다. 스키마가 모르는 필드를 막는다. 앱에서 받을 때는 동의를 받고 시간과 대상만 남긴다.
+- v0.2에서는 Git에 둔다. 앱이 생기면 Supabase 테이블로 옮기고, 같은 형식으로 내보낸다.
+
+**보정값 계산** `npm run calibrate` → `data/campuses/{id}/calibration.json` (커밋한다). 측정이 없는 캠퍼스는 파일을 만들지 않는다.
+
+1. **이상한 값 버리기**: 예측값의 1/`OUTLIER_RATIO`보다 작거나 `OUTLIER_RATIO`배보다 크면 버린다. 도중에 멈췄거나 잘못 누른 값이다.
+2. **대표값**: 남은 값의 중앙값. `field`는 2번, `app`은 1번 센다(현장 측정을 더 믿는다). 센 개수가 짝수이면 가운데 두 값의 평균이다.
+3. **예측값과 섞기**: `추정 = (K × 예측값 + n × 중앙값) ÷ (K + n)`, `K = CALIBRATION_K = 3`. n은 남은 측정 개수다(가중치 없이). 추정은 소수 한 자리로 반올림한다.
+   - 측정이 1~2개면 예측값 쪽에 가깝다.
+   - 10개쯤 쌓이면 거의 측정값이다.
+   - 측정 하나가 튀어도 길찾기가 갑자기 바뀌지 않는다.
+4. 남은 측정이 0개인 대상은 결과에 넣지 않는다. 존재하지 않는 대상의 측정은 건너뛰고(검사 W13) CLI가 알린다.
+5. 결과:
+
+```json
+{"edge:e-ENG1-esc-up":{"prior_sec":19.0,"median_sec":22.0,"n":5,"estimate_sec":20.9,"updated_at":"2026-11-12"}}
+```
+
+- 길찾기는 `buildGraph(campus, { calibration })`로 받는다(기본은 `calibration.json`). `estimate_sec`가 있는 대상은 예측값 대신 그 값을 **시간**으로 쓴다. 벌점(선호 비용)은 그대로다. 그러니 `timeSec`만 바뀌고 프로필별 `cost − timeSec`는 그대로다.
+- `calibration.json`이 없거나 대상이 없으면 예측값을 쓴다.
+- 계산은 `packages/core/src/calibration/`의 순수 함수, `npm run calibrate`는 `packages/tools`에 있다.
+
+**나중에 (v0.2 범위 밖)**
+
+- **시간대별 보정**: 쉬는 시간(수업 끝나고 10분) 엘리베이터 대기. `measured_at`이 이미 기록되니 데이터는 지금부터 쌓인다.
+- **앱 자동 측정**: 경로 안내 중 사용자가 "다음" 버튼을 누른 시각 차이로 측정. 위치정보 동의 범위를 따른다.
+- **예측 정확도 지표**: 예측값과 측정값의 차이를 검사 탭에 보여 준다.
 
 ---
 
@@ -492,6 +582,13 @@ Turf 주의 (7.4.0 소스에서 확인):
 | W8 | 경고 | 엘리베이터 정차 지점이 복도 쪽으로 이어진 구간이 없음 (타기만 하고 내릴 곳이 없음) |
 | W9 | 경고 | 같은 `elevator_id`의 정차 지점이 모두 같은 층 |
 | W10 | 경고 | 연결통로(`bridge`) 구간의 양 끝 지점이 같은 건물에 있음 |
+| E12 | 오류 | `conveying`이 있는 `highway=steps`(에스컬레이터)의 `step_free`가 `false`가 아님 |
+| W12 | 경고 | 실내 에스컬레이터의 양 끝이 같은 건물·같은 층(층이 안 바뀜) |
+| W13 | 경고 | `observations`의 `target`이 존재하지 않는 구간·엘리베이터를 가리킴 |
+
+- **W11 삭제됨**(decisions 2026-11-11): 바깥 계단은 평면 길이로만 계산한다. 시간이 맞지 않는 긴 바깥 계단은 측정 보정(3.9)으로 맞춘다.
+- W12는 양 끝이 건물 안(건물+층)일 때만 검사한다. 바깥 에스컬레이터는 범위가 하나라 층 변화로 검사할 수 없어 제외한다. 언덕 높이 검사는 고도 데이터를 합친 뒤에 다시 검토한다.
+- `conveying`의 값과 `bidirectional`의 짝, `conveying`을 쓸 수 있는 `highway`는 스키마가 검사한다. 관측 줄(`observations/*.jsonl`)과 `calibration.json`의 모양도 스키마(`$defs/observation`, `$defs/calibration`)가 검사한다.
 
 W8과 W9는 OpenTripPlanner가 지도 데이터를 그래프로 만들 때 내는 경고(`OnlyOneConnectionToElevatorNode`, `AllWaysOfElevatorNodeOnSameLevel`)를 참고했다. 검사에서 층 값을 비교하는 것은 길찾기 규칙에 어긋나지 않는다.
 

@@ -1,7 +1,8 @@
-// Route steps and their Korean sentences (SPEC-v0.2 3.6). Display only: this is
+// Route steps and their Korean sentences (SPEC-v0.2 3.6, 3.8). Display only: this is
 // the one routing file that reads floor numbers (node `level`), to print floor
 // names and to pick 올라가세요 / 내려가세요 when an edge has no `incline`. It
 // never chooses or connects anything; the route is fixed before it gets here.
+import { conveyingOf, isEscalator } from './costs.ts';
 import type { CampusGraph, GraphLinkData } from './graph.ts';
 import type { EdgeFeature, Level, NodeFeature } from './types.ts';
 
@@ -12,7 +13,7 @@ export interface Leg {
   to: string;
 }
 
-export type RouteStepKind = 'walk' | 'ramp' | 'stairs' | 'elevator' | 'bridge' | 'portal';
+export type RouteStepKind = 'walk' | 'ramp' | 'stairs' | 'escalator' | 'elevator' | 'bridge' | 'portal';
 
 export interface RouteStep {
   kind: RouteStepKind;
@@ -37,8 +38,11 @@ type Direction = 'up' | 'down' | null;
  * - board … hops … alight: one 'elevator' step, sentence made at the alight.
  * - consecutive steps edges: one 'stairs' step, as long as no other edge
  *   branches off at the landing in between (in the route's graph).
+ * - consecutive escalators (steps edges with conveying): one 'escalator' step,
+ *   by the same rule; other escalators at the landing (the parallel one running
+ *   the other way) do not count as a branch.
  * - each bridge or portal edge: its own step.
- * - consecutive plain walking edges ('walk') or ramps ('ramp'): one step each run.
+ * - consecutive plain walking edges ('walk', moving walkways included) or ramps ('ramp'): one step each run.
  */
 export function buildSteps(g: CampusGraph, legs: readonly Leg[]): RouteStep[] {
   const steps: RouteStep[] = [];
@@ -48,8 +52,8 @@ export function buildSteps(g: CampusGraph, legs: readonly Leg[]): RouteStep[] {
     let j = i;
     if (kind === 'elevator') {
       while (j + 1 < legs.length && kindOf(legs[j + 1]!) === 'elevator' && legs[j]!.data.kind !== 'alight') j++;
-    } else if (kind === 'stairs') {
-      while (j + 1 < legs.length && kindOf(legs[j + 1]!) === 'stairs' && !branchesAt(g, legs[j]!, legs[j + 1]!)) j++;
+    } else if (kind === 'stairs' || kind === 'escalator') {
+      while (j + 1 < legs.length && kindOf(legs[j + 1]!) === kind && !branchesAt(g, legs[j]!, legs[j + 1]!, kind === 'escalator')) j++;
     } else if (kind === 'walk' || kind === 'ramp') {
       while (j + 1 < legs.length && kindOf(legs[j + 1]!) === kind) j++;
     }
@@ -63,6 +67,7 @@ function kindOf(leg: Leg): RouteStepKind {
   const d = leg.data;
   if (d.kind !== 'walk') return 'elevator'; // board, hop, alight (sink never reaches here)
   const { highway, edge_type } = d.edge.properties;
+  if (isEscalator(d.edge.properties)) return 'escalator';
   if (highway === 'steps') return 'stairs';
   if (edge_type === 'bridge') return 'bridge';
   if (edge_type === 'portal') return 'portal';
@@ -74,12 +79,17 @@ function edgeOf(leg: Leg): EdgeFeature | null {
   return leg.data.kind === 'walk' || leg.data.kind === 'hop' ? leg.data.edge : null;
 }
 
-/** Does any edge other than these two stair edges touch the landing between them? */
-function branchesAt(g: CampusGraph, a: Leg, b: Leg): boolean {
+/**
+ * Does any edge other than these two touch the landing between them?
+ * `escalators`: other escalators there are not a branch (a bank of belts).
+ */
+function branchesAt(g: CampusGraph, a: Leg, b: Leg, escalators: boolean): boolean {
   const pass = new Set([edgeOf(a)?.id, edgeOf(b)?.id]);
   for (const link of g.graph.getLinks(a.to) ?? []) {
     const edge = link.data.kind === 'walk' || link.data.kind === 'hop' ? link.data.edge : null;
-    if (edge === null || !pass.has(edge.id)) return true; // a board / alight link is a branch too
+    if (edge === null) return true; // a board / alight link is a branch too
+    if (pass.has(edge.id) || (escalators && isEscalator(edge.properties))) continue;
+    return true;
   }
   return false;
 }
@@ -96,6 +106,11 @@ function makeStep(g: CampusGraph, kind: RouteStepKind, legs: readonly Leg[]): Ro
     const edge = edgeOf(leg);
     if (edge) edgeIds.push(edge.id);
   }
+  // A reversible belt (escalator or moving walkway) may run the other way when the person gets there (SPEC-v0.2 3.8).
+  const reversible = legs.some((leg) => {
+    const edge = edgeOf(leg);
+    return edge !== null && conveyingOf(edge.properties) === 'reversible';
+  });
   return {
     kind,
     fromNodeId: start.id,
@@ -105,7 +120,7 @@ function makeStep(g: CampusGraph, kind: RouteStepKind, legs: readonly Leg[]): Ro
     distanceM: round1(distanceM),
     timeSec: round1(timeSec),
     edgeIds,
-    text: sentence(g, kind, legs, start, end, distanceM),
+    text: sentence(g, kind, legs, start, end, distanceM) + (reversible ? ' (운행 방향이 바뀔 수 있습니다)' : ''),
   };
 }
 
@@ -113,6 +128,8 @@ function sentence(g: CampusGraph, kind: RouteStepKind, legs: readonly Leg[], sta
   switch (kind) {
     case 'walk':
       return distanceM < 1 ? '바로 앞으로 이동하세요' : `${Math.round(distanceM)}m 걸어가세요`;
+    case 'escalator':
+      return escalatorSentence(legs, start, end);
     case 'ramp':
       return `경사로를 따라 ${Math.round(distanceM)}m 가세요`;
     case 'elevator': {
@@ -147,7 +164,32 @@ function stairsSentence(legs: readonly Leg[], start: NodeFeature, end: NodeFeatu
   const b = levelOf(end);
   const edges = legs.map(edgeOf).filter((e): e is EdgeFeature => e !== null);
 
-  let direction: Direction = null;
+  let floors = 0;
+  if (a !== null && b !== null) floors = floorGap(a, b);
+  else if (edges.length > 0 && edges.every((e) => e.properties.edge_type === 'indoor')) floors = edges.length;
+
+  const verb = verbOf(travelDirection(legs, a, b));
+  if (floors > 0) return `계단으로 ${floors}층 ${verb ?? '이동하세요'}`;
+  return `계단을 ${verb ?? '이용하세요'}`;
+}
+
+/**
+ * "에스컬레이터를 타고 3층으로 올라가세요" (SPEC-v0.2 3.8). The direction word
+ * follows the stairs rule (travelDirection); the floor is the end node's display
+ * name, left out when unknown ("에스컬레이터를 타고 올라가세요").
+ */
+function escalatorSentence(legs: readonly Leg[], start: NodeFeature, end: NodeFeature): string {
+  const floor = floorName(levelOf(end));
+  const verb = verbOf(travelDirection(legs, levelOf(start), levelOf(end))) ?? '이동하세요';
+  return floor ? `에스컬레이터를 타고 ${floor}${ro(floor)} ${verb}` : `에스컬레이터를 타고 ${verb}`;
+}
+
+/**
+ * Up or down along these legs (SPEC-v0.2 3.6): the edges' `incline` read in
+ * travel direction (SPEC-v0.2 2.6) when they agree, else the two end floors
+ * (display only), else null.
+ */
+function travelDirection(legs: readonly Leg[], a: Level | null, b: Level | null): Direction {
   const inclines = new Set<Direction>();
   for (const leg of legs) {
     const edge = edgeOf(leg);
@@ -156,16 +198,13 @@ function stairsSentence(legs: readonly Leg[], start: NodeFeature, end: NodeFeatu
     const along = leg.from === edge.properties.from;
     inclines.add(along ? incline : incline === 'up' ? 'down' : 'up');
   }
-  if (inclines.size === 1) direction = [...inclines][0]!;
-  else if (a !== null && b !== null && a !== b) direction = b > a ? 'up' : 'down';
+  if (inclines.size === 1) return [...inclines][0]!;
+  if (a !== null && b !== null && a !== b) return b > a ? 'up' : 'down';
+  return null;
+}
 
-  let floors = 0;
-  if (a !== null && b !== null) floors = floorGap(a, b);
-  else if (edges.length > 0 && edges.every((e) => e.properties.edge_type === 'indoor')) floors = edges.length;
-
-  const verb = direction === 'up' ? '올라가세요' : direction === 'down' ? '내려가세요' : null;
-  if (floors > 0) return `계단으로 ${floors}층 ${verb ?? '이동하세요'}`;
-  return `계단을 ${verb ?? '이용하세요'}`;
+function verbOf(direction: Direction): string | null {
+  return direction === 'up' ? '올라가세요' : direction === 'down' ? '내려가세요' : null;
 }
 
 /** "A동 3층"; "바깥" outdoors. */

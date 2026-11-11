@@ -1,7 +1,7 @@
 // Route search (SPEC-v0.2 3.3-3.5). Follows graph links only: no floor numbers here.
 import { aStar, type PathFinder } from 'ngraph.path';
 import type { Graph, Link, Node, NodeId } from 'ngraph.graph';
-import { isProfile, isStepFreePassable, isStepFreeUnknown, perProfile, type Profile } from './costs.ts';
+import { isEscalator, isProfile, isStepFreePassable, isStepFreeUnknown, perProfile, type Profile } from './costs.ts';
 import { straight, type CampusGraph, type GraphLinkData, type GraphNodeData } from './graph.ts';
 import { buildSteps, type Leg, type RouteStep } from './route-text.ts';
 import type { NodeFeature } from './types.ts';
@@ -17,11 +17,13 @@ export interface UncertainSegment {
 /** step_free found nothing, so this is the fewest_steps route (SPEC-v0.2 3.4). */
 export interface RouteFallback {
   profile: 'fewest_steps';
-  /** Steps edges on the route: the stairs that cannot be avoided. */
+  /** Steps edges without conveying on the route: the stairs that cannot be avoided. */
   stairsCount: number;
+  /** Escalators (steps edges with conveying) on the route, counted apart from stairsCount. */
+  escalatorCount: number;
   /** Other edges marked step_free: false (a step or a sill) on the route. */
   barrierCount: number;
-  /** Korean, e.g. "… 계단 1곳을 피할 수 없습니다." */
+  /** Korean, e.g. "… 계단 1곳을 피할 수 없습니다." / "… 계단 1곳, 에스컬레이터 1곳을 피할 수 없습니다." */
   message: string;
 }
 
@@ -39,8 +41,10 @@ export interface Route {
   timeSec: number;
   /** Walked distance in metres (elevator rides add none). */
   distanceM: number;
-  /** Steps edges on the route (indoor floors and outdoor flights). */
+  /** Steps edges on the route (indoor floors and outdoor flights), escalators not included. */
   stairsCount: number;
+  /** Escalators (steps edges with conveying) on the route. */
+  escalatorCount: number;
   steps: RouteStep[];
   uncertainSegments: UncertainSegment[];
   fallback: RouteFallback | null;
@@ -160,6 +164,7 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
   let timeSec = 0;
   let distanceM = 0;
   let stairsCount = 0;
+  let escalatorCount = 0;
   let barrierCount = 0;
 
   for (const node of path) {
@@ -177,7 +182,8 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
     const edge = data.edge.properties;
     edgeIds.push(data.edge.id);
     if (data.kind === 'walk') distanceM += data.lengthM;
-    if (edge.highway === 'steps') stairsCount++;
+    if (isEscalator(edge)) escalatorCount++;
+    else if (edge.highway === 'steps') stairsCount++;
     else if (!isStepFreePassable(edge)) barrierCount++;
     if (requested === 'step_free' && isStepFreeUnknown(edge)) {
       uncertainSegments.push({ edgeId: data.edge.id, from: leg.from, to: leg.to });
@@ -193,21 +199,25 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
     timeSec: round1(timeSec),
     distanceM: round1(distanceM),
     stairsCount,
+    escalatorCount,
     steps: buildSteps(g, legs),
     uncertainSegments,
-    fallback: used === requested ? null : fallbackInfo(stairsCount, barrierCount),
+    fallback: used === requested ? null : fallbackInfo(stairsCount, escalatorCount, barrierCount),
   };
 }
 
-function fallbackInfo(stairsCount: number, barrierCount: number): RouteFallback {
+function fallbackInfo(stairsCount: number, escalatorCount: number, barrierCount: number): RouteFallback {
   let message: string;
-  if (stairsCount > 0) {
-    message = `계단 없는 경로가 없어 계단이 가장 적은 경로를 안내합니다. 계단 ${stairsCount}곳을 피할 수 없습니다.`;
+  if (stairsCount > 0 || escalatorCount > 0) {
+    const lead = stairsCount > 0 ? '계단이 가장 적은 경로를' : '에스컬레이터를 타는 경로를';
+    const what = [stairsCount > 0 ? `계단 ${stairsCount}곳` : '', escalatorCount > 0 ? `에스컬레이터 ${escalatorCount}곳` : '']
+      .filter(Boolean).join(', ');
+    message = `계단 없는 경로가 없어 ${lead} 안내합니다. ${what}을 피할 수 없습니다.`;
     if (barrierCount > 0) message += ` 턱이 있는 구간 ${barrierCount}곳도 지나야 합니다.`;
   } else {
     message = `계단 없는 경로가 없어 턱이 있는 구간을 지나는 경로를 안내합니다. 턱이 있는 구간 ${barrierCount}곳을 피할 수 없습니다.`;
   }
-  return { profile: 'fewest_steps', stairsCount, barrierCount, message };
+  return { profile: 'fewest_steps', stairsCount, escalatorCount, barrierCount, message };
 }
 
 /**

@@ -1,8 +1,9 @@
-import { readdir, stat, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative } from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { migrateCampusFiles, type MigrateSummary } from '@campo/core';
 import { readCampusFiles } from '@campo/core/node';
 import type { Output } from './cli.ts';
+import { campusFolders, display, isDirectory } from './folders.ts';
 
 export interface MigrateOptions {
   /** Print what would change and write nothing. */
@@ -81,37 +82,4 @@ export async function runMigrate(
     for (const file of files) await writeFile(join(dir, file.path), file.text);
   }
   return 0;
-}
-
-/** The folder itself when it holds campus.json, otherwise its subfolders that do. */
-async function campusFolders(dir: string): Promise<string[]> {
-  if (await isFile(join(dir, 'campus.json'))) return [dir];
-  const entries = await readdir(dir, { withFileTypes: true });
-  const found: string[] = [];
-  for (const e of entries.filter((x) => x.isDirectory() && !x.name.startsWith('.')).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    if (await isFile(join(dir, e.name, 'campus.json'))) found.push(join(dir, e.name));
-  }
-  return found;
-}
-
-function display(cwd: string, path: string): string {
-  const rel = relative(cwd, path);
-  if (rel === '') return '.';
-  return rel.startsWith('..') || isAbsolute(rel) ? path : rel;
-}
-
-async function isDirectory(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-async function isFile(path: string): Promise<boolean> {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
 }

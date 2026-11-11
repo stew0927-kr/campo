@@ -85,7 +85,10 @@ export type Wheelchair = (typeof WHEELCHAIR_VALUES)[number];
 export const HIGHWAYS = ['footway', 'steps', 'corridor', 'elevator', 'ramp'] as const;
 export type Highway = (typeof HIGHWAYS)[number];
 
-export const EDGE_TYPES = ['outdoor', 'portal', 'indoor', 'bridge'] as const;
+export const CONVEYING_VALUES = ['forward', 'backward', 'reversible'] as const;
+export type Conveying = (typeof CONVEYING_VALUES)[number];
+
+export const EDGE_TYPES =['outdoor', 'portal', 'indoor', 'bridge'] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
 export interface EdgeProperties extends CommonProperties {
@@ -104,6 +107,8 @@ export interface EdgeProperties extends CommonProperties {
   incline?: 'up' | 'down';
   /** Indoor steps without step_count: seconds to climb the flight, 0 to 30. Missing means the default (SPEC-v0.2 3.1). */
   flight_sec?: number;
+  /** Moving belt (escalator on highway=steps, moving walkway on footway / corridor). Direction relative to from → to (SPEC-v0.2 2.7). */
+  conveying?: Conveying;
   covered?: boolean;
   hours?: string;
   building_from?: string;
@@ -178,9 +183,49 @@ export interface LoadedCampus {
   features: LoadedFeature[];
   /** Contents of overrides.json, unvalidated. undefined when the file is missing (SPEC-v0.2 §2.5). */
   overrides?: unknown;
+  /** Lines of observations/*.jsonl, unvalidated, in file then line order (SPEC-v0.2 3.9). */
+  observations?: LoadedObservation[];
+  /** Contents of calibration.json, unvalidated. undefined when the file is missing. */
+  calibration?: unknown;
   /** Files that could not be parsed as JSON or are not FeatureCollections. */
   fileErrors: { file: string; message: string }[];
 }
+
+export interface LoadedObservation {
+  /** Path relative to the campus folder. */
+  file: string;
+  /** 1-based line number. */
+  line: number;
+  /** Unvalidated. */
+  record: unknown;
+}
+
+// ---- Measured time calibration (SPEC-v0.2 3.9) ----
+
+/** One line of observations/*.jsonl. No user, device or position fields on purpose. */
+export interface Observation {
+  /** "edge:<edge id>" or "elevator:<elevator_id>". */
+  target: string;
+  duration_sec: number;
+  /** Edge targets: travelled as drawn (default) or against it. */
+  direction?: 'forward' | 'backward';
+  source: 'field' | 'app';
+  /** ISO 8601 date-time with a time zone. */
+  measured_at: string;
+  note?: string;
+}
+
+export interface CalibrationEntry {
+  prior_sec: number;
+  median_sec: number;
+  n: number;
+  estimate_sec: number;
+  /** yyyy-mm-dd */
+  updated_at: string;
+}
+
+/** calibration.json: key is "edge:<id>", "edge:<id>#backward" or "elevator:<elevator_id>". */
+export type Calibration = Record<string, CalibrationEntry>;
 
 // ---- Validation ----
 
@@ -203,6 +248,8 @@ export const ERROR_CODES = {
   elevatorIdMissing: 'elevator-id-missing',
   /** E11 */
   elevatorGroupSplit: 'elevator-group-split',
+  /** E12 */
+  escalatorNotStepFree: 'escalator-not-step-free',
 } as const;
 
 export const WARNING_CODES = {
@@ -222,6 +269,10 @@ export const WARNING_CODES = {
   elevatorSingleLevel: 'elevator-single-level',
   /** W10 */
   bridgeSameBuilding: 'bridge-same-building',
+  /** W12 */
+  escalatorSameScope: 'escalator-same-scope',
+  /** W13 */
+  observationUnknownTarget: 'observation-unknown-target',
 } as const;
 
 // ---- Overrides (SPEC-v0.2 §2.5) ----

@@ -38,3 +38,4 @@ export {
   type UncertainSegment,
 } from './route.ts';
 export type { RouteStep, RouteStepKind } from './route-text.ts';
+export * from './edit/index.ts';

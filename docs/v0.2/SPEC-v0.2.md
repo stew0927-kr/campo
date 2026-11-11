@@ -305,6 +305,7 @@ s ──board(40s)──▶ ~car:s ──alight(3s)──▶ s
 
 **나중에 (v0.2 범위 밖)**
 
+- **측정 기록에 구간 rev 남기기**: 측정 줄에 그 당시 구간의 `rev`를 적고, `npm run calibrate`가 현재 rev와 다른 측정은 건너뛴다. 구간을 나누거나 모양이 바뀌면 옛 측정이 자동으로 빠진다. (편집 엔진은 지금 나누기 때 경고만 한다.)
 - **시간대별 보정**: 쉬는 시간(수업 끝나고 10분) 엘리베이터 대기. `measured_at`이 이미 기록되니 데이터는 지금부터 쌓인다.
 - **앱 자동 측정**: 경로 안내 중 사용자가 "다음" 버튼을 누른 시각 차이로 측정. 위치정보 동의 범위를 따른다.
 - **예측 정확도 지표**: 예측값과 측정값의 차이를 검사 탭에 보여 준다.
@@ -315,7 +316,8 @@ s ──board(40s)──▶ ~car:s ──alight(3s)──▶ s
 
 iD 편집기의 구조를 따른다.
 
-- **상태 `EditState`**: `{ nodes: Record<id, Node>, edges: Record<id, Edge>, buildings: Record<code, Building> }`. 바꾸지 않는다(immutable).
+- **상태 `EditState`**: `{ nodes: Record<id, Node>, edges: Record<id, Edge>, buildings: Record<code, Building>, rooms: Record<id, Room> }`. 바꾸지 않는다(immutable). 강의실 영역(`kind: room`)은 `rooms`에 둔다. room에는 `building_id`와 `level`이 있고 범위 규칙은 지점과 같다. 문의 `room_ref`가 room의 `room_ref`와 같으면 서로 연결된 것으로 보며, room을 지워도 문은 남는다.
+  - 지점은 `{ id, coord, props }`, 구간은 `{ id, vertices, props }`다. 구간의 `from`/`to`는 `props` 안에 둔다(파일의 속성 키 순서를 그대로 지켜 바이트 단위로 왕복하기 위해서다).
   - JavaScript `Map` 대신 일반 객체를 쓴다. Immer 패치(되돌리기)와 JSON 직렬화를 단순하게 하기 위해서다. Map을 쓰면 `enableMapSet()`이 필요하고, 직렬화도 따로 처리해야 한다.
 - **구간은 좌표를 복사하지 않고 지점을 참조한다 (iD 방식).**
   - 편집 상태의 구간은 `from`, `to`, 중간 꺾임점 `vertices`만 가진다. 양 끝 좌표는 지점에서 가져온다.
@@ -347,6 +349,18 @@ iD 편집기의 구조를 따른다.
 | `splitEdgeAt(edgeId, coord, {nodeId?})` | 구간 위의 한 점에서 구간을 둘로 나눈다. `nodeId`를 주면 그 기존 지점(끌던 지점)을 나눈 자리에 끼우고(iD `actionAddMidpoint`), 안 주면 새 지점을 만든다. 1.0m 안에 기존 꼭짓점이 있으면 그 점을 쓴다. 나누기 규칙은 4.1.1 |
 | `setProps(ids, patch)` | 속성 바꾸기 |
 
+**공통 규칙 (이번에 정함)**
+
+- 동작으로 `addRoom`, `deleteRooms`를 더한다. `deleteBuilding`은 그 건물의 room도 지우고, 지울 개수 미리보기(`previewDeleteBuilding`)에 지점·구간·room 수를 보여 준다.
+- **rev**: 기준 상태(불러온 상태 또는 마지막 저장)에 대해 한 번만 +1이다. 끌기 한 번도, 저장 전에 두 번 고친 것도 +1이고, 고쳤다가 되돌리면 그대로다. 새 Feature는 저장 전까지 몇 번을 고쳐도 1이다. History가 이 규칙으로 맞춘다.
+- **구간 방향 뒤집기**(동작은 아직 없음, 만들 때 따를 규칙): `from`/`to`와 `vertices` 순서를 뒤집고, `conveying`은 forward↔backward(reversible은 그대로), `incline`은 up↔down으로 함께 뒤집는다.
+- **`deleteNodes` heal 조건**: 지점에 구간이 정확히 둘이고 a–n–b로 이어지며, `from`/`to`/`rev`/`step_count`를 뺀 속성이 같을 때만 합친다. 한쪽으로만 가는 구간은 n을 지나는 방향이 같아야 한다. `elevator`, `portal`, `bridge`는 합치지 않는다. 긴 쪽 id가 남고 n은 꺾임점이 되며 `step_count`는 더한다. 조건이 안 맞으면 그냥 지운다.
+- **`mergeNodes` 남길 지점**: 중요한 종류가 먼저이고, 그다음은 `ids`의 마지막 지점(끌어다 놓은 대상, iD connect 방식)이다. 층이 다른 지점은 거부한다.
+- **`splitEdgeAt` 추가 거부**: `conveying`이 있는 구간(에스컬레이터·무빙워크)과, 양 끝 범위가 다른 구간(층을 잇는 계단·경사로)은 `disabled` 이유를 돌려준다.
+- **경고**(동작은 실행하고 문장을 돌려준다):
+  - 측정이 가리키는 구간을 나누면 "이 구간의 측정은 나누기 전 길이 기준이라 다시 재야 합니다". 구간을 지우는 것은 막지 않고 검사 W13이 잡는다.
+  - overrides가 가리키는 Feature를 지우면 "overrides.json에서 이 항목을 지우세요". `mergeNodes`로 사라지는 지점이면 남는 지점 id도 보여 준다. 지우기는 막지 않고 검사 W14가 잡는다.
+
 #### 4.1.1 구간 나누기 규칙
 
 - **나누기를 거부하는 구간**: `elevator`, `bridge`, `portal` 구간(`disabled`로 이유를 돌려준다). 다리 중간에 지점이 필요하면 다리를 `building_type: "bridge"` 건물(층 1개)로 등록한다(2.6).
@@ -372,6 +386,11 @@ iD 편집기의 구조를 따른다.
 | I4 | 평지 구간(`footway` / `corridor`)은 서로 다른 범위(바깥, 건물+층)를 잇지 않는다. 포탈과 연결통로만 범위를 넘는다 |
 | I5 | 같은 `elevator_id`의 정차 지점은 같은 좌표에 있다 |
 | I6 | 되돌리기를 끝까지 하면 처음 상태와 같다 |
+
+### 4.3 불러오기와 저장
+
+- `fromCampus`: 스키마를 통과한 Feature만 상태에 넣고 나머지는 문제 목록으로 돌려준다. 구간의 첫·끝 좌표가 지점과 다르면 I2로 알리고, 저장할 때 지점 좌표로 맞춘다.
+- `serialize`: SPEC.md 4.3 배치를 따른다. 지점·room은 바깥이면 `outdoor.geojson`, 건물 안이면 `L{level}`, 양 끝이 한 건물(또는 둘 다 바깥)에 있지 않은 구간은 `connections.geojson`, 실내 구간은 아래층 파일이다. 파일 고르기에만 층을 비교한다. 각 파일은 `formatFeatureCollection`(LF)으로 쓰고, 불러온 직후 저장하면 바이트 단위로 같다. `overrides.json`, `observations/*.jsonl`, `calibration.json`은 다시 쓰지 않는다. 더는 쓰지 않는 옛 파일을 지우는 일은 부르는 쪽이 한다.
 
 I4는 검사에서 층 값을 비교한다. 길찾기가 아니라 검사이므로 AGENTS.md 규칙에 어긋나지 않는다.
 
@@ -596,6 +615,7 @@ Turf 주의 (7.4.0 소스에서 확인):
 | E12 | 오류 | `conveying`이 있는 `highway=steps`(에스컬레이터)의 `step_free`가 `false`가 아님 |
 | W12 | 경고 | 실내 에스컬레이터의 양 끝이 같은 건물·같은 층(층이 안 바뀜) |
 | W13 | 경고 | `observations`의 `target`이 존재하지 않는 구간·엘리베이터를 가리킴 |
+
 
 - **W11 삭제됨**(decisions 2026-11-11): 바깥 계단은 평면 길이로만 계산한다. 시간이 맞지 않는 긴 바깥 계단은 측정 보정(3.9)으로 맞춘다.
 - E11의 "하나로 이어지지 않음"은 스키마 오류가 난 엘리베이터 구간도 `from` / `to`만 읽어 연결에 넣고 계산한다. 그래서 엘리베이터 구간 하나가 스키마를 어기면 스키마 오류 하나만 나오고, 정말로 끊긴 경우에만 E11이 난다.

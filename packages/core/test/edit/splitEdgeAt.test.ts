@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  OBSERVATION_SPLIT_MESSAGE,
+  OBSERVATION_CHANGED_MESSAGE,
   addNode,
   checkInvariants,
   createIdGen,
@@ -134,8 +134,8 @@ describe('splitEdgeAt', () => {
     const s = await fixtureState();
     const id = 'e_out_0002__out_0003';
     const action = splitEdgeAt(id, [127.00025, 37.00055], {}, ctx(1, { observationTargets: new Set([`edge:${id}`]) }));
-    expect(action.warnings!(s)).toEqual([`구간 "${id}": ${OBSERVATION_SPLIT_MESSAGE}.`]);
-    expect(OBSERVATION_SPLIT_MESSAGE).toBe('이 구간의 측정은 나누기 전 길이 기준이라 다시 재야 합니다');
+    expect(action.warnings!(s)).toEqual([`구간 "${id}": ${OBSERVATION_CHANGED_MESSAGE}.`]);
+    expect(OBSERVATION_CHANGED_MESSAGE).toBe('이 구간의 측정은 바뀌기 전 길이 기준이라 다시 재야 합니다');
     expect(splitEdgeAt('e_A_3_hall__A_3_bridge', [127.00065, 37.0005], {}, ctx(1, { observationTargets: new Set([`edge:${id}`]) })).warnings!(s)).toEqual([]);
   });
 

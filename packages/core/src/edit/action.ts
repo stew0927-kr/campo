@@ -84,10 +84,10 @@ export function overrideMessage(id: string, survivor?: string): string {
   return `"${id}"에 override가 있습니다${keep}. overrides.json에서 이 항목을 지우세요.`;
 }
 
-export const OBSERVATION_SPLIT_MESSAGE = '이 구간의 측정은 나누기 전 길이 기준이라 다시 재야 합니다';
+export const OBSERVATION_CHANGED_MESSAGE = '이 구간의 측정은 바뀌기 전 길이 기준이라 다시 재야 합니다';
 
 export function observationMessage(edgeId: string): string {
-  return `구간 "${edgeId}": ${OBSERVATION_SPLIT_MESSAGE}.`;
+  return `구간 "${edgeId}": ${OBSERVATION_CHANGED_MESSAGE}.`;
 }
 
 /** Override warnings for every Feature the action removes. `survivorOf` names the node a merged-away node lives on as. */

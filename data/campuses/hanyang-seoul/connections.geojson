@@ -1,5 +1,1 @@
-{"type":"FeatureCollection","features":[
-{"type":"Feature","id":"e_portal_ENG1_1_entrance","geometry":{"type":"LineString","coordinates":[[127.04525182148245,37.55675047153703],[127.045253354,37.556739531]]},"properties":{"kind":"edge","highway":"footway","edge_type":"portal","step_free":false,"from":"n_ENG1_1_entrance","to":"n_out_0008","bidirectional":true,"source":"estimate"}},
-{"type":"Feature","id":"e_portal_ENG1_1_entrance2","geometry":{"type":"LineString","coordinates":[[127.04585299869382,37.55622568939336],[127.045779809,37.556217845]]},"properties":{"kind":"edge","highway":"footway","edge_type":"portal","step_free":false,"from":"n_ENG1_1_entrance2","to":"n_out_0010","bidirectional":true,"source":"estimate"}},
-{"type":"Feature","id":"e_portal_ENG1_3_entrance","geometry":{"type":"LineString","coordinates":[[127.0456331314478,37.55665856304786],[127.044959066,37.556859959]]},"properties":{"kind":"edge","highway":"footway","edge_type":"portal","step_free":false,"from":"n_ENG1_3_entrance","to":"n_out_0006","bidirectional":true,"source":"estimate"}}
-]}
+{"type":"FeatureCollection","features":[]}

@@ -1,5 +1,6 @@
 {
   "id": "hanyang-seoul",
+  "schema_version": "0.2",
   "name": "한양대학교 서울캠퍼스",
   "center": [
     127.045,

@@ -193,6 +193,28 @@ button, select, input { font: inherit; color: inherit; }
 .check-field { display: flex; align-items: flex-start; gap: 8px; }
 .check-field input { margin-top: 3px; }
 
+/* Delete: set apart from the editable fields, and red enough to read as destructive. */
+.props-delete {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+.props-delete .field-help { margin: 0; }
+.btn-danger {
+  padding: 8px 14px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: var(--danger);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-danger:hover { background: color-mix(in srgb, var(--danger) 84%, #000); }
+.btn-danger:active { background: color-mix(in srgb, var(--danger) 70%, #000); }
+
 /* ---- 검사 ---- */
 .checks-panel { display: flex; flex-direction: column; gap: 18px; }
 .check-section h3 { margin: 0 0 6px; font-size: var(--text-m); }

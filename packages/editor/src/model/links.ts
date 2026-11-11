@@ -1,5 +1,5 @@
 // "포탈" and "연결통로" tools (SPEC §8), and property edits from the 속성 tab.
-import type { CampoFeature, EdgeFeature, Position } from '@campo/core';
+import { FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, type CampoFeature, type EdgeFeature, type Position } from '@campo/core';
 import { withFeatures, type CampusDoc } from './document.ts';
 import { edgeIdFor, freeId, getBuilding, getNode, tail } from './ids.ts';
 import { DRAWN_SOURCE, outdoorId } from './outdoor-path.ts';
@@ -80,6 +80,8 @@ export function addOutdoorNode(doc: CampusDoc, position: Position, poiName?: str
 export interface CommonEdits {
   /** true: checked on site. false: steps or a sill. null: not known. */
   step_free?: boolean | null;
+  /** Indoor steps edges: seconds to climb the flight (0-30). null puts it back to the default. */
+  flight_sec?: number | null;
   needs_check?: boolean;
   source?: string;
 }
@@ -95,6 +97,10 @@ export function updateProperties(doc: CampusDoc, id: string, edits: CommonEdits)
     else delete props['needs_check']; // absent means false; keeps files short
   }
   if (edits.step_free !== undefined && f.properties.kind === 'edge') props['step_free'] = edits.step_free;
+  if (edits.flight_sec !== undefined && f.properties.kind === 'edge' && f.properties.highway === 'steps' && f.properties.edge_type === 'indoor') {
+    if (edits.flight_sec === null) delete props['flight_sec'];
+    else props['flight_sec'] = Math.min(FLIGHT_SEC_MAX, Math.max(FLIGHT_SEC_MIN, Math.round(edits.flight_sec)));
+  }
   if (JSON.stringify(props) === JSON.stringify(f.properties)) return doc;
   props['rev'] = f.properties.rev + 1;
   return withFeatures(doc, [{ ...f, properties: props } as unknown as CampoFeature]);

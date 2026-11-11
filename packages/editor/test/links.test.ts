@@ -88,6 +88,22 @@ describe('출발·도착 후보, 속성, 위치', () => {
     expect(cleared.features.get('e_A_1_entrance__A_1_hall')!.properties).not.toHaveProperty('needs_check');
   });
 
+  it('sets the climb time of an indoor flight within 0-30 s, and puts it back to the default (SPEC-v0.2 3.1)', () => {
+    const doc = twoBuildings();
+    const id = 'e_A_1_stairA__A_2_stairA';
+    expect(doc.features.get(id)!.properties).toMatchObject({ highway: 'steps', edge_type: 'indoor' });
+    const set = updateProperties(doc, id, { flight_sec: 25 });
+    expect(set.features.get(id)!.properties).toMatchObject({ flight_sec: 25, rev: 2 });
+    expect(updateProperties(set, id, { flight_sec: 99 }).features.get(id)!.properties).toMatchObject({ flight_sec: 30 });
+    expect(updateProperties(set, id, { flight_sec: -5 }).features.get(id)!.properties).toMatchObject({ flight_sec: 0 });
+    const reset = updateProperties(set, id, { flight_sec: null });
+    expect(reset.features.get(id)!.properties).not.toHaveProperty('flight_sec');
+    expect(isValidFeature(set.features.get(id))).toBe(true);
+    // only indoor steps take it: a corridor ignores the edit
+    const corridor = 'e_A_1_entrance__A_1_hall';
+    expect(updateProperties(doc, corridor, { flight_sec: 25 })).toBe(doc);
+  });
+
   it('adds 1 to rev on every real change, and none for an edit that changes nothing (SPEC-v0.2 §2.5)', () => {
     const id = 'e_A_1_entrance__A_1_hall';
     const doc = twoBuildings();

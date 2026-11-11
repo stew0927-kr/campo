@@ -1,4 +1,4 @@
-import type { CampoFeature } from '@campo/core';
+import { FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, FLOOR_FLIGHT_SEC, type CampoFeature } from '@campo/core';
 import type { CommonEdits } from '../model/links.ts';
 
 const SOURCES = [
@@ -38,6 +38,24 @@ export function PropertiesPanel({ feature, onEdit }: { feature: CampoFeature | u
             {STEP_FREE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </label>
+      )}
+      {p.kind === 'edge' && p.highway === 'steps' && p.edge_type === 'indoor' && p.step_count === undefined && (
+        <div className="field">
+          <label>한 층 오르는 시간: {p.flight_sec ?? FLOOR_FLIGHT_SEC}초{p.flight_sec === undefined ? ' (기본값)' : ''}
+            <input
+              type="range"
+              min={FLIGHT_SEC_MIN}
+              max={FLIGHT_SEC_MAX}
+              step={1}
+              value={p.flight_sec ?? FLOOR_FLIGHT_SEC}
+              onChange={(e) => onEdit({ flight_sec: Number(e.target.value) })}
+            />
+          </label>
+          {p.flight_sec !== undefined && (
+            <button type="button" onClick={() => onEdit({ flight_sec: null })}>기본값({FLOOR_FLIGHT_SEC}초)으로 되돌리기</button>
+          )}
+          <p className="field-help">계단 칸 수(step_count)를 모를 때만 쓰입니다. 내려갈 때는 올라갈 때의 3분의 2로 계산합니다.</p>
+        </div>
       )}
       <label className="check-field">
         <input type="checkbox" checked={p.needs_check === true} onChange={(e) => onEdit({ needs_check: e.target.checked })} />

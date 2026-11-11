@@ -12,6 +12,7 @@
     "test": "vitest run",
     "typecheck": "npm run typecheck --workspaces",
     "validate": "npm run validate -w @campo/tools",
+    "migrate": "npm run migrate -w @campo/tools --",
     "editor": "npm run dev -w @campo/editor"
   },
   "devDependencies": {

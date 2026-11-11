@@ -1,6 +1,7 @@
 import type { LoadedCampus, LoadedFile } from './types.ts';
 
 export const CAMPUS_META_FILE = 'campus.json';
+export const OVERRIDES_FILE = 'overrides.json';
 
 /**
  * Merge the files of one campus folder (SPEC §4.3) into a single feature list.
@@ -27,6 +28,10 @@ export function parseCampus(files: readonly LoadedFile[]): LoadedCampus {
       campus.meta = json;
       continue;
     }
+    if (path === OVERRIDES_FILE) {
+      campus.overrides = json;
+      continue;
+    }
 
     if (!isRecord(json) || json['type'] !== 'FeatureCollection' || !Array.isArray(json['features'])) {
       campus.fileErrors.push({ file: path, message: 'GeoJSON FeatureCollection이 아닙니다.' });
@@ -39,9 +44,9 @@ export function parseCampus(files: readonly LoadedFile[]): LoadedCampus {
   return campus;
 }
 
-/** True for the files that belong to a campus folder: campus.json and *.geojson. */
+/** True for the files that belong to a campus folder: campus.json, overrides.json and *.geojson. */
 export function isCampusFile(path: string): boolean {
-  return path === CAMPUS_META_FILE || path.endsWith('.geojson');
+  return path === CAMPUS_META_FILE || path === OVERRIDES_FILE || path.endsWith('.geojson');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

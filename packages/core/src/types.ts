@@ -9,8 +9,12 @@ export type Level = number;
 
 export type Source = string;
 
+/** The data format this code reads. campus.json carries it as schema_version; npm run migrate upgrades older data. */
+export const SCHEMA_VERSION = '0.2';
+
 export interface CampusMeta {
   id: string;
+  schema_version: typeof SCHEMA_VERSION;
   name: string;
   center: Position;
   /** [west, south, east, north] */
@@ -20,6 +24,8 @@ export interface CampusMeta {
 interface CommonProperties {
   source: Source;
   needs_check?: boolean;
+  /** Revision counter, +1 on every change. Starts at 1 (SPEC-v0.2 §2.5). */
+  rev: number;
 }
 
 export interface BuildingProperties extends CommonProperties {
@@ -28,6 +34,8 @@ export interface BuildingProperties extends CommonProperties {
   code: string;
   levels: Level[];
   ground_levels: Level[];
+  /** A footbridge registered as a one-level building (SPEC-v0.2 §2.6). */
+  building_type?: 'bridge';
   ext?: {
     moct_bldg_id?: string;
     floor_height_m?: number;
@@ -42,6 +50,7 @@ export const NODE_TYPES = [
   'elevator_stop',
   'stair_landing',
   'poi',
+  'restroom',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 
@@ -54,9 +63,24 @@ export interface NodeProperties extends CommonProperties {
   level: Level | null;
   name?: string;
   ref?: string;
-  shaft_id?: string;
   space_name?: string;
+  /** Every stop of one elevator carries the same id, e.g. "A_elevA" (SPEC-v0.2 §2.2). */
+  elevator_id?: string;
+  /** Classroom number on a door (SPEC-v0.2 §2.4). */
+  room_ref?: string;
+  door_role?: DoorRole;
+  /** restroom only (SPEC-v0.2 §2.3). */
+  restroom_gender?: RestroomGender;
+  wheelchair?: Wheelchair;
+  changing_table?: boolean | null;
 }
+
+export const DOOR_ROLES = ['front', 'back', 'other'] as const;
+export type DoorRole = (typeof DOOR_ROLES)[number];
+export const RESTROOM_GENDERS = ['male', 'female', 'unisex', 'family'] as const;
+export type RestroomGender = (typeof RESTROOM_GENDERS)[number];
+export const WHEELCHAIR_VALUES = ['yes', 'limited', 'no', 'unknown'] as const;
+export type Wheelchair = (typeof WHEELCHAIR_VALUES)[number];
 
 export const HIGHWAYS = ['footway', 'steps', 'corridor', 'elevator', 'ramp'] as const;
 export type Highway = (typeof HIGHWAYS)[number];
@@ -71,10 +95,13 @@ export interface EdgeProperties extends CommonProperties {
   from: string;
   to: string;
   bidirectional: boolean;
-  step_free: boolean;
+  /** true: checked on site, no steps. false: steps or a sill. null: not known (SPEC-v0.2 §2.1). */
+  step_free: boolean | null;
   level_from?: Level;
   level_to?: Level;
   step_count?: number;
+  /** steps edges only: direction of travel from → to (SPEC-v0.2 §2.6). */
+  incline?: 'up' | 'down';
   covered?: boolean;
   hours?: string;
   building_from?: string;
@@ -102,7 +129,23 @@ export interface EdgeFeature {
   properties: EdgeProperties;
 }
 
-export type CampoFeature = BuildingFeature | NodeFeature | EdgeFeature;
+/** A classroom outline. Optional input for the door macros (SPEC-v0.2 §2.4). */
+export interface RoomProperties extends CommonProperties {
+  kind: 'room';
+  building_id: string;
+  level: Level;
+  name?: string;
+  room_ref?: string;
+}
+
+export interface RoomFeature {
+  type: 'Feature';
+  id: string;
+  geometry: { type: 'Polygon'; coordinates: Position[][] };
+  properties: RoomProperties;
+}
+
+export type CampoFeature = BuildingFeature | NodeFeature | EdgeFeature | RoomFeature;
 
 export interface CampoFeatureCollection {
   type: 'FeatureCollection';
@@ -131,6 +174,8 @@ export interface LoadedCampus {
   /** Contents of campus.json, unvalidated. undefined when the file is missing. */
   meta: unknown;
   features: LoadedFeature[];
+  /** Contents of overrides.json, unvalidated. undefined when the file is missing (SPEC-v0.2 §2.5). */
+  overrides?: unknown;
   /** Files that could not be parsed as JSON or are not FeatureCollections. */
   fileErrors: { file: string; message: string }[];
 }
@@ -146,6 +191,16 @@ export const ERROR_CODES = {
   verticalLevelMismatch: 'vertical-level-mismatch',
   groundLevelWithoutEntrance: 'ground-level-without-entrance',
   entranceWithoutPortal: 'entrance-without-portal',
+  /** E9 (I4): a flat edge joins two different scopes (outdoor, or building + level). */
+  flatEdgeCrossesScope: 'flat-edge-crosses-scope',
+  /** E9 (I5): stops of one elevator_id are not at the same coordinate. */
+  elevatorStopsApart: 'elevator-stops-apart',
+  /** E10 */
+  restroomNotConnected: 'restroom-not-connected',
+  /** E11 */
+  elevatorIdMissing: 'elevator-id-missing',
+  /** E11 */
+  elevatorGroupSplit: 'elevator-group-split',
 } as const;
 
 export const WARNING_CODES = {
@@ -153,7 +208,31 @@ export const WARNING_CODES = {
   disconnectedComponent: 'disconnected-component',
   needsCheck: 'needs-check',
   noStepFreeRoute: 'no-step-free-route',
+  /** W5 */
+  doorNotOnCorridor: 'door-not-on-corridor',
+  /** W6 */
+  duplicateFrontDoor: 'duplicate-front-door',
+  /** W7 */
+  expiredOverride: 'expired-override',
+  /** W8 */
+  elevatorDeadEnd: 'elevator-dead-end',
+  /** W9 */
+  elevatorSingleLevel: 'elevator-single-level',
+  /** W10 */
+  bridgeSameBuilding: 'bridge-same-building',
 } as const;
+
+// ---- Overrides (SPEC-v0.2 §2.5) ----
+
+/** A temporary state (broken elevator, blocked door) kept out of the map data. */
+export interface Override {
+  feature_id: string;
+  /** What is wrong, e.g. "out_of_service". Free text until the report kinds are fixed (task 8). */
+  status: string;
+  /** Expiry, ISO 8601 date-time. */
+  until: string;
+  report_id: string;
+}
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
 export type WarningCode = (typeof WARNING_CODES)[keyof typeof WARNING_CODES];

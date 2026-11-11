@@ -1,5 +1,6 @@
 {
   "id": "fixture-basic",
+  "schema_version": "0.2",
   "name": "가짜 캠퍼스",
   "center": [
     127.0006,

@@ -1,0 +1,9 @@
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"e_C_5_hall__C_5_bridge","geometry":{"type":"LineString","coordinates":[[127.0008,37.001],[127.0007,37.0009]]},"properties":{"kind":"edge","highway":"corridor","edge_type":"indoor","step_free":true,"from":"n_C_5_hall","to":"n_C_5_bridge","bidirectional":true,"source":"field-survey-2026-11","rev":1}},
+{"type":"Feature","id":"e_C_5_hall__C_5_east","geometry":{"type":"LineString","coordinates":[[127.0008,37.001],[127.001,37.001]]},"properties":{"kind":"edge","highway":"corridor","edge_type":"indoor","step_free":true,"from":"n_C_5_hall","to":"n_C_5_east","bidirectional":true,"source":"field-survey-2026-11","rev":1}},
+{"type":"Feature","id":"e_C_5_main__C_5_hall","geometry":{"type":"LineString","coordinates":[[127.0006,37.0011],[127.0008,37.001]]},"properties":{"kind":"edge","highway":"corridor","edge_type":"indoor","step_free":true,"from":"n_C_5_main","to":"n_C_5_hall","bidirectional":true,"source":"field-survey-2026-11","rev":1}},
+{"type":"Feature","id":"n_C_5_bridge","geometry":{"type":"Point","coordinates":[127.0007,37.0009]},"properties":{"kind":"node","node_type":"corridor","building_id":"bldg_C","level":5,"source":"field-survey-2026-11","rev":1}},
+{"type":"Feature","id":"n_C_5_east","geometry":{"type":"Point","coordinates":[127.001,37.001]},"properties":{"kind":"node","node_type":"corridor","building_id":"bldg_C","level":5,"source":"field-survey-2026-11","rev":1}},
+{"type":"Feature","id":"n_C_5_hall","geometry":{"type":"Point","coordinates":[127.0008,37.001]},"properties":{"kind":"node","node_type":"corridor","building_id":"bldg_C","level":5,"source":"field-survey-2026-11","rev":1}},
+{"type":"Feature","id":"n_C_5_main","geometry":{"type":"Point","coordinates":[127.0006,37.0011]},"properties":{"kind":"node","node_type":"entrance","building_id":"bldg_C","level":5,"name":"C동 5층 출입구","source":"field-survey-2026-11","rev":1}}
+]}

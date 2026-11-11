@@ -1,4 +1,4 @@
-// Campus data checks (docs/SPEC.md §7).
+// Campus data checks (docs/SPEC.md §7, docs/v0.2/SPEC-v0.2.md §8).
 import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 import distance from '@turf/distance';
 import schema from '../../../data/schema/campo.schema.json' with { type: 'json' };
@@ -12,12 +12,13 @@ import {
   type ErrorCode,
   type LoadedCampus,
   type NodeFeature,
+  type Override,
   type Position,
   type ValidationIssue,
   type ValidationResult,
   type WarningCode,
 } from './types.ts';
-import { CAMPUS_META_FILE } from './load.ts';
+import { CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
 import { isStepFreePassable } from './costs.ts';
 
 /** Max distance (m) between an edge's line ends and its from/to nodes (§7 error 4). */
@@ -27,6 +28,7 @@ const ajv = new Ajv2020({ allErrors: true, strictTypes: false });
 ajv.addSchema(schema);
 const validateFeatureSchema = schemaFor<CampoFeature>('feature');
 const validateMetaSchema = schemaFor<CampusMeta>('campus');
+const validateOverridesSchema = schemaFor<Override[]>('overrides');
 
 function schemaFor<T>(def: string): ValidateFunction<T> {
   const fn = ajv.getSchema<T>(`${schema.$id}#/$defs/${def}`);
@@ -44,7 +46,12 @@ interface Located<F> {
   feature: F;
 }
 
-export function validateCampus(campus: LoadedCampus): ValidationResult {
+export interface ValidateOptions {
+  /** The clock for W7 (expired overrides). Tests pass a fixed time. Default: now. */
+  now?: Date;
+}
+
+export function validateCampus(campus: LoadedCampus, options: ValidateOptions = {}): ValidationResult {
   const errors: ValidationIssue<ErrorCode>[] = [];
   const warnings: ValidationIssue<WarningCode>[] = [];
   const error = (file: string, featureId: string | null, code: ErrorCode, message: string) =>
@@ -57,8 +64,16 @@ export function validateCampus(campus: LoadedCampus): ValidationResult {
 
   if (campus.meta === undefined) {
     error(CAMPUS_META_FILE, null, E.schema, 'campus.json 파일이 없습니다.');
+  } else if (isRecord(campus.meta) && campus.meta['schema_version'] === undefined) {
+    error(CAMPUS_META_FILE, null, E.schema, 'campus.json에 schema_version이 없습니다. v0.1 데이터이면 npm run migrate를 먼저 돌려 주세요.');
   } else if (!validateMetaSchema(campus.meta)) {
     error(CAMPUS_META_FILE, null, E.schema, formatSchemaErrors(validateMetaSchema.errors));
+  }
+
+  let overrides: Override[] = [];
+  if (campus.overrides !== undefined) {
+    if (validateOverridesSchema(campus.overrides)) overrides = campus.overrides;
+    else error(OVERRIDES_FILE, null, E.schema, formatSchemaErrors(validateOverridesSchema.errors));
   }
 
   const valid: Located<CampoFeature>[] = [];
@@ -92,11 +107,11 @@ export function validateCampus(campus: LoadedCampus): ValidationResult {
     const f = item.feature;
     if (f.properties.kind === 'building') buildings.set(f.id, item as Located<BuildingFeature>);
     else if (f.properties.kind === 'node') nodes.set(f.id, item as Located<NodeFeature>);
-    else edges.push(item as Located<EdgeFeature>);
+    else if (f.properties.kind === 'edge') edges.push(item as Located<EdgeFeature>);
+    // Room outlines (kind "room") are only schema-checked for now.
   }
 
   const nonNodeIds = new Set([...buildings.keys(), ...edges.map((e) => e.feature.id)]);
-
   /** Edges whose both ends exist; the graph checks below only use these. */
   const linked: { file: string; edge: EdgeFeature; from: NodeFeature; to: NodeFeature }[] = [];
 
@@ -117,6 +132,14 @@ export function validateCampus(campus: LoadedCampus): ValidationResult {
     }
     if (!from || !to) continue;
     linked.push({ file, edge, from: from.feature, to: to.feature });
+
+    // ---- E9 (I4): flat edges stay inside one scope; only portals and bridges cross ----
+    if ((p.highway === 'footway' || p.highway === 'corridor') && p.edge_type !== 'portal' && p.edge_type !== 'bridge') {
+      if (scopeOf(from.feature) !== scopeOf(to.feature)) {
+        error(file, edge.id, E.flatEdgeCrossesScope,
+          `평지 구간이 서로 다른 범위(${scopeOf(from.feature)} → ${scopeOf(to.feature)})를 잇습니다. 포탈이나 연결통로로 이어야 합니다.`);
+      }
+    }
 
     // ---- 4. Line ends must sit on the from/to nodes (elevators excepted) ----
     if (p.highway !== 'elevator') {
@@ -241,7 +264,130 @@ export function validateCampus(campus: LoadedCampus): ValidationResult {
     }
   }
 
+  // ---- v0.2 checks (SPEC-v0.2 §8). Comparing levels is fine here: this is validation, not routing. ----
+  const nodeList = [...nodes.values()];
+  /** Edges touching each node, from the edges whose both ends exist. */
+  const edgesAt = new Map<string, EdgeFeature[]>();
+  for (const id of nodes.keys()) edgesAt.set(id, []);
+  for (const { edge, from, to } of linked) {
+    edgesAt.get(from.id)!.push(edge);
+    edgesAt.get(to.id)!.push(edge);
+  }
+  const otherEnd = (edge: EdgeFeature, id: string): NodeFeature | undefined =>
+    nodes.get(edge.properties.from === id ? edge.properties.to : edge.properties.from)?.feature;
+
+  // E10. A restroom must be joined to the path network.
+  for (const { file, feature: node } of nodeList) {
+    if (node.properties.node_type === 'restroom' && edgesAt.get(node.id)!.length === 0) {
+      error(file, node.id, E.restroomNotConnected, '화장실 지점이 어떤 구간에도 이어져 있지 않습니다.');
+    }
+  }
+
+  // E11. Every elevator stop has an elevator_id, and one id means one elevator (stops joined by elevator edges).
+  const stops = nodeList.filter(({ feature: n }) => n.properties.node_type === 'elevator_stop');
+  const stopsById = new Map<string, Located<NodeFeature>[]>();
+  for (const stop of stops) {
+    const id = stop.feature.properties.elevator_id;
+    if (id === undefined) {
+      error(stop.file, stop.feature.id, E.elevatorIdMissing, '엘리베이터 정차 지점에 elevator_id가 없습니다.');
+    } else {
+      stopsById.set(id, [...(stopsById.get(id) ?? []), stop]);
+    }
+  }
+  const stopIds = new Set(stops.map((s) => s.feature.id));
+  const liftNext = new Map<string, string[]>();
+  for (const id of stopIds) liftNext.set(id, []);
+  for (const { edge } of linked) {
+    const { highway, from, to } = edge.properties;
+    if (highway === 'elevator' && stopIds.has(from) && stopIds.has(to)) {
+      liftNext.get(from)!.push(to);
+      liftNext.get(to)!.push(from);
+    }
+  }
+  for (const [elevatorId, group] of [...stopsById].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const first = group[0]!;
+    const joined = reach(first.feature.id, liftNext);
+    const apart = group.filter((s) => !joined.has(s.feature.id));
+    if (apart.length > 0) {
+      error(first.file, first.feature.id, E.elevatorGroupSplit,
+        `elevator_id "${elevatorId}"의 정차 지점 ${apart.map((s) => `"${s.feature.id}"`).join(', ')}이(가) 엘리베이터 구간으로 이어져 있지 않습니다.`);
+    }
+
+    // E9 (I5): the stops of one elevator share a shaft, so they sit at the same coordinate.
+    const origin = first.feature.geometry.coordinates;
+    for (const s of group.slice(1)) {
+      const d = distance(origin, s.feature.geometry.coordinates, { units: 'meters' });
+      if (d > ENDPOINT_TOLERANCE_M) {
+        error(s.file, s.feature.id, E.elevatorStopsApart,
+          `elevator_id "${elevatorId}"의 정차 지점이 "${first.feature.id}"에서 ${d.toFixed(1)}m 떨어져 있습니다(같은 승강로는 같은 자리여야 합니다).`);
+      }
+    }
+
+    // W9. All stops on one level: nobody can ride it anywhere.
+    const levels = new Set(group.map((s) => `${String(s.feature.properties.building_id)}/${String(s.feature.properties.level)}`));
+    if (levels.size === 1) {
+      warn(first.file, first.feature.id, W.elevatorSingleLevel, `elevator_id "${elevatorId}"의 정차 지점이 모두 같은 층입니다.`);
+    }
+  }
+
+  // W8. A stop with only elevator edges: you can ride in but there is no way out.
+  for (const { file, feature: node } of stops) {
+    if (!edgesAt.get(node.id)!.some((e) => e.properties.highway !== 'elevator')) {
+      warn(file, node.id, W.elevatorDeadEnd, '엘리베이터 정차 지점에 복도 쪽으로 이어진 구간이 없습니다(타기만 하고 내릴 곳이 없습니다).');
+    }
+  }
+
+  // W5. A door should open onto a corridor.
+  for (const { file, feature: node } of nodeList) {
+    if (node.properties.node_type !== 'door') continue;
+    const onCorridor = edgesAt.get(node.id)!.some((e) => otherEnd(e, node.id)?.properties.node_type === 'corridor');
+    if (!onCorridor) warn(file, node.id, W.doorNotOnCorridor, '문이 복도와 이어져 있지 않습니다.');
+  }
+
+  // W6. One front door per room (room numbers repeat across buildings, so key by building too).
+  const frontDoors = new Map<string, Located<NodeFeature>[]>();
+  for (const door of nodeList) {
+    const p = door.feature.properties;
+    if (p.node_type !== 'door' || p.door_role !== 'front' || p.room_ref === undefined) continue;
+    const key = `${String(p.building_id)}/${p.room_ref}`;
+    frontDoors.set(key, [...(frontDoors.get(key) ?? []), door]);
+  }
+  for (const group of [...frontDoors.values()].filter((g) => g.length > 1)) {
+    for (const { file, feature } of group.slice(1)) {
+      warn(file, feature.id, W.duplicateFrontDoor,
+        `호실 "${feature.properties.room_ref}"에 앞문(front)이 ${group.length}개 있습니다: ${group.map((d) => d.feature.id).join(', ')}`);
+    }
+  }
+
+  // W7. Expired overrides should be cleaned out of overrides.json.
+  const now = (options.now ?? new Date()).getTime();
+  for (const o of overrides) {
+    const until = Date.parse(o.until);
+    if (Number.isNaN(until)) {
+      error(OVERRIDES_FILE, o.feature_id, E.schema, `until "${o.until}"을(를) 시각으로 읽을 수 없습니다.`);
+    } else if (until < now) {
+      warn(OVERRIDES_FILE, o.feature_id, W.expiredOverride, `override(제보 ${o.report_id})가 ${o.until}에 만료되었습니다. 지워 주세요.`);
+    }
+  }
+
+  // W10. A bridge exists to join two buildings.
+  for (const { file, edge, from, to } of linked) {
+    if (edge.properties.edge_type === 'bridge' && from.properties.building_id === to.properties.building_id) {
+      warn(file, edge.id, W.bridgeSameBuilding, '연결통로의 양 끝 지점이 같은 건물에 있습니다.');
+    }
+  }
+
   return { errors, warnings };
+}
+
+/** "outdoor" or "건물id/층": the area an edge may stay in. */
+function scopeOf(node: NodeFeature): string {
+  const { building_id, level } = node.properties;
+  return building_id === null ? 'outdoor' : `${building_id}/${String(level)}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** A classroom door is a `door` node with a room name or number (§4.2). */

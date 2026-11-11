@@ -4,8 +4,8 @@ import { join, relative, sep } from 'node:path';
 import { isCampusFile, parseCampus } from '../load.ts';
 import type { LoadedCampus, LoadedFile } from '../types.ts';
 
-/** Read every campus.json / *.geojson under `dir` and merge them (SPEC §4.3). */
-export async function loadCampus(dir: string): Promise<LoadedCampus> {
+/** Read every campus file (campus.json, overrides.json, *.geojson) under `dir` as text. */
+export async function readCampusFiles(dir: string): Promise<LoadedFile[]> {
   const entries = await readdir(dir, { recursive: true, withFileTypes: true });
   const files: LoadedFile[] = [];
   for (const entry of entries) {
@@ -15,5 +15,10 @@ export async function loadCampus(dir: string): Promise<LoadedCampus> {
     if (!isCampusFile(path)) continue;
     files.push({ path, text: await readFile(abs, 'utf8') });
   }
-  return parseCampus(files);
+  return files;
+}
+
+/** Read every campus file under `dir` and merge them (SPEC §4.3). */
+export async function loadCampus(dir: string): Promise<LoadedCampus> {
+  return parseCampus(await readCampusFiles(dir));
 }

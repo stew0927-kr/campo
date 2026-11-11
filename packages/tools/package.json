@@ -5,10 +5,12 @@
   "type": "module",
   "description": "Command-line tools: validate CLI, later elevation join scripts.",
   "bin": {
-    "campo-validate": "./src/validate.ts"
+    "campo-validate": "./src/validate.ts",
+    "campo-migrate": "./src/migrate.ts"
   },
   "scripts": {
     "validate": "tsx src/validate.ts",
+    "migrate": "tsx src/migrate.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

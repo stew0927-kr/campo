@@ -1,3 +1,3 @@
 {"type":"FeatureCollection","features":[
-{"type":"Feature","id":"bldg_B","geometry":{"type":"Polygon","coordinates":[[[127.0011,37.0003],[127.0014,37.0003],[127.0014,37.0006],[127.0011,37.0006],[127.0011,37.0003]]]},"properties":{"kind":"building","name":"B동","code":"B","levels":[1,2],"ground_levels":[1],"source":"field-survey-2026-11"}}
+{"type":"Feature","id":"bldg_B","geometry":{"type":"Polygon","coordinates":[[[127.0011,37.0003],[127.0014,37.0003],[127.0014,37.0006],[127.0011,37.0006],[127.0011,37.0003]]]},"properties":{"kind":"building","name":"B동","code":"B","levels":[1,2],"ground_levels":[1],"source":"field-survey-2026-11","rev":1}}
 ]}

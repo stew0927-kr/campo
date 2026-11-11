@@ -16,3 +16,7 @@
 - 2026-11-11 · 구름다리는 bridge 구간(선택 속성 covered)과 building_type: "bridge" 건물로 표현, 점검표 R16과 검사 W10 추가, 편집기에 연결통로 도구(건물·층 고르는 창) 추가 · 층 번호가 다른 건물 연결과 중간 지점 요구를 구조로 해결 · 윤준혁
 - 2026-11-11 · 제보 묶음 거리는 같은 범위 8m, 상수 파일 한 곳에만 둠. 실시간 검사의 바뀐 Feature는 동작의 Immer 패치 경로(path[0]이 nodes/edges/buildings, path[1]이 id)에서 뽑음 · 값과 방법을 한 곳에 고정 · 윤준혁
 - 2026-11-11 · R19: 경사로·엘리베이터도 step_free: false면 step_free 프로필에서 막음(SPEC-v0.2 2.1 뜻), v0.1 데이터의 기본값 false는 작업 3 마이그레이션이 정리 · 모름(null)과 계단·턱 있음(false)을 구분 · 윤준혁
+- 2026-11-11 · 스키마 v0.2: 모든 Feature에 rev 필수(1부터), campus.json에 schema_version "0.2" 필수, step_free는 true/false/null, shaft_id는 스키마에서 빼고 elevator_id로 대체 · SPEC-v0.2 2장, R19(경사로·엘리베이터도 false면 막음) 결정 반영 · 윤준혁
+- 2026-11-11 · npm run migrate는 형식 변환이라 packages/core/src/edit 동작을 거치지 않음(검사를 통과하지 못하는 v0.1 데이터도 읽어야 함). 두 번 돌려도 결과가 같고, 바뀌는 항목은 --dry-run으로 종류별 개수를 먼저 봄 · AGENTS.md "데이터를 바꾸는 코드는 동작만" 규칙의 예외를 이 한 곳에 한정 · 윤준혁
+- 2026-11-11 · migrate의 elevator_id: 기존 shaft_id 값을 그대로 옮기고, 엘리베이터 구간으로 이어진 한 묶음에 서로 다른 shaft_id가 섞여 있으면 고르지 않고 지점 목록을 보여 주며 멈춤, 값이 없는 묶음만 {건물코드}_elev{안 쓴 가장 앞 알파벳}으로 채움 · 같은 승강로를 잘못 합치거나 쪼개는 일을 막음 · 윤준혁
+- 2026-11-11 · restroom 지점은 restroom_gender와 wheelchair를 필수로 둠(확인 전에는 wheelchair: unknown), overrides.json의 status는 제보 종류가 정해질 때까지 자유 문자열 · 값이 없는 화장실이 길찾기 조건(휠체어 화장실)에서 조용히 빠지는 일을 막음 · 윤준혁

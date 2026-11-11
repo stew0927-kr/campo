@@ -42,7 +42,8 @@ export function isStepFreePassable(edge: Pick<EdgeProperties, 'highway' | 'step_
       return true;
     case 'footway':
     case 'corridor':
-      return edge.step_free;
+      // null (not known) blocks like false until task 4 gives it the v0.2 penalty (audit R7).
+      return edge.step_free === true;
   }
 }
 

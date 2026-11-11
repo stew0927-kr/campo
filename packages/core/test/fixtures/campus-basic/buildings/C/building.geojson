@@ -1,0 +1,3 @@
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"bldg_C","geometry":{"type":"Polygon","coordinates":[[[127.0006,37.0009],[127.001,37.0009],[127.001,37.0012],[127.0006,37.0012],[127.0006,37.0009]]]},"properties":{"kind":"building","name":"C동","code":"C","levels":[5],"ground_levels":[5],"source":"field-survey-2026-11","rev":1}}
+]}

@@ -4,7 +4,9 @@ import { enablePatches } from 'immer';
 enablePatches();
 
 export * from './types.ts';
-export { CAMPUS_META_FILE, isCampusFile, parseCampus } from './load.ts';
+export { CAMPUS_META_FILE, OVERRIDES_FILE, isCampusFile, parseCampus } from './load.ts';
+export { formatFeatureCollection, formatMeta } from './format.ts';
+export { migrateCampusFiles, type MigrateProblem, type MigrateResult, type MigrateSummary } from './migrate.ts';
 export { ENDPOINT_TOLERANCE_M, isClassroomDoor, isValidFeature, validateCampus } from './validate.ts';
 export * from './costs.ts';
 export { buildGraph, carId, type CampusGraph, type GraphLinkData, type GraphNodeData } from './graph.ts';

@@ -45,7 +45,7 @@ function broken(mutate: (helpers: {
 
 const outdoorNode = (id: string, coordinates: [number, number]) => ({
   type: 'Feature', id, geometry: { type: 'Point', coordinates },
-  properties: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: 'estimate' },
+  properties: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: 'estimate', rev: 1 },
 });
 
 const codes = (issues: { code: string; featureId: string | null }[]) => issues.map((i) => [i.code, i.featureId]);
@@ -56,9 +56,10 @@ describe('fixture campus-basic', () => {
     expect([...files].sort()).toEqual([
       'buildings/A/L1.geojson', 'buildings/A/L2.geojson', 'buildings/A/L3.geojson', 'buildings/A/L4.geojson',
       'buildings/A/building.geojson', 'buildings/B/L1.geojson', 'buildings/B/L2.geojson',
-      'buildings/B/building.geojson', 'connections.geojson', 'outdoor.geojson',
+      'buildings/B/building.geojson', 'buildings/C/L5.geojson', 'buildings/C/building.geojson',
+      'connections.geojson', 'outdoor.geojson',
     ]);
-    expect(fixture.meta).toMatchObject({ id: 'fixture-basic' });
+    expect(fixture.meta).toMatchObject({ id: 'fixture-basic', schema_version: '0.2' });
     expect(fixture.fileErrors).toEqual([]);
   });
 
@@ -67,14 +68,16 @@ describe('fixture campus-basic', () => {
     const nodes = features.filter((f) => f.properties.kind === 'node');
     const of = (pred: (f: AnyFeature) => boolean) => features.filter(pred).map((f) => f.id).sort();
 
-    expect(nodes.filter((n) => n.properties.building_id === null)).toHaveLength(6);
-    expect(of((f) => f.properties.kind === 'building')).toEqual(['bldg_A', 'bldg_B']);
+    expect(nodes.filter((n) => n.properties.building_id === null)).toHaveLength(7); // 6 on the campus paths + a dead end in front of C
+    expect(of((f) => f.properties.kind === 'building')).toEqual(['bldg_A', 'bldg_B', 'bldg_C']);
     expect(of((f) => f.properties.highway === 'elevator')).toHaveLength(3); // A 1→2→3→4
     expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'indoor' && f.properties.from.startsWith('n_A_')))
       .toHaveLength(3); // A 1→2→3→4
     expect(of((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'outdoor')).toEqual(['e_out_0002__out_0003']);
     expect(of((f) => f.properties.edge_type === 'portal')).toContain('e_portal_A_4_north');
-    expect(of((f) => f.properties.edge_type === 'bridge')).toEqual(['e_A_3_bridge__B_2_bridge']);
+    expect(of((f) => f.properties.edge_type === 'bridge')).toEqual([
+      'e_A_3_bridge__B_2_bridge', 'e_A_3_north__C_5_bridge', 'e_C_5_east__B_2_steps',
+    ]);
     expect(of((f) => f.properties.node_type === 'door' && f.properties.space_name)).toEqual(['n_A_4_408door', 'n_B_2_201door']);
   });
 
@@ -129,7 +132,13 @@ describe('validateCampus errors (SPEC §7)', () => {
     const result = broken(({ get }) => {
       get('n_B_2_hall').properties.level = 3; // B has levels [1, 2]
     });
-    expect(codes(result.errors)).toEqual([[E.levelNotInBuilding, 'n_B_2_hall']]);
+    // The hall now sits on another scope than its three flat edges, which E9 (I4) reports as well.
+    expect(codes(result.errors)).toEqual([
+      [E.flatEdgeCrossesScope, 'e_B_2_bridge__B_2_hall'],
+      [E.flatEdgeCrossesScope, 'e_B_2_hall__B_2_201door'],
+      [E.flatEdgeCrossesScope, 'e_B_2_hall__B_2_stair'],
+      [E.levelNotInBuilding, 'n_B_2_hall'],
+    ]);
   });
 
   it('6. reports elevator or stair levels that differ from their end nodes', () => {
@@ -193,7 +202,7 @@ describe('validateCampus warnings (SPEC §7)', () => {
         type: 'Feature', id: 'e_out_0098__out_0099',
         geometry: { type: 'LineString', coordinates: [[127.002, 37.002], [127.002, 37.0021]] },
         properties: { kind: 'edge', highway: 'footway', edge_type: 'outdoor', from: 'n_out_0098', to: 'n_out_0099',
-          bidirectional: true, step_free: true, source: 'estimate' },
+          bidirectional: true, step_free: true, source: 'estimate', rev: 1 },
       });
     });
     expect(result.errors).toEqual([]);
@@ -219,5 +228,274 @@ describe('validateCampus warnings (SPEC §7)', () => {
     expect(result.errors).toEqual([]);
     expect(codes(result.warnings)).toEqual([[W.noStepFreeRoute, 'n_B_2_201door']]);
     expect(result.warnings[0]!.message).toContain('201호 강의실');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// v0.2 (docs/v0.2/SPEC-v0.2.md §2 and §8)
+// ---------------------------------------------------------------------------------------------
+
+/** The edges that end at node `id`, so a test can move the node and keep the lines on it. */
+function edgesAt(campus: LoadedCampus, id: string): AnyFeature[] {
+  return campus.features
+    .map((f) => f.feature as AnyFeature)
+    .filter((f) => f.properties.kind === 'edge' && (f.properties.from === id || f.properties.to === id));
+}
+
+describe('fixture campus-basic (v0.2 additions)', () => {
+  const all = () => fixture.features.map((f) => f.feature as AnyFeature);
+  const byId = (id: string) => all().find((f) => f.id === id);
+
+  it('has two restrooms, one of them a checked wheelchair restroom', () => {
+    const restrooms = all().filter((f) => f.properties.node_type === 'restroom');
+    expect(restrooms.map((f) => [f.id, f.properties.restroom_gender, f.properties.wheelchair])).toEqual([
+      ['n_A_4_wc_f', 'female', 'yes'], // features are listed by id
+      ['n_A_4_wc_m', 'male', 'no'],
+    ]);
+  });
+
+  it('gives the classroom doors a room number and a role', () => {
+    expect(byId('n_A_4_408door').properties).toMatchObject({ room_ref: '408', door_role: 'front' });
+    expect(byId('n_B_2_201door').properties).toMatchObject({ room_ref: '201', door_role: 'front' });
+  });
+
+  it('joins A 3F and C 5F with a bridge whose two level numbers differ', () => {
+    expect(byId('e_A_3_north__C_5_bridge').properties).toMatchObject({
+      edge_type: 'bridge', building_from: 'bldg_A', building_to: 'bldg_C', level_from: 3, level_to: 5, covered: true, step_free: true,
+    });
+  });
+
+  it('has a bridge into B that ends in two steps', () => {
+    expect(byId('e_C_5_east__B_2_steps').properties).toMatchObject({ edge_type: 'bridge', building_to: 'bldg_B', step_free: true });
+    expect(byId('e_B_2_steps__B_2_bridge').properties).toMatchObject({
+      highway: 'steps', step_free: false, step_count: 2, incline: 'down',
+    });
+  });
+
+  it('keeps every elevator stop of A on one elevator_id and has no shaft_id left', () => {
+    const ids = all().filter((f) => f.properties.node_type === 'elevator_stop').map((f) => f.properties.elevator_id);
+    expect(ids).toEqual(['A_elevA', 'A_elevA', 'A_elevA', 'A_elevA']);
+    expect(all().some((f) => 'shaft_id' in f.properties)).toBe(false);
+  });
+});
+
+describe('schema v0.2 (SPEC-v0.2 §2)', () => {
+  const schemaErrors = (r: ValidationResult) => r.errors.filter((e) => e.code === E.schema);
+
+  it('accepts step_free true, false and null', () => {
+    const result = broken(({ get }) => {
+      get('e_out_0001__out_0002').properties.step_free = null;
+      get('e_out_0001__out_0006').properties.step_free = false;
+    });
+    expect(result.errors).toEqual([]);
+  });
+
+  it('rejects other step_free values', () => {
+    const result = broken(({ get }) => {
+      get('e_out_0001__out_0002').properties.step_free = 'maybe';
+    });
+    expect(codes(result.errors)).toEqual([[E.schema, 'e_out_0001__out_0002']]);
+  });
+
+  it('requires rev on every kind of feature and rejects 0', () => {
+    const result = broken(({ get }) => {
+      delete get('bldg_B').properties.rev;
+      delete get('n_out_0001').properties.rev;
+      delete get('e_out_0001__out_0002').properties.rev;
+      get('n_out_0002').properties.rev = 0;
+    });
+    expect(codes(schemaErrors(result))).toEqual(expect.arrayContaining([
+      [E.schema, 'bldg_B'], [E.schema, 'n_out_0001'], [E.schema, 'e_out_0001__out_0002'], [E.schema, 'n_out_0002'],
+    ]));
+    expect(schemaErrors(result)).toHaveLength(4);
+  });
+
+  it('asks for npm run migrate when campus.json has no schema_version', () => {
+    const campus = structuredClone(fixture);
+    delete (campus.meta as AnyFeature).schema_version;
+    const [error] = validateCampus(campus).errors;
+    expect(error).toMatchObject({ code: E.schema, file: 'campus.json' });
+    expect(error!.message).toContain('npm run migrate');
+  });
+
+  it('rejects the v0.1 shaft_id', () => {
+    const result = broken(({ get }) => {
+      get('n_A_elevA_L1').properties.shaft_id = 'A_elevA';
+    });
+    expect(codes(schemaErrors(result))).toEqual([[E.schema, 'n_A_elevA_L1']]);
+  });
+
+  it('needs a gender and a wheelchair value on a restroom', () => {
+    const result = broken(({ get }) => {
+      delete get('n_A_4_wc_m').properties.restroom_gender;
+      delete get('n_A_4_wc_f').properties.wheelchair;
+    });
+    expect(codes(schemaErrors(result))).toEqual([[E.schema, 'n_A_4_wc_f'], [E.schema, 'n_A_4_wc_m']]);
+  });
+
+  it('allows incline only on steps edges', () => {
+    const result = broken(({ get }) => {
+      get('e_out_0001__out_0002').properties.incline = 'up'; // a footway
+      get('e_out_0002__out_0003').properties.incline = 'sideways'; // steps, bad value
+    });
+    expect(codes(schemaErrors(result))).toEqual([[E.schema, 'e_out_0001__out_0002'], [E.schema, 'e_out_0002__out_0003']]);
+  });
+
+  it('allows a bridge building with one level but not two', () => {
+    const ok = broken(({ get }) => {
+      get('bldg_C').properties.building_type = 'bridge';
+    });
+    expect(ok.errors).toEqual([]);
+    const bad = broken(({ get }) => {
+      get('bldg_B').properties.building_type = 'bridge'; // B has two levels
+    });
+    // (B's nodes then report a missing building as well; only the schema error is the point here.)
+    expect(codes(schemaErrors(bad))).toEqual([[E.schema, 'bldg_B']]);
+  });
+
+  it('accepts a room outline, and the covered flag on a bridge', () => {
+    const result = broken(({ add }) => {
+      add('buildings/B/L2.geojson', {
+        type: 'Feature', id: 'r_B_2_201',
+        geometry: { type: 'Polygon', coordinates: [[[127.0012, 37.00055], [127.0013, 37.00055], [127.0013, 37.0006], [127.0012, 37.0006], [127.0012, 37.00055]]] },
+        properties: { kind: 'room', building_id: 'bldg_B', level: 2, room_ref: '201', source: 'estimate', rev: 1 },
+      });
+    });
+    expect(result.errors).toEqual([]); // the fixture's bridges already carry covered: true
+  });
+
+  it('checks overrides.json against its schema', () => {
+    const campus = structuredClone(fixture);
+    campus.overrides = [{ feature_id: 'n_A_elevA_L2', status: 'out_of_service', until: 'tomorrow', report_id: 'rp-1' }];
+    expect(validateCampus(campus).errors).toEqual([
+      expect.objectContaining({ code: E.schema, file: 'overrides.json', featureId: null }),
+    ]);
+  });
+});
+
+describe('validateCampus v0.2 errors (SPEC-v0.2 §8)', () => {
+  it('E9 (I4): reports a flat edge that joins two different scopes', () => {
+    const result = broken(({ get }) => {
+      get('n_A_3_north').properties.level = 2; // its corridor to the 3F hall now crosses floors
+    });
+    expect(codes(result.errors)).toEqual([[E.flatEdgeCrossesScope, 'e_A_3_hall__A_3_north']]);
+  });
+
+  it('E9 (I4): lets portals and bridges cross scopes', () => {
+    expect(validateCampus(fixture).errors).toEqual([]); // the fixture has three portals and three bridges
+  });
+
+  it('E9 (I5): reports stops of one elevator that are not at the same coordinate', () => {
+    const result = broken(({ campus, get }) => {
+      const moved: [number, number] = [127.00082, 37.0005]; // ~1.8m east of the shaft
+      get('n_A_elevA_L2').geometry.coordinates = moved;
+      for (const edge of edgesAt(campus, 'n_A_elevA_L2')) {
+        if (edge.properties.highway === 'elevator') continue; // elevator edges are not checked for line ends
+        edge.geometry.coordinates[edge.properties.from === 'n_A_elevA_L2' ? 0 : edge.geometry.coordinates.length - 1] = moved;
+      }
+    });
+    expect(codes(result.errors)).toEqual([[E.elevatorStopsApart, 'n_A_elevA_L2']]);
+  });
+
+  it('E10: reports a restroom that no edge reaches', () => {
+    const result = broken(({ remove }) => {
+      remove('e_A_4_hall__A_4_wc_m');
+    });
+    expect(codes(result.errors)).toEqual([[E.restroomNotConnected, 'n_A_4_wc_m']]);
+  });
+
+  it('E11: reports an elevator stop without elevator_id', () => {
+    const result = broken(({ get }) => {
+      delete get('n_A_elevA_L3').properties.elevator_id;
+    });
+    expect(codes(result.errors)).toEqual([[E.elevatorIdMissing, 'n_A_elevA_L3']]);
+  });
+
+  it('E11: reports one elevator_id whose stops no elevator edges join', () => {
+    const result = broken(({ remove }) => {
+      remove('e_A_elevA_L2__A_elevA_L3'); // L1 L2 | L3 L4
+    });
+    expect(codes(result.errors)).toEqual([[E.elevatorGroupSplit, 'n_A_elevA_L1']]);
+    expect(result.errors[0]!.message).toContain('n_A_elevA_L3');
+    expect(result.errors[0]!.message).toContain('n_A_elevA_L4');
+  });
+});
+
+describe('validateCampus v0.2 warnings (SPEC-v0.2 §8)', () => {
+  it('W5: warns about a door that no corridor reaches', () => {
+    const result = broken(({ remove }) => {
+      remove('e_A_4_hall__A_4_408door'); // the north entrance edge is left
+    });
+    expect(result.errors).toEqual([]);
+    expect(codes(result.warnings)).toEqual([[W.doorNotOnCorridor, 'n_A_4_408door']]);
+  });
+
+  it('W6: warns when a room has two front doors', () => {
+    const result = broken(({ get, add }) => {
+      const hall = get('n_A_4_hall');
+      const door = {
+        type: 'Feature', id: 'n_A_4_408back', geometry: { type: 'Point', coordinates: [127.00055, 37.00055] },
+        properties: { kind: 'node', node_type: 'door', building_id: 'bldg_A', level: 4, room_ref: '408', door_role: 'front', source: 'estimate', rev: 1 },
+      };
+      add('buildings/A/L4.geojson', door);
+      add('buildings/A/L4.geojson', {
+        type: 'Feature', id: 'e_A_4_hall__A_4_408back',
+        geometry: { type: 'LineString', coordinates: [hall.geometry.coordinates, door.geometry.coordinates] },
+        properties: { kind: 'edge', highway: 'corridor', edge_type: 'indoor', step_free: true, from: 'n_A_4_hall', to: 'n_A_4_408back', bidirectional: true, source: 'estimate', rev: 1 },
+      });
+    });
+    expect(result.errors).toEqual([]);
+    expect(codes(result.warnings)).toEqual([[W.duplicateFrontDoor, 'n_A_4_408back']]);
+    expect(result.warnings[0]!.message).toContain('n_A_4_408door');
+  });
+
+  it('W7: warns about overrides that have expired, and only those', () => {
+    const campus = structuredClone(fixture);
+    campus.overrides = [
+      { feature_id: 'n_A_elevA_L2', status: 'out_of_service', until: '2026-11-10T00:00:00+09:00', report_id: 'rp-1' },
+      { feature_id: 'n_A_elevA_L3', status: 'out_of_service', until: '2026-11-12T00:00:00+09:00', report_id: 'rp-2' },
+    ];
+    const result = validateCampus(campus, { now: new Date('2026-11-11T00:00:00+09:00') });
+    expect(result.errors).toEqual([]);
+    expect(codes(result.warnings)).toEqual([[W.expiredOverride, 'n_A_elevA_L2']]);
+    expect(result.warnings[0]!.file).toBe('overrides.json');
+  });
+
+  it('W8: warns about an elevator stop with no way out into a corridor', () => {
+    const result = broken(({ remove }) => {
+      remove('e_A_2_hall__A_elevA_L2'); // the routes to 408 and 201 do not use the 2F stop
+    });
+    expect(result.errors).toEqual([]);
+    expect(codes(result.warnings)).toEqual([[W.elevatorDeadEnd, 'n_A_elevA_L2']]);
+  });
+
+  it('W9: warns when every stop of an elevator is on the same level', () => {
+    const result = broken(({ get, add }) => {
+      const hall = get('n_B_1_hall');
+      const stop = (id: string) => ({
+        type: 'Feature', id, geometry: { type: 'Point', coordinates: [127.00125, 37.00045] },
+        properties: { kind: 'node', node_type: 'elevator_stop', building_id: 'bldg_B', level: 1, elevator_id: 'B_elevA', source: 'estimate', rev: 1 },
+      });
+      const edge = (id: string, from: AnyFeature, to: AnyFeature, highway: string, extra = {}) => ({
+        type: 'Feature', id, geometry: { type: 'LineString', coordinates: [from.geometry.coordinates, to.geometry.coordinates] },
+        properties: { kind: 'edge', highway, edge_type: 'indoor', step_free: true, from: from.id, to: to.id, bidirectional: true, source: 'estimate', rev: 1, ...extra },
+      });
+      const [one, two] = [stop('n_B_1_lift1'), stop('n_B_1_lift2')];
+      add('buildings/B/L1.geojson', one);
+      add('buildings/B/L1.geojson', two);
+      add('buildings/B/L1.geojson', edge('e_B_1_lift1__B_1_lift2', one, two, 'elevator', { level_from: 1, level_to: 1 }));
+      add('buildings/B/L1.geojson', edge('e_B_1_hall__B_1_lift1', hall, one, 'corridor'));
+      add('buildings/B/L1.geojson', edge('e_B_1_hall__B_1_lift2', hall, two, 'corridor'));
+    });
+    expect(result.errors).toEqual([]);
+    expect(codes(result.warnings)).toEqual([[W.elevatorSingleLevel, 'n_B_1_lift1']]);
+  });
+
+  it('W10: warns about a bridge whose two ends are in the same building', () => {
+    const result = broken(({ get }) => {
+      get('e_A_3_north__C_5_bridge').properties.to = 'n_A_3_hall';
+      get('e_A_3_north__C_5_bridge').geometry.coordinates[1] = get('n_A_3_hall').geometry.coordinates;
+    });
+    expect(codes(result.warnings)).toEqual([[W.bridgeSameBuilding, 'e_A_3_north__C_5_bridge']]);
   });
 });

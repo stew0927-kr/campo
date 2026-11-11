@@ -11,15 +11,19 @@ import {
   ELEVATOR_ALIGHT_SEC,
   ELEVATOR_BOARD_SEC,
   ELEVATOR_HOP_SEC,
+  DOWNHILL_STAIRS_FACTOR,
   FEWEST_STEPS_STAIRS_PENALTY_SEC,
+  FLIGHT_SEC_MAX,
+  FLIGHT_SEC_MIN,
   FLOOR_FLIGHT_SEC,
   OUTDOOR_STAIRS_MIN_SEC,
+  OUTDOOR_STAIRS_SEC_PER_M,
   PORTAL_SEC,
   PROFILES,
   RAMP_FACTOR,
-  STAIRS_FACTOR,
   STEP_SEC,
   stairsTimeSec,
+  straight,
   UNKNOWN_STEP_FREE_PENALTY_SEC,
   WALK_SPEED_MPS,
   buildGraph,
@@ -173,8 +177,9 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     const g = buildGraph(parallelStairsRamp());
     const pq = [...(g.graph.getLinks(PARALLEL.P) ?? [])].filter((l) => l.fromId === PARALLEL.P && l.toId === PARALLEL.Q);
     expect(pq.map((l) => (l.data.kind === 'walk' ? l.data.edge.id : l.data.kind)).sort()).toEqual([PARALLEL.RAMP, PARALLEL.STEPS].sort());
-    // Same length (node positions), so the ramp (× 1.2) beats the steps (× 2.5) even in shortest.
+    // The 20 m ramp (20 s) beats the 20 m outdoor steps (2 s/m = 40 s) even in shortest; step_free must take the ramp.
     expect(route(g, PARALLEL.P, PARALLEL.Q, 'shortest').edgeIds).toEqual([PARALLEL.RAMP]);
+    expect(route(g, PARALLEL.Q, PARALLEL.P, 'shortest').edgeIds).toEqual([PARALLEL.RAMP]);
     expect(route(g, PARALLEL.P, PARALLEL.Q, 'step_free').edgeIds).toEqual([PARALLEL.RAMP]);
     expect(route(g, PARALLEL.Q, PARALLEL.P, 'step_free').edgeIds).toEqual([PARALLEL.RAMP]);
     // Close the ramp: the parallel steps link is still there and shortest uses it.
@@ -225,12 +230,41 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     expect(fellBack).toBeGreaterThan(0);
   });
 
-  it('R4: the heuristic speed is the walking speed when stops of one elevator share a position (I5)', () => {
-    for (const c of [tower7(), restrooms(), bridgeOffset(), expressElevator()]) {
-      expect(buildGraph(c).heuristicSpeedMps).toBe(WALK_SPEED_MPS);
+  it('R4: the heuristic never overestimates: no link is faster in plan than heuristicSpeedMps', async () => {
+    const graphs = [
+      buildGraph(await loadCampus(BASIC_DIR)), buildGraph(tower7()), buildGraph(parallelStairsRamp()),
+      buildGraph(bridgeOffset({ stairsAtEnd: true })), ...Array.from({ length: 200 }, (_, s) => buildGraph(randomCampus(s + 1).campus)),
+    ];
+    let fasterThanWalking = 0;
+    for (const g of graphs) {
+      expect(g.heuristicSpeedMps).toBeGreaterThanOrEqual(WALK_SPEED_MPS);
+      g.graph.forEachLink((link) => {
+        const planM = straight(g.graph.getNode(link.fromId)!.data.position, g.graph.getNode(link.toId)!.data.position);
+        for (const profile of PROFILES) {
+          expect(planM / g.heuristicSpeedMps, `${link.id} ${profile}`).toBeLessThanOrEqual(link.data.cost[profile] + 1e-9);
+        }
+        if (planM / WALK_SPEED_MPS > link.data.timeSec + 1e-9) fasterThanWalking++;
+      });
     }
-    // Random graphs put elevator stops far apart (an I5 error): the heuristic slows down to stay admissible.
-    expect(buildGraph(randomCampus(3).campus).heuristicSpeedMps).toBeGreaterThanOrEqual(WALK_SPEED_MPS);
+    // The guard matters: plain distance / WALK_SPEED_MPS would overestimate on these links (stairs, far-apart stops).
+    expect(fasterThanWalking).toBeGreaterThan(50);
+    // Flat graphs with stops of one elevator in one place (I5) keep the walking speed.
+    for (const c of [restrooms(), bridgeOffset(), expressElevator(), nullCorridor(), triangle()]) {
+      expect(buildGraph(c).heuristicSpeedMps).toBeCloseTo(WALK_SPEED_MPS, 9);
+    }
+    // campus-basic: exactly the fastest link, the 2-step flight e_B_2_steps__B_2_bridge walked downhill (≈ 7 m in 0.73 s).
+    const basic = graphs[0]!;
+    let fastest = 0;
+    let fastestId = '';
+    basic.graph.forEachLink((link) => {
+      const planM = straight(basic.graph.getNode(link.fromId)!.data.position, basic.graph.getNode(link.toId)!.data.position);
+      if (planM / link.data.timeSec > fastest) {
+        fastest = planM / link.data.timeSec;
+        fastestId = link.data.kind === 'walk' ? `${link.data.edge.id} ${String(link.fromId)}` : link.data.kind;
+      }
+    });
+    expect(basic.heuristicSpeedMps).toBe(fastest);
+    expect(fastestId).toBe('e_B_2_steps__B_2_bridge n_B_2_steps');
   });
 
   // ---- R5 ----
@@ -267,85 +301,153 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     expect(s.uncertainSegments).toEqual([]);
   });
 
-  it('R6: time is in seconds (ramp × RAMP_FACTOR, steps by stairsTimeSec) and the metre-equivalent constants are gone', () => {
+  it('R6: time is in seconds (ramp × RAMP_FACTOR, steps by stairsTimeSec) and the old constants are gone', () => {
     const g = buildGraph(parallelStairsRamp());
     const [ramp] = walkLinks(g, PARALLEL.P, PARALLEL.Q, PARALLEL.RAMP);
     const [steps] = walkLinks(g, PARALLEL.P, PARALLEL.Q, PARALLEL.STEPS);
     if (ramp?.data.kind !== 'walk' || steps?.data.kind !== 'walk') throw new Error('missing walk links');
     expect(ramp.data.timeSec).toBeCloseTo((ramp.data.lengthM / WALK_SPEED_MPS) * RAMP_FACTOR, 9);
-    expect(steps.data.timeSec).toBeCloseTo(12 * STEP_SEC + steps.data.lengthM / WALK_SPEED_MPS, 9);
+    // Outdoor steps: plan length only (2 s/m), their step_count 12 is ignored.
+    expect(steps.data.timeSec).toBeCloseTo(steps.data.lengthM * OUTDOOR_STAIRS_SEC_PER_M, 9);
     for (const old of ['STEPS_LENGTH_FACTOR', 'STEPS_FLIGHT_COST', 'RAMP_LENGTH_FACTOR', 'PORTAL_EXTRA_COST',
       'ELEVATOR_BOARDING_COST', 'ELEVATOR_FLOOR_COST', 'WALKING_SPEED_M_PER_S', 'ELEVATOR_WAIT_S', 'ELEVATOR_FLOOR_S',
-      'elevatorFloors', 'elevatorRideCost', 'walkCost']) {
+      'elevatorFloors', 'elevatorRideCost', 'walkCost', 'STAIRS_FACTOR']) {
       expect(Object.keys(core), old).not.toContain(old);
     }
   });
 
   // ---- R6: stairs time (stairsTimeSec, SPEC-v0.2 3.1) ----
   const landings = ['stair_landing', 'stair_landing'] as const;
-  const walkSec = (m: number) => m / WALK_SPEED_MPS;
+  const outdoorEnds = ['outdoor', 'outdoor'] as const;
+  type StairsCase = Omit<Parameters<typeof stairsTimeSec>[0], 'traversal'>;
+  const up = (c: StairsCase) => stairsTimeSec({ ...c, traversal: 'along' });
 
-  it('R6: stairsTimeSec rule 1: step_count × STEP_SEC, plus the plan walking time', () => {
-    expect(stairsTimeSec({ edge: { edge_type: 'outdoor', step_count: 24 }, endNodeTypes: ['outdoor', 'outdoor'], planLengthM: 34.5 }))
-      .toBeCloseTo(24 * STEP_SEC + walkSec(34.5), 9);
-    // step_count wins over the floor-flight rule.
-    expect(stairsTimeSec({ edge: { edge_type: 'indoor', step_count: 20 }, endNodeTypes: landings, planLengthM: 0 })).toBeCloseTo(20 * STEP_SEC, 9);
-    // A step_count that is not a positive number counts as missing.
-    for (const bad of [0, -3, Number.NaN]) {
-      expect(stairsTimeSec({ edge: { edge_type: 'indoor', step_count: bad }, endNodeTypes: landings, planLengthM: 1 }), String(bad))
-        .toBeCloseTo(FLOOR_FLIGHT_SEC + walkSec(1), 9);
-    }
-  });
-
-  it('R6: stairsTimeSec rule 2: an indoor landing-to-landing flight without step_count is FLOOR_FLIGHT_SEC, plus walking', () => {
-    expect(stairsTimeSec({ edge: { edge_type: 'indoor' }, endNodeTypes: landings, planLengthM: 0 })).toBe(FLOOR_FLIGHT_SEC);
-    expect(stairsTimeSec({ edge: { edge_type: 'indoor' }, endNodeTypes: landings, planLengthM: 1.1 })).toBeCloseTo(FLOOR_FLIGHT_SEC + walkSec(1.1), 9);
-    // Not a floor flight: one end is not a landing, or the edge is not indoor → rule 3.
-    const notFlight = [
-      { edge: { edge_type: 'indoor' as const }, endNodeTypes: ['corridor', 'corridor'] as const },
-      { edge: { edge_type: 'indoor' as const }, endNodeTypes: ['stair_landing', undefined] as const },
-      { edge: { edge_type: 'outdoor' as const }, endNodeTypes: landings },
-      { edge: {}, endNodeTypes: landings },
-    ];
-    for (const c of notFlight) {
-      expect(stairsTimeSec({ ...c, planLengthM: 2 }), JSON.stringify(c)).toBeCloseTo(OUTDOOR_STAIRS_MIN_SEC + walkSec(2), 9);
-    }
-  });
-
-  it('R6: stairsTimeSec rule 3: other flights without step_count are max(walk × STAIRS_FACTOR, OUTDOOR_STAIRS_MIN_SEC), plus walking (literal)', () => {
-    const outdoor = (m: number) => stairsTimeSec({ edge: { edge_type: 'outdoor' }, endNodeTypes: ['outdoor', 'outdoor'], planLengthM: m });
-    expect(outdoor(2)).toBeCloseTo(OUTDOOR_STAIRS_MIN_SEC + walkSec(2), 9); // the minimum applies
-    expect(outdoor(30)).toBeCloseTo(walkSec(30) * STAIRS_FACTOR + walkSec(30), 9); // walking counted twice, as decided
+  it('R6: stairsTimeSec outdoor: plan length × OUTDOOR_STAIRS_SEC_PER_M (2 s/m), at least 10 s; step_count and flight_sec are ignored', () => {
+    expect([OUTDOOR_STAIRS_SEC_PER_M, OUTDOOR_STAIRS_MIN_SEC]).toEqual([2, 10]);
+    const outdoor = (m: number, extra: { step_count?: number; flight_sec?: number } = {}) =>
+      up({ edge: { edge_type: 'outdoor', ...extra }, endNodeTypes: outdoorEnds, planLengthM: m });
     expect(outdoor(0)).toBe(OUTDOOR_STAIRS_MIN_SEC);
+    expect(outdoor(2)).toBe(OUTDOOR_STAIRS_MIN_SEC);
+    expect(outdoor(5)).toBe(10);
+    expect(outdoor(30)).toBe(60);
+    expect(outdoor(34.5)).toBe(69);
+    // campus-basic e_out_0002__out_0003: 34.5 m with 24 steps is 69 s, not 24 × 0.55.
+    expect(outdoor(34.5, { step_count: 24 })).toBe(69);
+    expect(outdoor(2, { step_count: 40, flight_sec: 25 })).toBe(OUTDOOR_STAIRS_MIN_SEC);
+    // Even between two landings: outdoor is outdoor.
+    expect(up({ edge: { edge_type: 'outdoor', step_count: 20, flight_sec: 25 }, endNodeTypes: landings, planLengthM: 3 })).toBe(OUTDOOR_STAIRS_MIN_SEC);
   });
 
-  it('R6: every steps link is priced by stairsTimeSec (plus PORTAL_SEC on a portal) and never below walking time', async () => {
+  it('R6: stairsTimeSec indoor flight: step_count × STEP_SEC, else flight_sec (clamped to 0..30), else FLOOR_FLIGHT_SEC', () => {
+    expect(FLOOR_FLIGHT_SEC).toBe(18);
+    expect([FLIGHT_SEC_MIN, FLIGHT_SEC_MAX]).toEqual([0, 30]);
+    // step_count wins over flight_sec, and no walking time is added.
+    expect(up({ edge: { edge_type: 'indoor', step_count: 20, flight_sec: 25 }, endNodeTypes: landings, planLengthM: 9 })).toBeCloseTo(20 * STEP_SEC, 9);
+    // A step_count that is not a positive finite number counts as missing.
+    for (const bad of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(up({ edge: { edge_type: 'indoor', step_count: bad }, endNodeTypes: landings, planLengthM: 1 }), String(bad)).toBe(FLOOR_FLIGHT_SEC);
+    }
+    const flight = (flight_sec?: number, planLengthM = 1.1) =>
+      up({ edge: flight_sec === undefined ? { edge_type: 'indoor' } : { edge_type: 'indoor', flight_sec }, endNodeTypes: landings, planLengthM });
+    expect(flight()).toBe(FLOOR_FLIGHT_SEC);
+    expect(flight(undefined, 0)).toBe(FLOOR_FLIGHT_SEC); // plan length does not matter
+    expect(flight(20)).toBe(20);
+    expect(flight(0)).toBe(0);
+    expect(flight(30)).toBe(30);
+    expect(flight(45)).toBe(FLIGHT_SEC_MAX);
+    expect(flight(-5)).toBe(FLIGHT_SEC_MIN);
+    expect(flight(Number.NaN)).toBe(FLOOR_FLIGHT_SEC);
+  });
+
+  it('R6: stairsTimeSec other steps edges (not outdoor, not an indoor flight): step_count × STEP_SEC, else the plan-length formula', () => {
+    const other: StairsCase[] = [
+      { edge: { edge_type: 'indoor', flight_sec: 25 }, endNodeTypes: ['corridor', 'corridor'], planLengthM: 2 },
+      { edge: { edge_type: 'indoor' }, endNodeTypes: ['stair_landing', undefined], planLengthM: 2 },
+      { edge: { edge_type: 'portal' }, endNodeTypes: landings, planLengthM: 2 },
+      { edge: {}, endNodeTypes: landings, planLengthM: 2 },
+    ];
+    for (const c of other) {
+      expect(up(c), JSON.stringify(c)).toBe(OUTDOOR_STAIRS_MIN_SEC); // flight_sec is ignored here
+      expect(up({ ...c, planLengthM: 12 }), JSON.stringify(c)).toBe(24);
+      expect(up({ ...c, edge: { ...c.edge, step_count: 4 } }), JSON.stringify(c)).toBeCloseTo(4 * STEP_SEC, 9);
+    }
+  });
+
+  it('R6: stairsTimeSec downhill is DOWNHILL_STAIRS_FACTOR (2/3) of every rule, in both directions of a bidirectional edge; no incline is up', () => {
+    expect(DOWNHILL_STAIRS_FACTOR).toBeCloseTo(2 / 3, 12);
+    const cases: [string, StairsCase, number][] = [
+      ['outdoor (step_count ignored)', { edge: { edge_type: 'outdoor', step_count: 24 }, endNodeTypes: outdoorEnds, planLengthM: 34.5 }, 69],
+      ['outdoor minimum', { edge: { edge_type: 'outdoor' }, endNodeTypes: outdoorEnds, planLengthM: 1 }, OUTDOOR_STAIRS_MIN_SEC],
+      ['indoor flight step_count', { edge: { edge_type: 'indoor', step_count: 20 }, endNodeTypes: landings, planLengthM: 1 }, 20 * STEP_SEC],
+      ['indoor flight flight_sec', { edge: { edge_type: 'indoor', flight_sec: 21 }, endNodeTypes: landings, planLengthM: 1 }, 21],
+      ['indoor flight default', { edge: { edge_type: 'indoor' }, endNodeTypes: landings, planLengthM: 1 }, FLOOR_FLIGHT_SEC],
+      ['other step_count', { edge: { edge_type: 'indoor', step_count: 2 }, endNodeTypes: ['corridor', 'corridor'], planLengthM: 7 }, 2 * STEP_SEC],
+      ['other plan length', { edge: { edge_type: 'indoor' }, endNodeTypes: ['corridor', 'corridor'], planLengthM: 7 }, 14],
+    ];
+    for (const [label, c, upSec] of cases) {
+      const t = (incline: 'up' | 'down' | undefined, traversal: 'along' | 'against') => {
+        const { incline: _drop, ...rest } = c.edge;
+        return stairsTimeSec({ ...c, edge: incline === undefined ? rest : { ...rest, incline }, traversal });
+      };
+      // incline 'up': drawn from → to goes up, so walking it against the drawing goes down.
+      expect(t('up', 'along'), label).toBeCloseTo(upSec, 9);
+      expect(t('up', 'against'), label).toBeCloseTo(upSec * DOWNHILL_STAIRS_FACTOR, 9);
+      expect(t('down', 'along'), label).toBeCloseTo(upSec * DOWNHILL_STAIRS_FACTOR, 9);
+      expect(t('down', 'against'), label).toBeCloseTo(upSec, 9);
+      expect(t(undefined, 'along'), label).toBeCloseTo(upSec, 9);
+      expect(t(undefined, 'against'), label).toBeCloseTo(upSec, 9);
+    }
+    // In the graph: one link per direction of the bidirectional tower7 flights (incline 'up').
+    const g = buildGraph(tower7({ elevator: false, stepCount: null }));
+    const [upLink] = walkLinks(g, TOWER.landing(3), TOWER.landing(4), TOWER.stairEdge(3));
+    const [downLink] = walkLinks(g, TOWER.landing(4), TOWER.landing(3), TOWER.stairEdge(3));
+    expect(upLink!.data.timeSec).toBe(FLOOR_FLIGHT_SEC);
+    expect(downLink!.data.timeSec).toBeCloseTo(FLOOR_FLIGHT_SEC * DOWNHILL_STAIRS_FACTOR, 9);
+    expect(route(g, TOWER.landing(1), TOWER.landing(7), 'shortest').timeSec).toBe(6 * FLOOR_FLIGHT_SEC);
+    expect(route(g, TOWER.landing(7), TOWER.landing(1), 'shortest').timeSec).toBeCloseTo(6 * FLOOR_FLIGHT_SEC * DOWNHILL_STAIRS_FACTOR, 1);
+    // Without incline both directions take the up time.
+    const flat = structuredClone(tower7({ elevator: false, stepCount: null }));
+    for (const { feature } of flat.features) delete (feature as { properties: Record<string, unknown> }).properties['incline'];
+    expect(route(buildGraph(flat), TOWER.landing(7), TOWER.landing(1), 'shortest').timeSec).toBe(6 * FLOOR_FLIGHT_SEC);
+  });
+
+  it('R6: every steps link is priced by stairsTimeSec in its own direction (plus PORTAL_SEC on a portal)', async () => {
     const graphs = [
       buildGraph(await loadCampus(BASIC_DIR)), buildGraph(tower7()), buildGraph(tower7({ stepCount: null })),
-      buildGraph(bridgeOffset({ stairsAtEnd: true })), ...[1, 2, 3, 4, 5].map((s) => buildGraph(randomCampus(s).campus)),
+      buildGraph(bridgeOffset({ stairsAtEnd: true })), ...Array.from({ length: 20 }, (_, s) => buildGraph(randomCampus(s + 1).campus)),
     ];
     let checked = 0;
+    let downhill = 0;
+    let outdoorWithSteps = 0;
     for (const g of graphs) {
       g.graph.forEachLink((link) => {
-        if (link.data.kind !== 'walk') return;
+        if (link.data.kind !== 'walk' || link.data.edge.properties.highway !== 'steps') return;
         const { edge, lengthM, timeSec } = link.data;
-        expect(timeSec, edge.id).toBeGreaterThanOrEqual(lengthM / WALK_SPEED_MPS - 1e-9);
-        if (edge.properties.highway !== 'steps') return;
-        const endNodeTypes = [g.nodes.get(String(link.fromId))!.properties.node_type, g.nodes.get(String(link.toId))!.properties.node_type] as const;
-        const portal = edge.properties.edge_type === 'portal' ? PORTAL_SEC : 0;
-        expect(timeSec, edge.id).toBe(stairsTimeSec({ edge: edge.properties, endNodeTypes, planLengthM: lengthM }) + portal);
+        const p = edge.properties;
+        if (p.edge_type === 'outdoor' && p.step_count !== undefined) {
+          outdoorWithSteps++;
+          expect(timeSec, edge.id).toBeGreaterThanOrEqual(OUTDOOR_STAIRS_MIN_SEC * DOWNHILL_STAIRS_FACTOR - 1e-9);
+        }
+        const endNodeTypes = [g.nodes.get(p.from)!.properties.node_type, g.nodes.get(p.to)!.properties.node_type] as const;
+        const traversal = link.fromId === p.from ? 'along' : 'against';
+        const portal = p.edge_type === 'portal' ? PORTAL_SEC : 0;
+        expect(timeSec, edge.id).toBe(stairsTimeSec({ edge: p, endNodeTypes, planLengthM: lengthM, traversal }) + portal);
+        if ((traversal === 'along' && p.incline === 'down') || (traversal === 'against' && p.incline === 'up')) downhill++;
         checked++;
       });
     }
-    expect(checked).toBeGreaterThan(30);
-    // tower7: stacked stairwell (0 m flights), 20 steps per flight vs. no step_count.
-    const up = (stepCount: number | null) => route(buildGraph(tower7({ elevator: false, stepCount })), TOWER.landing(1), TOWER.landing(7), 'shortest');
-    expect(up(20).timeSec).toBeCloseTo(6 * 20 * STEP_SEC, 6);
-    expect(up(null).timeSec).toBe(6 * FLOOR_FLIGHT_SEC);
+    expect(checked).toBeGreaterThan(60);
+    expect(downhill).toBeGreaterThan(10);
+    expect(outdoorWithSteps).toBeGreaterThan(5); // outdoor step_count is present and ignored
+    // campus-basic: the measured B동 1→2층 flight (flight_sec 20, incline up) is 20 s up, 13.3 s down.
+    const basic = graphs[0]!;
+    expect(walkLinks(basic, 'n_B_1_stair', 'n_B_2_stair', 'e_B_1_stair__B_2_stair')[0]!.data.timeSec).toBe(20);
+    expect(walkLinks(basic, 'n_B_2_stair', 'n_B_1_stair', 'e_B_1_stair__B_2_stair')[0]!.data.timeSec).toBeCloseTo(20 * DOWNHILL_STAIRS_FACTOR, 9);
   });
 
   it('R6: the stairs constants live only in costs.ts and are used only inside the one function stairsTimeSec', () => {
-    const NAMES = ['STEP_SEC', 'FLOOR_FLIGHT_SEC', 'OUTDOOR_STAIRS_MIN_SEC', 'STAIRS_FACTOR'];
+    const NAMES = ['STEP_SEC', 'FLOOR_FLIGHT_SEC', 'FLIGHT_SEC_MIN', 'FLIGHT_SEC_MAX', 'OUTDOOR_STAIRS_SEC_PER_M',
+      'OUTDOOR_STAIRS_MIN_SEC', 'DOWNHILL_STAIRS_FACTOR'];
     const strip = (s: string) => s.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
     const costs = strip(readFileSync(join(SRC_DIR, 'costs.ts'), 'utf8'));
     const start = costs.indexOf('export function stairsTimeSec(');
@@ -377,11 +479,23 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     expect(Object.keys(core).filter((k) => /stairs/i.test(k) && typeof (core as Record<string, unknown>)[k] === 'function')).toEqual(['stairsTimeSec']);
   });
 
-  it('R6: with stairsTimeSec, campus-basic shortest gate → 408 takes the outdoor stairs (103 s) instead of the stacked indoor stairwell (162 s)', async () => {
-    const g = buildGraph(await loadCampus(BASIC_DIR));
+  it('R6: with stairsTimeSec, campus-basic shortest gate → 408 takes the outdoor stairs (69 s by plan length, 130.4 s total) instead of the indoor stairwell (165.6 s)', async () => {
+    const basic = await loadCampus(BASIC_DIR);
+    const g = buildGraph(basic);
     const r = route(g, 'n_out_0001', 'n_A_4_408door', 'shortest');
     expect(r.edgeIds).toEqual(['e_out_0001__out_0002', 'e_out_0002__out_0003', 'e_portal_A_4_north', 'e_A_4_north__A_4_408door']);
-    expect(r.timeSec).toBeCloseTo(103.3, 0);
+    // 34.5 m × 2 s/m; its step_count 24 is not used.
+    expect(r.steps.find((s) => s.kind === 'stairs')).toMatchObject({ timeSec: 69, edgeIds: ['e_out_0002__out_0003'] });
+    expect(r.timeSec).toBeCloseTo(130.4, 1);
+    // Without the outdoor stairs, shortest goes in at A동 1층 and climbs three indoor flights (3 × 18 s): slower.
+    const indoor = route(buildGraph(basic, { overrides: [override('e_out_0002__out_0003')] }), 'n_out_0001', 'n_A_4_408door', 'shortest');
+    expect(indoor.edgeIds).toEqual(expect.arrayContaining(['e_portal_A_1_main', 'e_A_1_stair__A_2_stair', 'e_A_2_stair__A_3_stair', 'e_A_3_stair__A_4_stair']));
+    expect(indoor.timeSec).toBeCloseTo(165.6, 1);
+    expect(indoor.timeSec).toBeGreaterThan(r.timeSec);
+    // step_free goes round by the ramp: longer, slower, no stairs.
+    const free = route(g, 'n_out_0001', 'n_A_4_408door', 'step_free');
+    expect(free.stairsCount).toBe(0);
+    expect(free.timeSec).toBeGreaterThan(r.timeSec);
   });
 
   // ---- R7 ----

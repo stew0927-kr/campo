@@ -71,6 +71,7 @@ v0.2의 목표는 두 가지다. 한 층을 몇십 번의 클릭으로 입력할
 ### 2.6 구름다리(연결통로)와 계단 방향 속성
 
 - **계단 구간(`highway: steps`)에 선택 속성 `incline`**: `up` / `down`. 구간이 그려진 방향(`from` → `to`) 기준이다. 안내 문장(3.6)이 위/아래 방향어를 정할 때 쓴다. 층 번호 비교가 아니다.
+- **실내 계단 구간(`highway: steps`, `edge_type: indoor`)에 선택 속성 `flight_sec`**(숫자, 0~30): 한 구간을 오르는 시간(초). `step_count`를 모를 때만 쓰이고(3.1 규칙 2), 없으면 기본값 18초다. 편집기는 이 값을 슬라이더로 바꾼다.
 - **`bridge` 구간에 선택 속성 `covered`**(boolean): 지붕이 있는지. 이 속성은 v0.1 스키마의 `edge` 선택 속성에 이미 있다(SPEC.md 4.2). v0.2에서는 연결통로에도 쓴다는 점만 분명히 한다.
 - **건물에 선택 속성 `building_type: "bridge"`**: 구름다리를 건물처럼 등록한 것. 층은 1개다.
 - **구름다리 처리 방침**: 두 건물을 잇는 구름다리는 `edge_type: bridge` 구간 하나로 표현한다(`building_from`, `building_to`, `level_from`, `level_to` 필수). 다리 중간에 지점이 필요하면(안내 지점, 문, 계단 등) 다리를 `building_type: "bridge"` 건물(층 1개)로 등록하고, 양쪽 건물과는 `bridge` 구간으로 잇는다.
@@ -91,10 +92,12 @@ v0.1은 "길이×1.5+15"(미터처럼 보임)와 "30+5/층"(초처럼 보임)이
 |---|---|---|
 | `WALK_SPEED_MPS` | 1.2 | |
 | `RAMP_FACTOR` | 1.2 | 시간 = 길이 / 속도 × 계수 |
-| `STAIRS_FACTOR` | 2.5 | OTP 기본값은 `stairsTimeFactor` 3.0. 칸 수를 모르는 바깥 계단(아래 규칙 3)에만 쓴다 |
-| `STEP_SEC` | 0.55 | 계단 한 칸 오르는 시간. `step_count`가 있을 때(규칙 1) |
-| `FLOOR_FLIGHT_SEC` | 16 | 칸 수를 모르는 실내 계단 구간 하나(규칙 2) |
-| `OUTDOOR_STAIRS_MIN_SEC` | 10 | 칸 수를 모르는 바깥 계단의 최소 시간(규칙 3) |
+| `STEP_SEC` | 0.55 | 계단 한 칸 오르는 시간. 바깥 계단이 아니고 `step_count`가 있을 때(규칙 1) |
+| `FLOOR_FLIGHT_SEC` | 18 | 칸 수를 모르는 실내 계단 구간 하나를 오르는 기본 시간(규칙 2). 구간마다 `flight_sec`으로 바꿀 수 있다 |
+| `FLIGHT_SEC_MIN` / `FLIGHT_SEC_MAX` | 0 / 30 | `flight_sec`의 범위. 편집기 슬라이더와 스키마가 같은 범위를 쓴다 |
+| `OUTDOOR_STAIRS_SEC_PER_M` | 2 | 바깥 계단을 오르는 시간, 평면 길이 1m당 초(규칙 3). 지금은 평면 길이만 보며, 이 관계식은 나중에 바뀔 수 있다 |
+| `OUTDOOR_STAIRS_MIN_SEC` | 10 | 바깥 계단의 최소 시간(규칙 3) |
+| `DOWNHILL_STAIRS_FACTOR` | 2/3 | 계단을 내려갈 때 시간 계수(규칙 4) |
 | `ELEVATOR_BOARD_SEC` | 40 | 기다리고 타는 시간. 한 번 탈 때 **한 번만** 더한다 |
 | `ELEVATOR_HOP_SEC` | 4 | 한 층 운행할 때마다 |
 | `ELEVATOR_ALIGHT_SEC` | 3 | |
@@ -102,17 +105,17 @@ v0.1은 "길이×1.5+15"(미터처럼 보임)와 "30+5/층"(초처럼 보임)이
 | `UNKNOWN_STEP_FREE_PENALTY_SEC` | 60 | step_free 프로필에서만 적용하는 선호 비용 |
 | `FEWEST_STEPS_STAIRS_PENALTY_SEC` | 600 | fewest_steps 프로필에서 계단 구간마다 더하는 선호 비용(3.4) |
 
-**계단 구간(`highway: steps`)의 시간**은 구간 길이가 지점 좌표에서 나온다는 점 때문에 별도 규칙이 필요하다. 실내 계단의 두 지점은 거의 같은 자리에 있어서 길이만으로는 한 층이 2초 남짓이 된다. 아래 순서로 정하고, 계산은 `costs.ts`의 함수 하나(`stairsTimeSec`)에 모은다.
+**계단 구간(`highway: steps`)의 시간**은 구간 길이가 지점 좌표에서 나온다는 점 때문에 별도 규칙이 필요하다. 실내 계단의 두 지점은 거의 같은 자리에 있어서 길이만으로는 한 층이 2초 남짓이 된다. 아래 순서로 올라갈 때의 시간을 정하고, 계산은 `costs.ts`의 함수 하나(`stairsTimeSec`)에 모은다. 걷는 시간(평면 길이 ÷ 속도)은 따로 더하지 않는다. 계단 시간이 그 구간의 전체 시간이다.
 
-1. `step_count`가 있으면 `step_count × STEP_SEC`
-2. `step_count`가 없고 실내 계단(양 끝이 `stair_landing`, `edge_type: indoor`)이면 구간 하나당 `FLOOR_FLIGHT_SEC`
-3. `step_count`가 없는 바깥 계단이면 `평면 길이 ÷ WALK_SPEED_MPS × STAIRS_FACTOR`, 단 `OUTDOOR_STAIRS_MIN_SEC` 이상
-4. 어느 경우든 `평면 길이 ÷ WALK_SPEED_MPS`(걷는 시간)는 따로 더한다
+1. 바깥 계단(`edge_type: outdoor`)이면 `step_count`와 상관없이 `평면 길이(m) × OUTDOOR_STAIRS_SEC_PER_M`, 단 `OUTDOOR_STAIRS_MIN_SEC` 이상. 바깥 계단은 지금은 평면 길이만 본다.
+2. 실내 계단(양 끝이 `stair_landing`, `edge_type: indoor`)이면 `step_count`가 있을 때 `step_count × STEP_SEC`, 없으면 구간의 `flight_sec`(0~30초), 그것도 없으면 `FLOOR_FLIGHT_SEC`(18초)
+3. 그 밖의 계단(바깥도 아니고 실내 계단 구간도 아닌 경우)은 `step_count × STEP_SEC`, `step_count`가 없으면 규칙 1의 평면 길이 식
+4. 내려갈 때는 위 시간에 `DOWNHILL_STAIRS_FACTOR`(2/3)를 곱한다. 오르는지 내리는지는 구간의 `incline`(2.6)과 지나가는 방향으로만 정한다(`incline`이 `up`인 구간을 `to`에서 `from`으로 가면 내리막). `incline`이 없으면 오르막으로 본다. 층 번호는 보지 않는다.
 
-규칙 2와 3 사이에는 나중에 고도 데이터로 칸 수를 추정하는 단계를 끼울 수 있다(9장 후속 과제). 바깥 계단에 `step_count`가 없으면 검사 W11이 경고한다(8장).
+상수는 모두 `costs.ts` 한 곳에 둔다. 평면 길이와 시간의 관계식(규칙 1)은 나중에 바뀔 수 있으므로 계산을 `stairsTimeSec` 한 곳에 모아 둔다. 나중에 고도 데이터로 칸 수를 추정하는 단계를 끼울 수 있다(9장 후속 과제). `flight_sec`은 실내 계단 구간에만 쓸 수 있고(2.6), `step_count`가 있으면 무시한다.
 
 - 결과에는 **실제 예상 시간**(`timeSec`)과 **탐색 비용**(`cost`)을 따로 낸다. 선호 때문에 붙인 벌점이 예상 시간에 섞이면 안 된다.
-- 휴리스틱은 측지 직선거리 / `WALK_SPEED_MPS`. 모든 구간 비용이 "기하 길이 / 속도" 이상이므로 허용 가능하다. 구간 길이는 항상 좌표에서 계산하고, 사람이 손으로 넣은 길이 값은 쓰지 않는다.
+- 휴리스틱은 측지 직선거리 ÷ 휴리스틱 속도다. 휴리스틱 속도는 `WALK_SPEED_MPS`와 "모든 구간의 평면 길이 ÷ 시간" 중 가장 큰 값 가운데 큰 쪽이다(`buildGraph`가 계산한다). 계단 구간은 걷는 시간보다 짧을 수 있어서 `WALK_SPEED_MPS`만 쓰면 과대 추정이 되기 때문이다. 이렇게 하면 허용 가능하다. 구간 길이는 항상 좌표에서 계산하고, 사람이 손으로 넣은 길이 값은 쓰지 않는다.
 
 ### 3.2 엘리베이터 펼치기 (OpenTripPlanner의 board / hop / alight 방식)
 
@@ -489,7 +492,6 @@ Turf 주의 (7.4.0 소스에서 확인):
 | W8 | 경고 | 엘리베이터 정차 지점이 복도 쪽으로 이어진 구간이 없음 (타기만 하고 내릴 곳이 없음) |
 | W9 | 경고 | 같은 `elevator_id`의 정차 지점이 모두 같은 층 |
 | W10 | 경고 | 연결통로(`bridge`) 구간의 양 끝 지점이 같은 건물에 있음 |
-| W11 | 경고 | 바깥 계단(`steps`, `edge_type: outdoor`)에 `step_count`가 없음 (길찾기 시간 계산에 쓰임, 3.1) |
 
 W8과 W9는 OpenTripPlanner가 지도 데이터를 그래프로 만들 때 내는 경고(`OnlyOneConnectionToElevatorNode`, `AllWaysOfElevatorNodeOnSameLevel`)를 참고했다. 검사에서 층 값을 비교하는 것은 길찾기 규칙에 어긋나지 않는다.
 
@@ -511,5 +513,5 @@ W8과 W9는 OpenTripPlanner가 지도 데이터를 그래프로 만들 때 내�
 - 실제 Supabase 연결, 앱 화면
 - 실내 영역(방 외곽선) 전체 그리기. 매크로 입력으로만 선택해서 쓴다
 - 경사도 계산, 고도 데이터 합치기
-- 후속 과제: 오르막과 내리막의 시간 차이(지금은 계단·경사로 모두 방향과 무관하게 같은 시간), 고도 데이터로 계단 칸 수를 추정해 `stairsTimeSec`의 규칙 2와 3 사이에 넣기(3.1)
+- 후속 과제: 경사로의 오르막·내리막 시간 차이(계단은 3.1 규칙 4로 처리한다), 고도 데이터로 계단 칸 수를 추정해 `stairsTimeSec`에 넣기(3.1)
 - 여러 사람이 실시간으로 함께 편집하기. Git과 PR로 충분하다

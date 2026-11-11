@@ -189,10 +189,10 @@ export function tower7({ elevator = true, stairBranches = true, stepCount = 20 }
 export const PARALLEL = { P: 'n_out_P', Q: 'n_out_Q', STEPS: 'e_out_P__out_Q_steps', RAMP: 'e_out_P__out_Q_ramp' } as const;
 
 /**
- * Outdoor P (0,0) and Q (20,0), joined by a steps edge (12 steps) and a ramp
- * edge, both 20 m (node positions). The ramp (20 m / 1.2 × 1.2 = 20 s) beats
- * the steps (12 × 0.55 + 20 m / 1.2 ≈ 23.3 s), so shortest takes the ramp
- * unless the ramp is closed.
+ * Outdoor P (0,0) and Q (20,0), joined by a steps edge (12 steps, no incline)
+ * and a ramp edge, both 20 m (node positions). Outdoor steps are priced by plan
+ * length only (20 m × 2 s/m = 40 s, step_count ignored), so the ramp
+ * (20 m / 1.2 × 1.2 = 20 s) wins even in shortest unless it is closed.
  */
 export function parallelStairsRamp({ rampStepFree = true }: { rampStepFree?: boolean | null } = {}): LoadedCampus {
   return campus([
@@ -373,6 +373,19 @@ export function prng(seed: number): () => number {
 
 const HIGHWAY_POOL = ['footway', 'footway', 'corridor', 'corridor', 'steps', 'ramp', 'elevator'] as const;
 
+const FLIGHT_SEC_POOL = [0, 12.5, 18, 30, -5, 45, Number.NaN] as const;
+
+/** Random stairs attributes covering every stairsTimeSec rule and both inclines. */
+function randomStairs(rnd: () => number): Props {
+  const p: Props = { edge_type: rnd() < 0.5 ? 'indoor' : 'outdoor' };
+  if (rnd() < 0.4) p['step_count'] = 1 + Math.floor(rnd() * 40);
+  if (rnd() < 0.5) p['flight_sec'] = FLIGHT_SEC_POOL[Math.floor(rnd() * FLIGHT_SEC_POOL.length)];
+  const incline = rnd();
+  if (incline < 0.4) p['incline'] = 'up';
+  else if (incline < 0.8) p['incline'] = 'down';
+  return p;
+}
+
 /** 60 % true, 20 % false, 20 % null (unknown, penalised by step_free). */
 function stepFreeRoll(r: number): boolean | null {
   return r < 0.6 ? true : r < 0.8 ? false : null;
@@ -383,8 +396,13 @@ function stepFreeRoll(r: number): boolean | null {
  * mixed highway, random direction and step_free (true / false / null). Some
  * lines bend and about 1 in 10 non-elevator lines is deliberately too short
  * (data error): routing ignores line geometry, so neither changes a cost.
- * Elevator edges join points far apart in plan (an I5 data error), which is
- * what the heuristic speed guard in graph.ts has to survive.
+ * Elevator edges join points far apart in plan (an I5 data error), and steps
+ * edges are often much faster than walking their plan length (a few steps or a
+ * short measured flight_sec over up to 200 m): both are what the heuristic speed
+ * guard in graph.ts has to survive. Steps edges mix every stairsTimeSec rule:
+ * step_count, indoor landing-to-landing flights with flight_sec (also out of
+ * range) or without, outdoor flights, and incline up / down / none, so
+ * bidirectional ones are travelled downhill in one direction.
  */
 export function randomCampus(seed: number): { campus: LoadedCampus; nodeIds: string[] } {
   const rnd = prng(seed);
@@ -398,7 +416,7 @@ export function randomCampus(seed: number): { campus: LoadedCampus; nodeIds: str
     const p: XY = [rnd() * 150, rnd() * 150];
     ids.push(id);
     at.push(p);
-    specs.push(node(id, p, { node_type: 'outdoor' }));
+    specs.push(node(id, p, { node_type: rnd() < 0.35 ? 'stair_landing' : 'outdoor' }));
   }
   const m = n + int(2 * n + 1);
   for (let k = 0; k < m; k++) {
@@ -412,6 +430,7 @@ export function randomCampus(seed: number): { campus: LoadedCampus; nodeIds: str
       bidirectional: rnd() < 0.7,
       step_free: highway === 'steps' ? false : stepFreeRoll(rnd()),
     };
+    if (highway === 'steps') Object.assign(props, randomStairs(rnd));
     const roll = rnd();
     let geometry: EdgeGeometry = {};
     if (highway !== 'elevator' && roll < 0.1) {

@@ -5,8 +5,8 @@ import {
   ELEVATOR_ALIGHT_SEC,
   ELEVATOR_BOARD_SEC,
   ELEVATOR_HOP_SEC,
+  OUTDOOR_STAIRS_SEC_PER_M,
   PORTAL_SEC,
-  STEP_SEC,
   WALK_SPEED_MPS,
   buildGraph,
   findRoute,
@@ -69,8 +69,12 @@ describe('findRoute: gate → A동 4층 408호', () => {
     const free = route(GATE, ROOM_408, 'step_free');
     expect(free.distanceM).toBeGreaterThan(short.distanceM);
     expect(free.timeSec).toBeGreaterThan(short.timeSec);
-    // Walking 105.7 m at 1.2 m/s, the 24 outdoor steps at 0.55 s each, and the portal.
-    expect(short.timeSec).toBeCloseTo(short.distanceM / WALK_SPEED_MPS + 24 * STEP_SEC + PORTAL_SEC, 0);
+    // Outdoor stairs are priced by plan length only (2 s per metre; the edge's step_count of 24 is not used).
+    // The rest is walking at 1.2 m/s, plus the portal.
+    const stairs = short.steps.find((s) => s.kind === 'stairs')!;
+    expect(stairs.timeSec).toBeCloseTo(stairs.distanceM * OUTDOOR_STAIRS_SEC_PER_M, 0);
+    expect(short.timeSec).toBeCloseTo((short.distanceM - stairs.distanceM) / WALK_SPEED_MPS + stairs.timeSec + PORTAL_SEC, 0);
+    expect(short.timeSec).toBeCloseTo(130.4, 1);
     // The steps add up to the total, and with no penalty on this route cost is the time.
     expect(short.steps.reduce((sum, s) => sum + s.timeSec, 0)).toBeCloseTo(short.timeSec, 0);
     expect(short.cost).toBe(short.timeSec);

@@ -500,19 +500,38 @@ describe('validateCampus v0.2 warnings (SPEC-v0.2 §8)', () => {
   });
 });
 
-describe('validateCampus v0.2 warnings: W11 (SPEC-v0.2 §8)', () => {
-  it('W11: warns about outdoor stairs without step_count', () => {
-    const result = broken(({ get }) => {
-      delete get('e_out_0002__out_0003').properties.step_count;
-    });
-    expect(result.errors).toEqual([]);
-    expect(codes(result.warnings)).toEqual([[W.outdoorStairsWithoutStepCount, 'e_out_0002__out_0003']]);
+describe('schema v0.2: flight_sec (SPEC-v0.2 3.1)', () => {
+  it('has a flight_sec on one fixture flight, and validates clean', () => {
+    const edge = fixture.features.map((f) => f.feature as AnyFeature).find((f) => f.id === 'e_B_1_stair__B_2_stair');
+    expect(edge.properties).toMatchObject({ highway: 'steps', edge_type: 'indoor', incline: 'up', flight_sec: 20 });
+    expect(validateCampus(fixture)).toEqual({ errors: [], warnings: [] });
   });
 
-  it('W11: does not ask indoor stairs for a step count', () => {
-    const indoor = fixture.features.map((f) => f.feature as AnyFeature)
-      .filter((f) => f.properties.highway === 'steps' && f.properties.edge_type === 'indoor' && f.properties.step_count === undefined);
-    expect(indoor.length).toBeGreaterThan(0); // the fixture has indoor flights without a count, and still validates clean
-    expect(validateCampus(fixture).warnings).toEqual([]);
+  it('accepts 0 and 30 and rejects anything outside 0 to 30', () => {
+    for (const ok of [0, 30, 12.5]) {
+      const result = broken(({ get }) => {
+        get('e_B_1_stair__B_2_stair').properties.flight_sec = ok;
+      });
+      expect(result.errors, `flight_sec ${ok}`).toEqual([]);
+    }
+    for (const bad of [-1, 31, 'fast']) {
+      const result = broken(({ get }) => {
+        get('e_B_1_stair__B_2_stair').properties.flight_sec = bad;
+      });
+      expect(codes(result.errors), `flight_sec ${bad}`).toEqual([[E.schema, 'e_B_1_stair__B_2_stair']]);
+    }
+  });
+
+  it('allows flight_sec on indoor steps only', () => {
+    const result = broken(({ get }) => {
+      get('e_out_0002__out_0003').properties.flight_sec = 10; // outdoor steps
+      get('e_out_0001__out_0002').properties.flight_sec = 10; // a footway
+      get('e_A_1_hall__A_elevA_L1').properties.flight_sec = 10; // a corridor
+    });
+    expect(codes(result.errors).filter(([code]) => code === E.schema)).toEqual([
+      [E.schema, 'e_A_1_hall__A_elevA_L1'],
+      [E.schema, 'e_out_0001__out_0002'],
+      [E.schema, 'e_out_0002__out_0003'],
+    ]);
   });
 });

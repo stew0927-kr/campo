@@ -71,10 +71,12 @@ export interface CampusGraph {
   /** Feature ids closed by an active override when the graph was built. */
   closed: ReadonlySet<string>;
   /**
-   * The A* heuristic is straight-line distance / this. WALK_SPEED_MPS for valid
-   * data. If stops of one elevator are apart in plan (an I5 error) a hop covers
-   * that distance in ELEVATOR_HOP_SEC; the heuristic then uses that faster speed
-   * so it never overestimates. Costs are not changed.
+   * The A* heuristic is straight-line distance / this: the larger of
+   * WALK_SPEED_MPS and the fastest plan speed (plan distance / timeSec) of any
+   * link. Stairs can beat walking speed (24 steps over 34.5 m take 13.2 s), and
+   * so can a hop between elevator stops that are apart in plan (an I5 error).
+   * Using the fastest link keeps the heuristic admissible and consistent.
+   * Costs are not changed.
    */
   heuristicSpeedMps: number;
 }
@@ -99,9 +101,8 @@ export function carId(nodeId: string): string {
  *
  * Every walk link's length is the distance between its from / to node
  * positions. The edge's line is not read: a line that misses its nodes is a
- * data error for validation (E4) and does not change the route, and every link
- * costs at least straight-line distance / WALK_SPEED_MPS, so the heuristic is
- * admissible without clamping any cost.
+ * data error for validation (E4) and does not change the route. No cost is
+ * clamped; heuristicSpeedMps adapts to the fastest link instead.
  */
 export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}): CampusGraph {
   const graph = createGraph<GraphNodeData, GraphLinkData>({ multigraph: true });
@@ -128,22 +129,31 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     blocked: perProfile((p) => isClosed || isClosedFor(edge, p)),
   });
 
+  /**
+   * Add one directed link and keep the heuristic admissible: no link may cover
+   * its plan distance faster than heuristicSpeedMps (cost >= timeSec, so the
+   * time bound is enough). A link with plan distance but no time makes it Infinity
+   * (heuristic 0, plain Dijkstra).
+   */
+  const link = (from: string, to: string, data: GraphLinkData) => {
+    graph.addLink(from, to, data);
+    const planM = straight(graph.getNode(from)!.data.position, graph.getNode(to)!.data.position);
+    if (planM > 0) heuristicSpeedMps = Math.max(heuristicSpeedMps, data.timeSec > 0 ? planM / data.timeSec : Infinity);
+  };
+
   const ensureCar = (stopId: string): string => {
     const id = carId(stopId);
     if (!graph.hasNode(id)) {
       graph.addNode(id, { nodeId: stopId, position: at(stopId) });
       const stopClosed = closed.has(stopId);
-      graph.addLink(stopId, id, { kind: 'board', stopId, ...costs(ELEVATOR_BOARD_SEC, null, stopClosed) });
-      graph.addLink(id, stopId, { kind: 'alight', stopId, ...costs(ELEVATOR_ALIGHT_SEC, null, stopClosed) });
+      link(stopId, id, { kind: 'board', stopId, ...costs(ELEVATOR_BOARD_SEC, null, stopClosed) });
+      link(id, stopId, { kind: 'alight', stopId, ...costs(ELEVATOR_ALIGHT_SEC, null, stopClosed) });
     }
     return id;
   };
 
   const hop = (fromStop: string, toStop: string, edge: EdgeFeature) => {
-    graph.addLink(ensureCar(fromStop), ensureCar(toStop), { kind: 'hop', edge, ...costs(ELEVATOR_HOP_SEC, edge.properties, closed.has(edge.id)) });
-    // Hops are the only links whose time does not come from their own length.
-    const planM = straight(at(fromStop), at(toStop));
-    if (planM > 0) heuristicSpeedMps = Math.max(heuristicSpeedMps, planM / ELEVATOR_HOP_SEC);
+    link(ensureCar(fromStop), ensureCar(toStop), { kind: 'hop', edge, ...costs(ELEVATOR_HOP_SEC, edge.properties, closed.has(edge.id)) });
   };
 
   const walk = (from: string, to: string, edge: EdgeFeature) => {
@@ -153,10 +163,11 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
         edge: edge.properties,
         endNodeTypes: [nodes.get(from)!.properties.node_type, nodes.get(to)!.properties.node_type],
         planLengthM: lengthM,
+        traversal: from === edge.properties.from ? 'along' : 'against',
       }) + portalSec(edge.properties)
       : walkTimeSec(edge.properties, lengthM);
     const isClosed = closed.has(edge.id) || closed.has(from) || closed.has(to);
-    graph.addLink(from, to, { kind: 'walk', edge, lengthM, ...costs(timeSec, edge.properties, isClosed) });
+    link(from, to, { kind: 'walk', edge, lengthM, ...costs(timeSec, edge.properties, isClosed) });
   };
 
   for (const edge of edges) {

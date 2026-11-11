@@ -102,6 +102,8 @@ export interface EdgeProperties extends CommonProperties {
   step_count?: number;
   /** steps edges only: direction of travel from → to (SPEC-v0.2 §2.6). */
   incline?: 'up' | 'down';
+  /** Indoor steps without step_count: seconds to climb the flight, 0 to 30. Missing means the default (SPEC-v0.2 3.1). */
+  flight_sec?: number;
   covered?: boolean;
   hours?: string;
   building_from?: string;
@@ -220,8 +222,6 @@ export const WARNING_CODES = {
   elevatorSingleLevel: 'elevator-single-level',
   /** W10 */
   bridgeSameBuilding: 'bridge-same-building',
-  /** W11 */
-  outdoorStairsWithoutStepCount: 'outdoor-stairs-without-step-count',
 } as const;
 
 // ---- Overrides (SPEC-v0.2 §2.5) ----

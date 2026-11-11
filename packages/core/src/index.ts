@@ -12,6 +12,7 @@ export * from './costs.ts';
 export {
   buildGraph,
   carId,
+  straight,
   type AlightLinkData,
   type BoardLinkData,
   type BuildGraphOptions,

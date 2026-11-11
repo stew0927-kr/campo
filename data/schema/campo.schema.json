@@ -235,6 +235,7 @@
         "level_to": { "$ref": "#/$defs/level" },
         "step_count": { "type": "integer", "minimum": 1 },
         "incline": { "description": "steps only: direction of travel from → to (v0.2 §2.6).", "enum": ["up", "down"] },
+        "flight_sec": { "description": "Indoor steps without step_count: seconds to climb the flight, 0 to 30 (v0.2 §3.1). Default 18.", "type": "number", "minimum": 0, "maximum": 30 },
         "covered": { "type": "boolean" },
         "hours": { "type": "string", "minLength": 1 },
         "building_from": { "type": "string", "minLength": 1 },
@@ -266,6 +267,11 @@
           "description": "incline only makes sense on steps (v0.2 §2.6).",
           "if": { "required": ["incline"] },
           "then": { "properties": { "highway": { "const": "steps" } } }
+        },
+        {
+          "description": "flight_sec only makes sense on indoor steps (v0.2 §3.1).",
+          "if": { "required": ["flight_sec"] },
+          "then": { "required": ["edge_type"], "properties": { "highway": { "const": "steps" }, "edge_type": { "const": "indoor" } } }
         },
         {
           "description": "Bridges must name both buildings and both levels.",

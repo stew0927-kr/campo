@@ -377,15 +377,6 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     }
   }
 
-  // W11. Outdoor stairs need a step count: the routing time for them comes from it (SPEC-v0.2 3.1).
-  for (const { file, edge } of linked) {
-    const p = edge.properties;
-    if (p.highway === 'steps' && p.edge_type === 'outdoor' && p.step_count === undefined) {
-      warn(file, edge.id, W.outdoorStairsWithoutStepCount,
-        '바깥 계단에 step_count(계단 칸 수)가 없습니다. 칸 수를 세어 넣어 주세요. 길찾기 시간 계산에 쓰입니다.');
-    }
-  }
-
   return { errors, warnings };
 }
 

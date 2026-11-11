@@ -129,10 +129,12 @@ export const DATA_LAYERS: LayerSpecification[] = [
 
 export const ROUTE_SOURCE = 'campo-routes';
 /** Same values as the CSS tokens --route-shortest / --route-step-free. */
-export const ROUTE_COLORS: Record<Profile, string> = { shortest: '#c2255c', step_free: '#0b7285' };
+/** The two routes the 길찾기 tab shows; core's fewest_steps only appears as the step_free fallback. */
+export type EditorProfile = Extract<Profile, 'shortest' | 'step_free'>;
+export const ROUTE_COLORS: Record<EditorProfile, string> = { shortest: '#c2255c', step_free: '#0b7285' };
 
 export interface RouteLine {
-  profile: Profile;
+  profile: EditorProfile;
   coordinates: Position[];
 }
 

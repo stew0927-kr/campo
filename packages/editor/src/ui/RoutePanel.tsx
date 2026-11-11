@@ -2,7 +2,7 @@ import { useId } from 'react';
 import type { Profile, RouteResult } from '@campo/core';
 import type { Place } from '../model/places.ts';
 
-export const PROFILE_INFO: Record<Profile, { title: string; className: string }> = {
+export const PROFILE_INFO: Record<Extract<Profile, 'shortest' | 'step_free'>, { title: string; className: string }> = {
   shortest: { title: '계단 포함 최단 경로', className: 'route-shortest' },
   step_free: { title: '계단 없는 경로', className: 'route-step-free' },
 };
@@ -14,6 +14,9 @@ interface Props {
   results: RouteResult[];
   onPick: (end: 'from' | 'to', id: string | null) => void;
 }
+
+const UNKNOWN_PROFILE = { title: '경로', className: 'route-shortest' };
+const infoOf = (profile: string) => PROFILE_INFO[profile as keyof typeof PROFILE_INFO] ?? UNKNOWN_PROFILE;
 
 /** Routes come straight from core's findRoute; this only shows them. */
 export function RoutePanel({ places, fromId, toId, results, onPick }: Props) {
@@ -37,18 +40,22 @@ export function RoutePanel({ places, fromId, toId, results, onPick }: Props) {
       {field('from', '출발', fromId)}
       {field('to', '도착', toId)}
       {fromId && toId && results.map((r) => (
-        <section key={r.profile} className={`route-card ${PROFILE_INFO[r.profile].className}`} aria-label={PROFILE_INFO[r.profile].title}>
-          <h3><span className="route-swatch" aria-hidden="true" />{PROFILE_INFO[r.profile].title}</h3>
+        <section key={r.profile} className={`route-card ${infoOf(r.profile).className}`} aria-label={infoOf(r.profile).title}>
+          <h3><span className="route-swatch" aria-hidden="true" />{infoOf(r.profile).title}</h3>
           {r.found ? (
             <>
               <dl className="route-stats">
                 <div><dt>거리</dt><dd>{Math.round(r.distanceM)}m</dd></div>
-                <div><dt>시간</dt><dd>{r.durationMin}분</dd></div>
-                <div><dt>계단</dt><dd>{r.stairCount}곳</dd></div>
+                <div><dt>시간</dt><dd>{(r.timeSec / 60).toFixed(1)}분</dd></div>
+                <div><dt>계단</dt><dd>{r.stairsCount}곳</dd></div>
               </dl>
-              {r.floorChanges.length > 0 ? (
-                <ol className="route-steps">{r.floorChanges.map((s, i) => <li key={i}>{s}</li>)}</ol>
-              ) : <p className="route-note">층을 옮기지 않습니다.</p>}
+              {r.fallback && <p className="route-note">{r.fallback.message}</p>}
+              {r.uncertainSegments.length > 0 && (
+                <p className="route-note">계단·턱 여부를 확인하지 못한 구간 {r.uncertainSegments.length}곳을 지납니다.</p>
+              )}
+              {r.steps.length > 0 ? (
+                <ol className="route-steps">{r.steps.map((s, i) => <li key={i}>{s.text}</li>)}</ol>
+              ) : <p className="route-note">출발지와 도착지가 같습니다.</p>}
             </>
           ) : <p className="route-note">{r.message}</p>}
         </section>

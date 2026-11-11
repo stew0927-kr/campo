@@ -33,5 +33,5 @@ export function routePlaces(doc: CampusDoc): Place[] {
 
 /** Map line for a found route: the node positions in travel order. */
 export function routeLine(route: Route, doc: Pick<CampusDoc, 'features'>): Position[] {
-  return route.nodeIds.map((id) => getNode(doc, id)?.geometry.coordinates).filter((p): p is Position => !!p);
+  return route.nodes.map((id) => getNode(doc, id)?.geometry.coordinates).filter((p): p is Position => !!p);
 }

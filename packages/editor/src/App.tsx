@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { PROFILES, buildGraph, findRoute, validateCampus, type NodeFeature, type Position, type RouteResult } from '@campo/core';
+import { buildGraph, findRoute, validateCampus, type NodeFeature, type Position, type RouteResult } from '@campo/core';
 import { fetchCampus, saveCampus } from './api.ts';
 import type { RouteLine } from './map/layers.ts';
 import { MapView, type FocusRequest, type MapClick } from './map/MapView.tsx';
@@ -79,11 +79,12 @@ export function App() {
   const places = useMemo(() => (doc ? routePlaces(doc) : []), [doc]);
   const routeResults = useMemo<RouteResult[]>(() => {
     if (!graph || !ui.routeFrom || !ui.routeTo) return [];
-    return PROFILES.map((p) => findRoute(graph, ui.routeFrom!, ui.routeTo!, p));
+    return (['shortest', 'step_free'] as const).map((p) => findRoute(graph, ui.routeFrom!, ui.routeTo!, p));
   }, [graph, ui.routeFrom, ui.routeTo]);
   const routeLines = useMemo<RouteLine[]>(() => {
     if (!checkedDoc || ui.panelTab !== 'routes') return [];
-    return routeResults.flatMap((r) => (r.found ? [{ profile: r.profile, coordinates: routeLine(r, checkedDoc) }] : []));
+    return routeResults.flatMap((r) => (r.found && (r.profile === 'shortest' || r.profile === 'step_free')
+      ? [{ profile: r.profile, coordinates: routeLine(r, checkedDoc) }] : []));
   }, [routeResults, checkedDoc, ui.panelTab]);
 
   // ---- Edits ----

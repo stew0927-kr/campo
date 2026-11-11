@@ -126,9 +126,16 @@ describe('editor data → core checks and routes', () => {
     const graph = buildGraph(docToCampus(doc));
     const shortest = findRoute(graph, gate.id, 'n_B_2_201door', 'shortest');
     expect(shortest.found).toBe(true);
-    if (shortest.found) expect(routeLine(shortest, doc).length).toBe(shortest.nodeIds.length);
-    // step_free is unknown (null) everywhere, and core still treats null as blocked until task 4 (audit R7),
-    // so the step-free profile honestly finds nothing.
-    expect(findRoute(graph, gate.id, 'n_B_2_201door', 'step_free').found).toBe(false);
+    if (shortest.found) expect(routeLine(shortest, doc).length).toBe(shortest.nodes.length);
+    // The only way between floors here is stairs, so step_free falls back to the fewest-steps route and says
+    // how many stairs it could not avoid (SPEC-v0.2 3.4). The drawn edges are step_free null, so they are
+    // listed as unchecked and cost a penalty.
+    const stepFree = findRoute(graph, gate.id, 'n_B_2_201door', 'step_free');
+    expect(stepFree.found).toBe(true);
+    if (stepFree.found) {
+      expect(stepFree.fallback).toMatchObject({ profile: 'fewest_steps' });
+      expect(stepFree.fallback!.stairsCount).toBeGreaterThan(0);
+      expect(stepFree.uncertainSegments.length).toBeGreaterThan(0);
+    }
   });
 });

@@ -7,10 +7,10 @@ export const OUTDOOR_KINDS = ['flat', 'steps', 'ramp'] as const;
 export type OutdoorKind = (typeof OUTDOOR_KINDS)[number];
 
 const EDGE_BY_KIND: Record<OutdoorKind, Pick<EdgeProperties, 'highway' | 'step_free'>> = {
-  // SPEC §6: outdoor footways default to step_free true; a person flips it for a sill.
-  flat: { highway: 'footway', step_free: true },
+  // SPEC-v0.2 §2.1: steps false, everything else unknown (null) until someone checks it on site.
+  flat: { highway: 'footway', step_free: null },
   steps: { highway: 'steps', step_free: false },
-  ramp: { highway: 'ramp', step_free: true },
+  ramp: { highway: 'ramp', step_free: null },
 };
 
 /** A clicked point: either snapped onto an existing node, or a new position. */
@@ -52,7 +52,7 @@ export function addOutdoorPath(doc: CampusDoc, vertices: readonly PathVertex[], 
         type: 'Feature',
         id,
         geometry: { type: 'Point', coordinates: [v.position[0], v.position[1]] },
-        properties: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: DRAWN_SOURCE },
+        properties: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: DRAWN_SOURCE, rev: 1 },
       };
       taken.add(id);
       newAt.set(`${v.position[0]},${v.position[1]}`, id);
@@ -81,6 +81,7 @@ export function addOutdoorPath(doc: CampusDoc, vertices: readonly PathVertex[], 
         to: to.id,
         bidirectional: true,
         source: DRAWN_SOURCE,
+        rev: 1,
       },
     };
     created.push(edge);

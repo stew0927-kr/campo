@@ -66,6 +66,7 @@ export function addBuilding(doc: CampusDoc, b: NewBuilding): { doc: CampusDoc; i
       levels: [...b.levels].sort((x, y) => x - y),
       ground_levels: [...b.groundLevels].sort((x, y) => x - y),
       source: DRAWN_SOURCE,
+      rev: 1,
     },
   };
   return { doc: withFeatures(doc, [feature]), id };

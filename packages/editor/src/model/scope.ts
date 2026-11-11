@@ -19,6 +19,7 @@ export function inScope(feature: CampoFeature, scope: Scope, doc: Pick<CampusDoc
   const p = feature.properties;
   if (p.kind === 'building') return scope.kind === 'outdoor' || feature.id === scope.buildingId;
   if (p.kind === 'node') return nodeInScope(feature as NodeFeature, scope);
+  if (p.kind === 'room') return scope.kind === 'building' && p.building_id === scope.buildingId && p.level === scope.level;
   const ends = [p.from, p.to].map((id) => doc.features.get(id)).filter((n): n is NodeFeature => n?.properties.kind === 'node');
   if (scope.kind === 'outdoor') return ends.length > 0 && ends.every((n) => n.properties.building_id === null);
   return ends.some((n) => nodeInScope(n, scope)); // includes stairs and elevators leaving this floor

@@ -17,6 +17,7 @@ export function featureCenter(f: CampoFeature): Position {
 export function featureScope(f: CampoFeature, doc: Pick<CampusDoc, 'features'>): Scope {
   const p = f.properties;
   if (p.kind === 'building') return OUTDOOR;
+  if (p.kind === 'room') return { kind: 'building', buildingId: p.building_id, level: p.level };
   const nodes: NodeFeature[] = p.kind === 'node' ? [f as NodeFeature] : [p.from, p.to].map((id) => getNode(doc, id)).filter((n): n is NodeFeature => !!n);
   const indoor = nodes.filter((n) => n.properties.building_id !== null && n.properties.level !== null);
   if (indoor.length === 0) return OUTDOOR;

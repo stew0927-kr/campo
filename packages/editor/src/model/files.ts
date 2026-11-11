@@ -1,5 +1,5 @@
 // File layout (SPEC §4.3) and on-disk format: Features sorted by id, one per line.
-import { parseCampus, type BuildingFeature, type CampoFeature, type LoadedCampus, type NodeFeature } from '@campo/core';
+import { formatFeatureCollection, formatMeta, parseCampus, type BuildingFeature, type CampoFeature, type LoadedCampus, type NodeFeature } from '@campo/core';
 import type { CampusDoc } from './document.ts';
 
 export const META_FILE = 'campus.json';
@@ -13,6 +13,7 @@ export function fileFor(feature: CampoFeature, doc: Pick<CampusDoc, 'features'>)
   if (p.kind === 'node') {
     return p.building_id === null || p.level === null ? OUTDOOR_FILE : levelFile(p.building_id, p.level, doc);
   }
+  if (p.kind === 'room') return levelFile(p.building_id, p.level, doc);
 
   if (p.edge_type === 'portal' || p.edge_type === 'bridge') return CONNECTIONS_FILE;
   const from = nodeOf(doc, p.from);
@@ -37,17 +38,13 @@ export function docToFiles(doc: CampusDoc): Record<string, string> {
   for (const f of doc.features.values()) push(fileFor(f, doc), normalize(f));
   for (const { file, feature } of doc.passthrough) push(file, feature);
 
-  const files: Record<string, string> = { [META_FILE]: `${JSON.stringify(doc.meta, null, 2)}\n` };
+  const files: Record<string, string> = { [META_FILE]: formatMeta(doc.meta) };
   for (const file of [...byFile.keys()].sort()) files[file] = formatFeatureCollection(byFile.get(file)!);
   return files;
 }
 
-/** `{"type":"FeatureCollection","features":[` + one Feature per line, sorted by id + `]}`. */
-export function formatFeatureCollection(features: readonly unknown[]): string {
-  if (features.length === 0) return '{"type":"FeatureCollection","features":[]}\n';
-  const sorted = [...features].sort((a, b) => compareIds(idOf(a), idOf(b)));
-  return `{"type":"FeatureCollection","features":[\n${sorted.map((f) => JSON.stringify(f)).join(',\n')}\n]}\n`;
-}
+// The on-disk format now lives in @campo/core, shared with `npm run migrate`.
+export { formatFeatureCollection };
 
 /** Fixed key order so the same feature always serialises the same way. */
 function normalize(f: CampoFeature): CampoFeature {
@@ -63,19 +60,6 @@ function levelFile(buildingId: string, level: number, doc: Pick<CampusDoc, 'feat
 function nodeOf(doc: Pick<CampusDoc, 'features'>, id: string): NodeFeature | undefined {
   const f = doc.features.get(id);
   return f?.properties.kind === 'node' ? (f as NodeFeature) : undefined;
-}
-
-function idOf(f: unknown): string | undefined {
-  const id = (f as { id?: unknown } | null)?.id;
-  return typeof id === 'string' ? id : undefined;
-}
-
-/** Plain code-unit order (not locale) so every machine sorts the same; id-less features last. */
-function compareIds(a: string | undefined, b: string | undefined): number {
-  if (a === b) return 0;
-  if (a === undefined) return 1;
-  if (b === undefined) return -1;
-  return a < b ? -1 : 1;
 }
 
 /** The campus exactly as it would be saved, read back the way core reads it. Used for checks and routes. */

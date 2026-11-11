@@ -39,12 +39,12 @@ function twoBuildings(): CampusDoc {
 }
 
 describe('포탈 도구', () => {
-  it('joins an entrance to an outdoor point as SPEC §4.2 portal, step_free false by default', () => {
+  it('joins an entrance to an outdoor point as SPEC §4.2 portal, step_free unknown (null) by default', () => {
     const r = ok(addPortal(twoBuildings(), 'n_A_1_entrance', 'n_out_0001'));
     expect(r.id).toBe('e_portal_A_1_entrance');
     const edge = r.doc.features.get(r.id)!;
     expect(isValidFeature(edge)).toBe(true);
-    expect(edge.properties).toMatchObject({ highway: 'footway', edge_type: 'portal', step_free: false, from: 'n_A_1_entrance', to: 'n_out_0001' });
+    expect(edge.properties).toMatchObject({ highway: 'footway', edge_type: 'portal', step_free: null, rev: 1, from: 'n_A_1_entrance', to: 'n_out_0001' });
   });
   it('refuses non-entrances, indoor targets and duplicates', () => {
     const doc = twoBuildings();
@@ -83,9 +83,21 @@ describe('출발·도착 후보, 속성, 위치', () => {
     const doc = twoBuildings();
     const edited = updateProperties(doc, 'e_A_1_entrance__A_1_hall', { step_free: true, needs_check: true, source: 'field-survey-2026-11' });
     expect(edited.features.get('e_A_1_entrance__A_1_hall')!.properties).toMatchObject({ step_free: true, needs_check: true, source: 'field-survey-2026-11' });
-    expect(doc.features.get('e_A_1_entrance__A_1_hall')!.properties).toMatchObject({ step_free: false });
+    expect(doc.features.get('e_A_1_entrance__A_1_hall')!.properties).toMatchObject({ step_free: null });
     const cleared = updateProperties(edited, 'e_A_1_entrance__A_1_hall', { needs_check: false });
     expect(cleared.features.get('e_A_1_entrance__A_1_hall')!.properties).not.toHaveProperty('needs_check');
+  });
+
+  it('adds 1 to rev on every real change, and none for an edit that changes nothing (SPEC-v0.2 §2.5)', () => {
+    const id = 'e_A_1_entrance__A_1_hall';
+    const doc = twoBuildings();
+    expect(doc.features.get(id)!.properties.rev).toBe(1);
+    const checked = updateProperties(doc, id, { step_free: true });
+    expect(checked.features.get(id)!.properties.rev).toBe(2);
+    expect(updateProperties(checked, id, { step_free: true })).toBe(checked); // same value: nothing changes
+    const unknown = updateProperties(checked, id, { step_free: null });
+    expect(unknown.features.get(id)!.properties).toMatchObject({ step_free: null, rev: 3 }); // back to "not known"
+    expect(doc.features.get(id)!.properties.rev).toBe(1);
   });
 
   it('locates features on their floor (edges on the lower floor)', () => {
@@ -115,7 +127,8 @@ describe('editor data → core checks and routes', () => {
     const shortest = findRoute(graph, gate.id, 'n_B_2_201door', 'shortest');
     expect(shortest.found).toBe(true);
     if (shortest.found) expect(routeLine(shortest, doc).length).toBe(shortest.nodeIds.length);
-    // Nothing is marked step_free yet (SPEC §4.1), so the step-free profile honestly finds nothing.
+    // step_free is unknown (null) everywhere, and core still treats null as blocked until task 4 (audit R7),
+    // so the step-free profile honestly finds nothing.
     expect(findRoute(graph, gate.id, 'n_B_2_201door', 'step_free').found).toBe(false);
   });
 });

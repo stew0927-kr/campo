@@ -6,7 +6,7 @@ import { DRAWN_SOURCE, outdoorId } from './outdoor-path.ts';
 
 type Fail = { error: string };
 
-/** Entrance ↔ outdoor point. step_free stays false until checked on site (SPEC §6). */
+/** Entrance ↔ outdoor point. step_free is null (not known) until checked on site (SPEC-v0.2 §2.1). */
 export function addPortal(doc: CampusDoc, entranceId: string, outdoorId: string): { doc: CampusDoc; id: string } | Fail {
   const entrance = getNode(doc, entranceId);
   const outside = getNode(doc, outdoorId);
@@ -22,8 +22,8 @@ export function addPortal(doc: CampusDoc, entranceId: string, outdoorId: string)
     id,
     geometry: { type: 'LineString', coordinates: [entrance.geometry.coordinates, outside.geometry.coordinates] },
     properties: {
-      kind: 'edge', highway: 'footway', edge_type: 'portal', step_free: false,
-      from: entranceId, to: outdoorId, bidirectional: true, source: DRAWN_SOURCE,
+      kind: 'edge', highway: 'footway', edge_type: 'portal', step_free: null,
+      from: entranceId, to: outdoorId, bidirectional: true, source: DRAWN_SOURCE, rev: 1,
     },
   };
   return { doc: withFeatures(doc, [edge]), id };
@@ -45,10 +45,10 @@ export function addBridge(doc: CampusDoc, fromId: string, toId: string): { doc: 
     id,
     geometry: { type: 'LineString', coordinates: [a.geometry.coordinates, b.geometry.coordinates] },
     properties: {
-      kind: 'edge', highway: 'corridor', edge_type: 'bridge', step_free: false,
+      kind: 'edge', highway: 'corridor', edge_type: 'bridge', step_free: null,
       from: fromId, to: toId, bidirectional: true,
       building_from: pa.building_id, building_to: pb.building_id, level_from: pa.level!, level_to: pb.level!,
-      source: DRAWN_SOURCE,
+      source: DRAWN_SOURCE, rev: 1,
     },
   };
   return { doc: withFeatures(doc, [edge]), id };
@@ -70,7 +70,7 @@ export function addOutdoorNode(doc: CampusDoc, position: Position, poiName?: str
     geometry: { type: 'Point', coordinates: [position[0], position[1]] },
     properties: {
       kind: 'node', node_type: name ? 'poi' : 'outdoor', building_id: null, level: null,
-      ...(name ? { name } : {}), source: DRAWN_SOURCE,
+      ...(name ? { name } : {}), source: DRAWN_SOURCE, rev: 1,
     },
   };
   return { doc: withFeatures(doc, [node]), id };
@@ -78,11 +78,13 @@ export function addOutdoorNode(doc: CampusDoc, position: Position, poiName?: str
 
 /** Fields the 속성 tab always shows (SPEC §8). */
 export interface CommonEdits {
-  step_free?: boolean;
+  /** true: checked on site. false: steps or a sill. null: not known. */
+  step_free?: boolean | null;
   needs_check?: boolean;
   source?: string;
 }
 
+/** Every real change adds 1 to rev (SPEC-v0.2 §2.5); an edit that changes nothing leaves the feature alone. */
 export function updateProperties(doc: CampusDoc, id: string, edits: CommonEdits): CampusDoc {
   const f = doc.features.get(id);
   if (!f) return doc;
@@ -93,5 +95,7 @@ export function updateProperties(doc: CampusDoc, id: string, edits: CommonEdits)
     else delete props['needs_check']; // absent means false; keeps files short
   }
   if (edits.step_free !== undefined && f.properties.kind === 'edge') props['step_free'] = edits.step_free;
+  if (JSON.stringify(props) === JSON.stringify(f.properties)) return doc;
+  props['rev'] = f.properties.rev + 1;
   return withFeatures(doc, [{ ...f, properties: props } as unknown as CampoFeature]);
 }

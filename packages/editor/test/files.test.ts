@@ -26,7 +26,8 @@ describe('docToFiles (SPEC §4.3 배치)', () => {
     const expected = [
       'buildings/A/L1.geojson', 'buildings/A/L2.geojson', 'buildings/A/L3.geojson', 'buildings/A/L4.geojson',
       'buildings/A/building.geojson', 'buildings/B/L1.geojson', 'buildings/B/L2.geojson',
-      'buildings/B/building.geojson', 'campus.json', 'connections.geojson', 'outdoor.geojson',
+      'buildings/B/building.geojson', 'buildings/C/L5.geojson', 'buildings/C/building.geojson',
+      'campus.json', 'connections.geojson', 'outdoor.geojson',
     ];
     expect(Object.keys(files).sort()).toEqual(expected);
     for (const path of expected) {

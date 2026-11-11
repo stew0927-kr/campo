@@ -59,7 +59,8 @@ describe('엘리베이터·계단 도구', () => {
     expect(r.nodeIds).toEqual(['n_A_elevA_L1', 'n_A_elevA_L2', 'n_A_elevA_L3', 'n_A_elevA_L4']);
     expect(r.edgeIds).toEqual(['e_A_elevA_L1__A_elevA_L2', 'e_A_elevA_L2__A_elevA_L3', 'e_A_elevA_L3__A_elevA_L4']);
     expect(r.doc.features.get('e_A_elevA_L2__A_elevA_L3')!.properties).toMatchObject({ highway: 'elevator', edge_type: 'indoor', level_from: 2, level_to: 3 });
-    expect(r.doc.features.get('n_A_elevA_L3')!.properties).toMatchObject({ node_type: 'elevator_stop', shaft_id: 'A_elevA', level: 3 });
+    expect(r.doc.features.get('n_A_elevA_L3')!.properties).toMatchObject({ node_type: 'elevator_stop', elevator_id: 'A_elevA', level: 3 });
+    expect(r.doc.features.get(r.edgeIds[0]!)!.properties).toMatchObject({ highway: 'elevator', step_free: true, rev: 1 });
   });
 
   it('elevator skipping a floor joins the stops it does serve', () => {
@@ -106,7 +107,7 @@ describe('지점 추가·잇기 도구', () => {
 
     const r = ok(connectNodes(doc, 'n_A_1_entrance', 'n_A_1_hall'));
     expect(r.id).toBe('e_A_1_entrance__A_1_hall');
-    expect(r.doc.features.get(r.id)!.properties).toMatchObject({ highway: 'corridor', edge_type: 'indoor', step_free: false });
+    expect(r.doc.features.get(r.id)!.properties).toMatchObject({ highway: 'corridor', edge_type: 'indoor', step_free: null, rev: 1 });
     expect(connectNodes(r.doc, 'n_A_1_hall', 'n_A_1_entrance')).toEqual({ error: '두 지점은 이미 이어져 있습니다.' });
     expect(connectNodes(doc, 'n_A_1_hall', 'n_A_2_hall')).toHaveProperty('error');
     expect(connectNodes(doc, 'n_A_1_entrance', 'n_out_0001')).toHaveProperty('error');

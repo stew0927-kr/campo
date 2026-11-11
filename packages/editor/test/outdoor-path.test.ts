@@ -17,20 +17,20 @@ describe('addOutdoorPath (바깥 길 도구)', () => {
 
     expect(doc.features.get('n_out_0001')).toEqual({
       type: 'Feature', id: 'n_out_0001', geometry: { type: 'Point', coordinates: [127.045, 37.557] },
-      properties: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: 'estimate' },
+      properties: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: 'estimate', rev: 1 },
     });
     expect(doc.features.get('e_out_0001__out_0002')).toEqual({
       type: 'Feature', id: 'e_out_0001__out_0002',
       geometry: { type: 'LineString', coordinates: [[127.045, 37.557], [127.0452, 37.557]] },
       properties: {
-        kind: 'edge', highway: 'footway', step_free: true, edge_type: 'outdoor',
-        from: 'n_out_0001', to: 'n_out_0002', bidirectional: true, source: 'estimate',
+        kind: 'edge', highway: 'footway', step_free: null, edge_type: 'outdoor',
+        from: 'n_out_0001', to: 'n_out_0002', bidirectional: true, source: 'estimate', rev: 1,
       },
     });
   });
 
-  it('sets highway and step_free from the chosen kind', () => {
-    const kinds = { flat: ['footway', true], steps: ['steps', false], ramp: ['ramp', true] } as const;
+  it('sets highway and the SPEC-v0.2 §2.1 step_free default from the chosen kind', () => {
+    const kinds = { flat: ['footway', null], steps: ['steps', false], ramp: ['ramp', null] } as const;
     for (const [kind, [highway, stepFree]] of Object.entries(kinds)) {
       const { doc, edgeIds } = addOutdoorPath(empty(), [at(127, 37), at(127.001, 37)], kind as keyof typeof kinds);
       expect(doc.features.get(edgeIds[0]!)!.properties).toMatchObject({ highway, step_free: stepFree, edge_type: 'outdoor' });

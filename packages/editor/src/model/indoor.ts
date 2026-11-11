@@ -1,5 +1,5 @@
 // "지점 추가", "엘리베이터", "계단", "잇기" tools (SPEC §8).
-// Indoor edges default to step_free: false until someone checks them on site (SPEC §4.1, §6).
+// step_free defaults follow SPEC-v0.2 §2.1: steps false, elevator true, everything else null (not known).
 import type { EdgeFeature, EdgeProperties, NodeFeature, NodeProperties, Position } from '@campo/core';
 import { withFeatures, type CampusDoc } from './document.ts';
 import { edgeIdFor, freeId, getBuilding, getNode } from './ids.ts';
@@ -29,7 +29,7 @@ export function addIndoorNode(doc: CampusDoc, n: NewIndoorNode): { doc: CampusDo
   const { code } = building.properties;
 
   let name: string;
-  const extra: Partial<NodeProperties> = {};
+  const extra: Partial<Pick<NodeProperties, 'ref' | 'space_name'>> = {};
   if (n.kind === 'classroom') {
     const ref = n.ref?.trim() ?? '';
     if (!/^[A-Za-z0-9-]+$/.test(ref)) return { error: '호수는 영문, 숫자, - 만 쓸 수 있습니다. 예: 408, B102' };
@@ -51,6 +51,7 @@ export function addIndoorNode(doc: CampusDoc, n: NewIndoorNode): { doc: CampusDo
       level: n.level,
       ...extra,
       source: DRAWN_SOURCE,
+      rev: 1,
     },
   };
   return { doc: withFeatures(doc, [node]), id };
@@ -80,9 +81,9 @@ export function addElevator(doc: CampusDoc, e: { buildingId: string; position: P
     type: 'Feature',
     id: `n_${code}_${shaft}_L${level}`,
     geometry: { type: 'Point', coordinates: [e.position[0], e.position[1]] },
-    properties: { kind: 'node', node_type: 'elevator_stop', building_id: building.id, level, shaft_id: `${code}_${shaft}`, source: DRAWN_SOURCE },
+    properties: { kind: 'node', node_type: 'elevator_stop', building_id: building.id, level, elevator_id: `${code}_${shaft}`, source: DRAWN_SOURCE, rev: 1 },
   }));
-  return chain(doc, nodes, { highway: 'elevator', edge_type: 'indoor', step_free: false });
+  return chain(doc, nodes, { highway: 'elevator', edge_type: 'indoor', step_free: true });
 }
 
 /** One landing per level from `from` to `to`, and one steps edge per floor in between (SPEC §3 계단). */
@@ -101,7 +102,7 @@ export function addStairs(doc: CampusDoc, s: { buildingId: string; position: Pos
     type: 'Feature',
     id: `n_${code}_${level}_stair${letter}`,
     geometry: { type: 'Point', coordinates: [s.position[0], s.position[1]] },
-    properties: { kind: 'node', node_type: 'stair_landing', building_id: building.id, level, source: DRAWN_SOURCE },
+    properties: { kind: 'node', node_type: 'stair_landing', building_id: building.id, level, source: DRAWN_SOURCE, rev: 1 },
   }));
   return chain(doc, nodes, { highway: 'steps', edge_type: 'indoor', step_free: false });
 }
@@ -120,7 +121,7 @@ export function connectNodes(doc: CampusDoc, fromId: string, toId: string): { do
 
   let props: Pick<EdgeProperties, 'highway' | 'edge_type' | 'step_free'>;
   if (a.building_id === null && b.building_id === null) {
-    props = { highway: 'footway', edge_type: 'outdoor', step_free: true }; // SPEC §6: outdoor footways default true
+    props = { highway: 'footway', edge_type: 'outdoor', step_free: null };
   } else if (a.building_id === null || b.building_id === null) {
     return { error: '건물 안과 바깥은 포탈 도구로 이어 주세요.' };
   } else if (a.building_id !== b.building_id) {
@@ -128,7 +129,7 @@ export function connectNodes(doc: CampusDoc, fromId: string, toId: string): { do
   } else if (a.level !== b.level) {
     return { error: '다른 층끼리는 계단이나 엘리베이터 도구로 이어 주세요.' };
   } else {
-    props = { highway: 'corridor', edge_type: 'indoor', step_free: false };
+    props = { highway: 'corridor', edge_type: 'indoor', step_free: null };
   }
   const already = [...doc.features.values()].some((f) => f.properties.kind === 'edge' &&
     ((f.properties.from === fromId && f.properties.to === toId) || (f.properties.from === toId && f.properties.to === fromId)));
@@ -139,7 +140,7 @@ export function connectNodes(doc: CampusDoc, fromId: string, toId: string): { do
     type: 'Feature',
     id,
     geometry: { type: 'LineString', coordinates: [from.geometry.coordinates, to.geometry.coordinates] },
-    properties: { kind: 'edge', ...props, from: fromId, to: toId, bidirectional: true, source: DRAWN_SOURCE },
+    properties: { kind: 'edge', ...props, from: fromId, to: toId, bidirectional: true, source: DRAWN_SOURCE, rev: 1 },
   };
   return { doc: withFeatures(doc, [edge]), id };
 }
@@ -167,6 +168,7 @@ function chain(doc: CampusDoc, nodes: NodeFeature[], props: Pick<EdgeProperties,
         level_from: lo.properties.level!,
         level_to: hi.properties.level!,
         source: DRAWN_SOURCE,
+        rev: 1,
       },
     });
   }

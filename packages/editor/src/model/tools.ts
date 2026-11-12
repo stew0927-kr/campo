@@ -1,4 +1,4 @@
-// The drawing tools (SPEC §8) as Plans of core actions: 바깥 길, 지점 추가, 엘리베이터, 계단, 잇기, 포탈, 연결통로.
+// The drawing tools (SPEC §8) as Plans of core actions: 길 그리기, 지점 추가, 계단, 잇기, 포탈, 연결통로. (엘리베이터: elevator.ts)
 // New ids come from core (freshId with the session's generator), new Features start at rev 1 inside addNode / addEdge.
 // step_free defaults follow SPEC-v0.2 §2.1: steps false, elevator true, everything else null (not known).
 import {
@@ -14,7 +14,7 @@ import {
   type Position,
 } from '@campo/core';
 import type { Plan, PlanResult, Step } from './plan.ts';
-import { floorLabel } from './scope.ts';
+import { OUTDOOR, floorLabel, snappable, type Scope } from './scope.ts';
 
 /** Default source for data drawn in the editor until someone checks it on site (SPEC §4.1). */
 export const DRAWN_SOURCE = 'estimate';
@@ -25,11 +25,11 @@ export type OutdoorKind = (typeof OUTDOOR_KINDS)[number];
 export const INDOOR_NODE_KINDS = ['entrance', 'door', 'classroom', 'corridor'] as const;
 export type IndoorNodeKind = (typeof INDOOR_NODE_KINDS)[number];
 
-type NodeProps = Omit<NodeProperties, 'rev'>;
-type EdgeProps = Omit<EdgeProperties, 'rev'>;
+export type NodeProps = Omit<NodeProperties, 'rev'>;
+export type EdgeProps = Omit<EdgeProperties, 'rev'>;
 
 /** Hands out new node ids that cannot clash with each other or with the state. */
-function idMaker(state: EditState, ctx: EditContext) {
+export function idMaker(state: EditState, ctx: EditContext) {
   const reserved = new Set<string>();
   return (props: Pick<NodeProps, 'building_id' | 'level' | 'node_type'>): string => {
     const id = freshId(state, ctx.ids, nodeIdPrefix(state, props), reserved);
@@ -38,8 +38,8 @@ function idMaker(state: EditState, ctx: EditContext) {
   };
 }
 
-const nodeStep = (id: string, coord: Position, props: NodeProps, ctx: EditContext): Step => () => addNode({ id, coord: [coord[0], coord[1]], props }, ctx);
-const edgeStep = (props: EdgeProps, ctx: EditContext): Step => () => addEdge({ props }, ctx);
+export const nodeStep = (id: string, coord: Position, props: NodeProps, ctx: EditContext): Step => () => addNode({ id, coord: [coord[0], coord[1]], props }, ctx);
+export const edgeStep = (props: EdgeProps, ctx: EditContext): Step => () => addEdge({ props }, ctx);
 
 // ---- 바깥 길 ----
 
@@ -52,8 +52,20 @@ const EDGE_BY_KIND: Record<OutdoorKind, Pick<EdgeProps, 'highway' | 'step_free'>
 /** A clicked point: either snapped onto an existing node, or a new position. */
 export type PathVertex = { nodeId: string } | { position: Position };
 
-/** A drawn polyline: new outdoor nodes for new positions, one edge per consecutive pair. null when there is nothing to draw. */
-export function planOutdoorPath(state: EditState, ctx: EditContext, vertices: readonly PathVertex[], kind: OutdoorKind): Plan | null {
+/** The kinds of way the 길 그리기 tool draws. Elevators are not one of them: they come from the 엘리베이터 tool (SPEC-v0.2 6.5). */
+export const ELEVATOR_NOT_DRAWN = '엘리베이터는 엘리베이터 도구로 만드세요';
+
+/**
+ * A drawn polyline in `scope` (SPEC-v0.2 5.2): new nodes for new positions (outdoor points, or corridor nodes on the floor),
+ * one edge per consecutive pair. An outdoor path that reaches an entrance makes that edge a portal. Null when there is nothing to draw.
+ */
+export function planPath(state: EditState, ctx: EditContext, vertices: readonly PathVertex[], kind: OutdoorKind, scope: Scope): PlanResult | null {
+  const indoor = scope.kind === 'building';
+  if (indoor && kind === 'steps') return { error: '같은 층 안의 계단 구간은 그리지 않습니다. 층 사이 계단은 지점 추가의 계단으로 만드세요.' };
+  const building = indoor ? buildingById(state, scope.buildingId) : undefined;
+  if (indoor && (!building || !building.props.levels.includes(scope.level))) return { error: '건물이나 층을 찾을 수 없습니다.' };
+  const here = indoor ? { building_id: scope.buildingId, level: scope.level } : { building_id: null, level: null };
+  const nodeType = indoor ? 'corridor' : 'outdoor';
   const newId = idMaker(state, ctx);
   const steps: Step[] = [];
   const path: string[] = [];
@@ -61,27 +73,43 @@ export function planOutdoorPath(state: EditState, ctx: EditContext, vertices: re
   for (const v of vertices) {
     let id: string;
     if ('nodeId' in v) {
-      if (!(v.nodeId in state.nodes)) throw new Error(`no node ${v.nodeId}`);
+      const node = state.nodes[v.nodeId];
+      if (!node) throw new Error(`no node ${v.nodeId}`);
+      if (!snappable(node, scope)) return { error: '다른 층이나 다른 범위의 지점에는 붙일 수 없습니다.' };
       id = v.nodeId;
     } else {
       const key = `${v.position[0]},${v.position[1]}`;
       const known = newAt.get(key);
       if (known !== undefined) id = known;
       else {
-        id = newId({ building_id: null, level: null, node_type: 'outdoor' });
+        id = newId({ ...here, node_type: nodeType });
         newAt.set(key, id);
-        steps.push(nodeStep(id, v.position, { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: DRAWN_SOURCE }, ctx));
+        steps.push(nodeStep(id, v.position, { kind: 'node', node_type: nodeType, ...here, source: DRAWN_SOURCE }, ctx));
       }
     }
     if (path[path.length - 1] !== id) path.push(id); // clicking the same node twice is not a segment
   }
   if (path.length < 2) return null; // a lone click draws nothing
   for (let i = 0; i + 1 < path.length; i++) {
-    steps.push(edgeStep({
-      kind: 'edge', ...EDGE_BY_KIND[kind], edge_type: 'outdoor', from: path[i]!, to: path[i + 1]!, bidirectional: true, source: DRAWN_SOURCE,
+    const [a, b] = [path[i]!, path[i + 1]!];
+    const outside = (id: string) => (state.nodes[id] ? state.nodes[id]!.props.building_id === null : true);
+    if (!indoor && !outside(a) && !outside(b)) return { error: '출입구와 출입구는 바로 이을 수 없습니다. 사이에 바깥 지점을 두세요.' };
+    const toEntrance = !indoor && (!outside(a) || !outside(b));
+    steps.push(edgeStep(toEntrance ? {
+      kind: 'edge', highway: 'footway', edge_type: 'portal', step_free: null, from: a, to: b, bidirectional: true, source: DRAWN_SOURCE,
+    } : indoor ? {
+      kind: 'edge', highway: kind === 'ramp' ? 'ramp' : 'corridor', edge_type: 'indoor', step_free: null, from: a, to: b, bidirectional: true, source: DRAWN_SOURCE,
+    } : {
+      kind: 'edge', ...EDGE_BY_KIND[kind], edge_type: 'outdoor', from: a, to: b, bidirectional: true, source: DRAWN_SOURCE,
     }, ctx));
   }
-  return { annotation: `바깥 길 ${path.length - 1}구간 그리기`, steps };
+  const n = path.length - 1;
+  return { annotation: indoor ? `${kind === 'ramp' ? '경사로' : '복도'} ${n}구간 그리기` : `바깥 길 ${n}구간 그리기`, steps };
+}
+
+/** 바깥 길 only (the scope-less form). */
+export function planOutdoorPath(state: EditState, ctx: EditContext, vertices: readonly PathVertex[], kind: OutdoorKind): PlanResult | null {
+  return planPath(state, ctx, vertices, kind, OUTDOOR);
 }
 
 // ---- 지점 추가 ----
@@ -127,32 +155,6 @@ export function planIndoorNode(state: EditState, ctx: EditContext, n: NewIndoorN
 }
 
 // ---- 엘리베이터, 계단 ----
-
-/** One stop per checked level, all at the same spot, and an elevator edge between each pair of neighbouring stops (SPEC §3). */
-export function planElevator(state: EditState, ctx: EditContext, e: { buildingId: string; position: Position; levels: number[] }): PlanResult {
-  const building = buildingById(state, e.buildingId);
-  if (!building) return { error: '건물을 먼저 골라 주세요.' };
-  const stops = building.props.levels.filter((l) => e.levels.includes(l)).sort((a, b) => a - b);
-  if (stops.length < 2) return { error: '정차 층을 두 개 이상 골라 주세요.' };
-  const used = new Set(Object.values(state.nodes).map((n) => n.props.elevator_id));
-  let letter: string | undefined;
-  for (let c = 65; c <= 90 && !letter; c++) if (!used.has(`${building.props.code}_elev${String.fromCharCode(c)}`)) letter = String.fromCharCode(c);
-  if (!letter) return { error: '이 건물에는 엘리베이터를 더 만들 수 없습니다(A~Z 모두 사용 중).' };
-  const elevatorId = `${building.props.code}_elev${letter}`;
-
-  const newId = idMaker(state, ctx);
-  const ids = stops.map((level) => newId({ building_id: building.id, level, node_type: 'elevator_stop' }));
-  const steps: Step[] = stops.map((level, i) => nodeStep(ids[i]!, e.position, {
-    kind: 'node', node_type: 'elevator_stop', building_id: building.id, level, elevator_id: elevatorId, source: DRAWN_SOURCE,
-  }, ctx));
-  for (let i = 0; i + 1 < stops.length; i++) {
-    steps.push(edgeStep({
-      kind: 'edge', highway: 'elevator', edge_type: 'indoor', step_free: true, from: ids[i]!, to: ids[i + 1]!, bidirectional: true,
-      level_from: stops[i]!, level_to: stops[i + 1]!, source: DRAWN_SOURCE,
-    }, ctx));
-  }
-  return { annotation: `엘리베이터 추가(정차 ${stops.length}개 층)`, steps };
-}
 
 /** One landing per level from `from` to `to`, and one steps edge per floor in between (SPEC §3 계단). */
 export function planStairs(state: EditState, ctx: EditContext, s: { buildingId: string; position: Position; from: number; to: number }): PlanResult {

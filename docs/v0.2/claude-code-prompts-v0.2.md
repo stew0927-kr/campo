@@ -231,6 +231,7 @@ editor-ui 서브에이전트를 써서 SPEC-v0.2 5.2와 6.5, 화장실 도구를
 ```
 qa-verifier 서브에이전트를 써서 v0.2 전체를 검증해. 너(메인 세션)는 이 단계에서 코드를 고치지 마.
 
+qa-verifier는 compose 안에서 같은 구간을 두 번 나눴을 때 override 복사가 이어지는지(SPEC-v0.2 4장 한계)도 확인한다.
 qa-verifier가 docs/v0.2/qa-report.md를 쓰면, 실패 항목을 담당 폴더별로 묶어서 나에게 보여 줘:
 - packages/core/src/routing → core-routing
 - packages/core/src/edit, reports, packages/tools → edit-engine

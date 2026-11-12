@@ -3,7 +3,7 @@ import { attachDoor, parseCampus, splitEdgeAt, validateCampus } from '@campo/cor
 import { FIXTURE, readFolder, fixtureSession } from './fixture.ts';
 import { commitOverrides, createSession, defaultMeta, pendingOverrides, stateToCampus, stateToFiles } from '../src/model/session.ts';
 import { planOutdoorPath } from '../src/model/tools.ts';
-import { runPlan } from '../src/model/plan.ts';
+import { runPlan, type Plan } from '../src/model/plan.ts';
 
 describe('session (편집 엔진 상태)', () => {
   it('writes the fixture back byte for byte in the same files', () => {
@@ -36,7 +36,7 @@ describe('session (편집 엔진 상태)', () => {
   it('drawn outdoor paths land in outdoor.geojson and the result passes validation', () => {
     const s = createSession('x', [{ path: 'campus.json', text: JSON.stringify(defaultMeta('x')) }], 7);
     const plan = planOutdoorPath(s.history.current(), s.ctx, [{ position: [127, 37] }, { position: [127.001, 37] }], 'flat')!;
-    expect(runPlan(s.history, plan).ok).toBe(true);
+    expect(runPlan(s.history, plan as Plan).ok).toBe(true);
     const files = stateToFiles(s.history.current(), s.meta);
     expect(Object.keys(files).sort()).toEqual(['campus.json', 'outdoor.geojson']);
     expect(validateCampus(parseCampus(Object.entries(files).map(([path, text]) => ({ path, text }))))).toEqual({ errors: [], warnings: [] });

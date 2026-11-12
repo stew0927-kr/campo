@@ -113,7 +113,7 @@ button, select, input { font: inherit; color: inherit; }
 /* ---- Map ---- */
 .map-area { grid-area: map; position: relative; min-height: 0; }
 .map { position: absolute; inset: 0; }
-.map:is([data-tool="outdoor-path"], [data-tool="building"], [data-tool="add-node"], [data-tool="connect"]) .maplibregl-canvas { cursor: crosshair; }
+.map:is([data-tool="path"], [data-tool="building"], [data-tool="add-node"], [data-tool="connect"], [data-tool="door"], [data-tool="strip"], [data-tool="restroom"], [data-tool="elevator"]) .maplibregl-canvas { cursor: crosshair; }
 .map[data-tool="select-building"] .maplibregl-canvas { cursor: pointer; }
 
 /* Floor picker: the button panel inside a lift, top floor first. */
@@ -264,3 +264,32 @@ button.check-item:hover { background: var(--chrome); }
   .panel { border-left: 0; border-top: 1px solid var(--rule); max-height: 40vh; }
   .save { margin-left: 0; }
 }
+
+/* ---- Scope next to the cursor, tool forms, 연결 안 된 지점 ---- */
+.scope-badge {
+  position: absolute;
+  z-index: 3;
+  max-width: 340px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--ink);
+  color: #fff;
+  font-size: var(--text-s);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.scope-badge[hidden] { display: none; }
+.inline-field { display: flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
+.inline-field input, .inline-field select { padding: 3px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.door-ref, .strip-ref { width: 72px; }
+.strip-count { width: 48px; }
+.kind-disabled { opacity: 0.5; cursor: not-allowed; }
+.strip-status { color: var(--muted); }
+.toolbar-options button { padding: 4px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.toolbar-options button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+.nearest { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.nearest button { padding: 6px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; text-align: left; }
+.nearest button:disabled { opacity: 0.5; cursor: default; }
+.route-warnings { margin-top: 8px; padding: 8px; border-left: 3px solid var(--warning); background: var(--chrome); }
+.route-warnings h3 { margin: 0 0 4px; font-size: var(--text-m); }
+.route-warnings ul, .attach-failed { margin: 0; padding-left: 18px; }

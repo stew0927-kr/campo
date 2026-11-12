@@ -81,6 +81,8 @@ export interface CampusGraph {
    * Costs are not changed.
    */
   heuristicSpeedMps: number;
+  /** Edges the graph could not use (an elevator edge whose ends are not stops, a missing end node), one sentence each. */
+  warnings: string[];
 }
 
 export interface BuildGraphOptions {
@@ -128,6 +130,7 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
   const closed = activeClosures(options.overrides !== undefined ? options.overrides : campus.overrides, options.now ?? new Date());
   const measured = measuredTimes(options.calibration !== undefined ? options.calibration : campus.calibration);
   let heuristicSpeedMps = WALK_SPEED_MPS;
+  const warnings: string[] = [];
 
   for (const { feature } of campus.features) {
     if (isNode(feature)) nodes.set(feature.id, feature);
@@ -194,7 +197,14 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
 
   for (const edge of edges) {
     const { from, to, bidirectional, highway } = edge.properties;
-    if (!nodes.has(from) || !nodes.has(to)) continue;
+    if (!nodes.has(from) || !nodes.has(to)) {
+      warnings.push(`구간 "${edge.id}"의 끝 지점("${nodes.has(from) ? to : from}")이 없어 길찾기에서 뺐습니다.`);
+      continue;
+    }
+    if (highway === 'elevator' && (nodes.get(from)!.properties.node_type !== 'elevator_stop' || nodes.get(to)!.properties.node_type !== 'elevator_stop')) {
+      warnings.push(`엘리베이터 구간 "${edge.id}"의 양 끝이 엘리베이터 정차 지점이 아니라 길찾기에서 뺐습니다. 엘리베이터 도구로 다시 만드세요.`);
+      continue;
+    }
     const add = highway === 'elevator' ? hop : walk;
     // A moving belt (escalator, moving walkway) runs where conveying says; bidirectional is not read (SPEC-v0.2 2.7).
     const conveying = conveyingOf(edge.properties);
@@ -204,7 +214,7 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     if (against) add(to, from, edge);
   }
 
-  return { graph, nodes, buildings, closed, heuristicSpeedMps };
+  return { graph, nodes, buildings, closed, heuristicSpeedMps, warnings };
 }
 
 /**

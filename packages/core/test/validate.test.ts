@@ -594,6 +594,15 @@ describe('escalators and measurements (SPEC-v0.2 2.7, 3.9, 8)', () => {
     }
   });
 
+  it('E13: an elevator edge whose ends are not elevator stops is an error (the old hand-drawn lift)', () => {
+    const result = broken(({ get }) => {
+      get('e_A_elevA_L1__A_elevA_L2').properties.from = 'n_A_1_hall';
+      get('e_A_elevA_L1__A_elevA_L2').geometry.coordinates[0] = get('n_A_1_hall').geometry.coordinates;
+    });
+    expect(codes(result.errors)).toContainEqual([E.elevatorEdgeNotStops, 'e_A_elevA_L1__A_elevA_L2']);
+    expect(result.errors.find((e) => e.code === E.elevatorEdgeNotStops)!.message).toContain('엘리베이터 도구로 다시 만드세요');
+  });
+
   it('W12: an indoor escalator that stays on one floor warns; the outdoor one never does', () => {
     const result = broken(({ get }) => {
       // Move the upper end onto the lower floor (a node on A 1F), so both ends share a scope.

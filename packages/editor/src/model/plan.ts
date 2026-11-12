@@ -10,6 +10,8 @@ export interface Plan {
   /** Korean history label, e.g. "지점 3개 삭제". */
   annotation: string;
   steps: Step[];
+  /** Shown after the plan ran, besides the actions' own warnings (e.g. "아직 복도와 연결되지 않았어요…"). */
+  notices?: string[];
 }
 
 export type PlanResult = Plan | { error: string };

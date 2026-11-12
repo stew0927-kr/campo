@@ -2,12 +2,18 @@
 import type { FeatureCollection } from 'geojson';
 import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
 import { edgeCoords, edgesAt, movedTogether, type EditNode, type EditState, type Position, type Profile } from '@campo/core';
-import { buildingInScope, edgeInScope, nodeInScope, roomInScope, type Scope } from '../model/scope.ts';
+import { unattachedIds } from '../model/connect.ts';
+import { edgeMidpoint } from '../model/split.ts';
+import { buildingInScope, edgeStrong, nodeStrong, roomInScope, type Scope } from '../model/scope.ts';
 
 export const DATA_SOURCE = 'campo-data';
 
 /** Line colours per kind of way. Same values as the CSS tokens --footway / --steps / --ramp. */
 export const WAY_COLORS = { footway: '#2463a6', corridor: '#3d4c5a', steps: '#d4461a', ramp: '#1f8f68', elevator: '#6a4fc4', other: '#5b6875' } as const;
+
+/** Name of the restroom icon (icons.ts): gender and wheelchair access, so both read on the map. */
+export const restroomIcon = (n: EditNode): string =>
+  n.props.node_type === 'restroom' ? `restroom-${n.props.restroom_gender ?? 'unisex'}-${n.props.wheelchair ?? 'unknown'}` : '';
 
 const isClassroom = (n: EditNode) => n.props.node_type === 'door' && (n.props.space_name !== undefined || n.props.ref !== undefined);
 
@@ -40,10 +46,16 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       geometry: { type: 'LineString', coordinates: edgeCoords(state, e) },
       properties: {
         id: e.id, kind: 'edge', highway: e.props.highway, node_type: null, classroom: false,
-        emphasis: edgeInScope(state, e, scope) ? 1 : 0, selected: false, highlight: highlight.has(e.id),
+        emphasis: edgeStrong(state, e, scope) ? 1 : 0, selected: false, highlight: highlight.has(e.id),
       },
     });
+    if (highlight.has(e.id)) {
+      // The handle in the middle of a selected edge: dragging it makes a new node there (SPEC-v0.2 5.1).
+      const mid = edgeMidpoint(state, e.id);
+      if (mid) features.push({ type: 'Feature', id: `handle:${e.id}`, geometry: { type: 'Point', coordinates: mid }, properties: { id: e.id, kind: 'handle', highway: null, node_type: null, classroom: false, emphasis: 1, selected: false, highlight: false } });
+    }
   }
+  const waiting = unattachedIds(state);
   for (const n of Object.values(state.nodes)) {
     features.push({
       type: 'Feature',
@@ -51,7 +63,8 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       geometry: { type: 'Point', coordinates: n.coord },
       properties: {
         id: n.id, kind: 'node', highway: null, node_type: n.props.node_type, classroom: isClassroom(n),
-        emphasis: nodeInScope(n, scope) ? 1 : 0, selected: false, highlight: highlight.has(n.id),
+        emphasis: nodeStrong(n, scope) ? 1 : 0, selected: false, highlight: highlight.has(n.id),
+        unattached: waiting.has(n.id), icon: restroomIcon(n),
       },
     });
   }
@@ -186,6 +199,34 @@ export const DATA_LAYERS: LayerSpecification[] = [
   },
 ];
 
+/** Warning colour of the ring round an unattached point (SPEC-v0.2 6.5). Same value as the CSS token --warn-ring. */
+export const UNATTACHED_COLOR = '#e8590c';
+
+DATA_LAYERS.push(
+  {
+    id: 'campo-nodes-unattached',
+    type: 'circle',
+    source: DATA_SOURCE,
+    filter: ['all', isNode, ['==', ['get', 'unattached'], true], strong],
+    paint: { 'circle-radius': 17, 'circle-color': UNATTACHED_COLOR, 'circle-opacity': 0.12, 'circle-stroke-color': UNATTACHED_COLOR, 'circle-stroke-width': 3, 'circle-stroke-opacity': opacity },
+  },
+  {
+    id: 'campo-restrooms',
+    type: 'symbol',
+    source: DATA_SOURCE,
+    filter: ['all', isNode, ['!=', ['get', 'icon'], '']],
+    layout: { 'icon-image': ['get', 'icon'], 'icon-size': 0.8, 'icon-allow-overlap': true, 'icon-ignore-placement': true },
+    paint: { 'icon-opacity': opacity },
+  },
+  {
+    id: 'campo-handles',
+    type: 'circle',
+    source: DATA_SOURCE,
+    filter: ['==', ['get', 'kind'], 'handle'],
+    paint: { 'circle-radius': 5, 'circle-color': '#ffffff', 'circle-stroke-color': '#7a5a00', 'circle-stroke-width': 2 },
+  },
+);
+
 /** While a node is dragged the main source still holds its old place: hide the node and its edges there. */
 export function hideInData(ids: readonly string[]): Map<string, ExpressionSpecification | undefined> {
   const out = new Map<string, ExpressionSpecification | undefined>();
@@ -266,5 +307,44 @@ export const ROUTE_LAYERS: LayerSpecification[] = [
     source: ROUTE_SOURCE,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': routeColor, 'line-width': 7, 'line-opacity': 0.85, 'line-offset': routeOffset },
+  },
+];
+
+// ---- Preview (문 연속 찍기, 강의실 줄): the foot of the perpendicular, its link, the doors a row would place ----
+
+export const PREVIEW_SOURCE = 'campo-preview';
+
+export function previewGeoJSON(...parts: (FeatureCollection | null | undefined)[]): FeatureCollection {
+  return { type: 'FeatureCollection', features: parts.flatMap((p) => p?.features ?? []) };
+}
+
+export const PREVIEW_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-preview-link',
+    type: 'line',
+    source: PREVIEW_SOURCE,
+    filter: ['==', ['get', 'role'], 'link'],
+    layout: { 'line-cap': 'round' },
+    paint: { 'line-color': '#1e2933', 'line-width': 2.5, 'line-dasharray': [1.5, 1] },
+  },
+  {
+    id: 'campo-preview-foot',
+    type: 'circle',
+    source: PREVIEW_SOURCE,
+    filter: ['==', ['get', 'role'], 'foot'],
+    paint: { 'circle-radius': 6, 'circle-color': '#f2b705', 'circle-stroke-color': '#1e2933', 'circle-stroke-width': 2 },
+  },
+  {
+    id: 'campo-preview-doors',
+    type: 'circle',
+    source: PREVIEW_SOURCE,
+    filter: ['match', ['get', 'role'], ['door', 'back'], true, false],
+    paint: {
+      'circle-radius': 6,
+      'circle-color': ['match', ['get', 'role'], 'back', '#0b7285', '#2463a6'] as never,
+      'circle-opacity': 0.75,
+      'circle-stroke-color': '#1e2933',
+      'circle-stroke-width': 2,
+    },
   },
 ];

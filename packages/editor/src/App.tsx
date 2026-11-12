@@ -1,37 +1,52 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { buildGraph, findFeature, findRoute, validateCampus, type EditNode, type EditState, type Position, type RouteResult } from '@campo/core';
+import { buildGraph, buildingById, findFeature, findNearest, findRoute, validateCampus, type EditNode, type EditState, type NearestResult, type Position, type RouteResult } from '@campo/core';
 import { fetchCampusFiles, saveCampus } from './api.ts';
 import type { RouteLine } from './map/layers.ts';
 import { MapView, type FocusRequest, type MapClick } from './map/MapView.tsx';
 import { buildingAt, planAddBuilding } from './model/building.ts';
-import { NodeDrag, type DragResult } from './model/drag.ts';
+import { NOT_CONNECTED_NOTICE, planAttachUnattached, planDrawnPath, unattachedNodes } from './model/connect.ts';
+import { HandleDrag, NodeDrag, type DragResult } from './model/drag.ts';
+import {
+  NEED_FLOOR, doorPreview, nextRefAfter, planDoor, planRestroom, planStrip, stripOptions, stripPreview, type RestroomForm, type StripInput,
+} from './model/doors.ts';
+import { planElevator, planElevatorEdit, stopsOf } from './model/elevator.ts';
 import { featureCenter, featureScope } from './model/locate.ts';
 import {
   buildingsToDelete, nextSelection, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits,
 } from './model/ops.ts';
 import { isError, planReason, runPlan, type Plan, type PlanResult } from './model/plan.ts';
 import { routeLine, routePlaces } from './model/places.ts';
-import { OUTDOOR, edgeInScope, nodeInScope, scopeLabel, type Scope } from './model/scope.ts';
+import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong, sameScope, scopeLabel, type Scope } from './model/scope.ts';
 import { commitOverrides, createSession, pendingOverrides, propsOf, stateToCampus, stateToFiles, type Session } from './model/session.ts';
+import { edgeMidpoint, planSplit } from './model/split.ts';
 import {
-  planBridge, planConnect, planElevator, planIndoorNode, planOutdoorNode, planOutdoorPath, planPortal, planStairs, type PathVertex,
+  planBridge, planConnect, planIndoorNode, planOutdoorNode, planPortal, planStairs, type PathVertex,
 } from './model/tools.ts';
 import { ChecksPanel } from './ui/ChecksPanel.tsx';
-import { BuildingDialog, ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, PoiDialog, StairsDialog, type DeleteBuildingItem } from './ui/Dialogs.tsx';
+import {
+  AttachReportDialog, BuildingDialog, ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, PoiDialog, RestroomDialog, StairsDialog,
+  type AttachReportItem, type DeleteBuildingItem,
+} from './ui/Dialogs.tsx';
 import { FloorPicker } from './ui/FloorPicker.tsx';
 import { PropertiesPanel } from './ui/PropertiesPanel.tsx';
 import { RoutePanel } from './ui/RoutePanel.tsx';
 import { SidePanel } from './ui/SidePanel.tsx';
 import { StatusBar } from './ui/StatusBar.tsx';
+import { StripForm } from './ui/StripForm.tsx';
 import { Toolbar, type Operation } from './ui/Toolbar.tsx';
-import { TOOL_HINTS, effectiveAddKind, initialUi, toolAvailable, type Tool, type UiState } from './ui/ui-state.ts';
+import { TOOL_HINTS, effectiveAddKind, initialStrip, initialUi, stripStage, toolAvailable, type StripState, type Tool, type UiState } from './ui/ui-state.ts';
 
-const CAMPUS_ID = import.meta.env.VITE_CAMPUS_ID?.trim() || 'hanyang-seoul';
+// ?campus=<id> opens another campus folder (the e2e tests do); otherwise VITE_CAMPUS_ID, else hanyang-seoul.
+const CAMPUS_ID = new URLSearchParams(window.location.search).get('campus')?.trim() || import.meta.env.VITE_CAMPUS_ID?.trim() || 'hanyang-seoul';
 
 type Notice = { text: string; tone: 'info' | 'warn' | 'error' } | null;
 /** Open form, with where it was asked for. Screen state. */
 type Dialog =
-  | { kind: 'classroom' | 'elevator' | 'stairs' | 'poi'; position: Position }
+  | { kind: 'classroom' | 'stairs' | 'poi'; position: Position; scope: Scope }
+  | { kind: 'restroom'; position: Position; scope: Scope }
+  | { kind: 'elevator'; position: Position; buildingId: string }
+  | { kind: 'elevator-edit'; elevatorId: string }
+  | { kind: 'attach-report'; attached: number; failed: AttachReportItem[] }
   | { kind: 'building'; ring: Position[] }
   | { kind: 'delete-building'; plan: Plan; items: DeleteBuildingItem[] }
   | null;
@@ -45,6 +60,7 @@ export function App() {
   /** Screen state. */
   const [ui, setUi] = useState<UiState>(initialUi);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [strip, setStrip] = useState<StripState>(initialStrip);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [saving, setSaving] = useState(false);
@@ -102,11 +118,24 @@ export function App() {
     if (!graph || !ui.routeFrom || !ui.routeTo) return [];
     return (['shortest', 'step_free'] as const).map((p) => findRoute(graph, ui.routeFrom!, ui.routeTo!, p));
   }, [graph, ui.routeFrom, ui.routeTo]);
+  /** 가장 가까운 화장실: core's findNearest as it is. Wheelchair: the step_free profile, and only restrooms marked wheelchair=yes. */
+  const nearest = useMemo<{ kind: 'any' | 'wheelchair'; result: NearestResult } | null>(() => {
+    if (!graph || !ui.routeFrom || !ui.nearest) return null;
+    const wheelchair = ui.nearest === 'wheelchair';
+    const result = findNearest(
+      graph,
+      ui.routeFrom,
+      (n) => n.properties.node_type === 'restroom' && (!wheelchair || n.properties.wheelchair === 'yes'),
+      wheelchair ? 'step_free' : 'shortest',
+    );
+    return { kind: ui.nearest, result };
+  }, [graph, ui.routeFrom, ui.nearest]);
   const routeLines = useMemo<RouteLine[]>(() => {
     if (!checkedState || ui.panelTab !== 'routes') return [];
-    return routeResults.flatMap((r) => (r.found && (r.profile === 'shortest' || r.profile === 'step_free')
+    const found = nearest ? [nearest.result] : routeResults;
+    return found.flatMap((r) => (r.found && (r.profile === 'shortest' || r.profile === 'step_free')
       ? [{ profile: r.profile, coordinates: routeLine(r, checkedState) }] : []));
-  }, [routeResults, checkedState, ui.panelTab]);
+  }, [routeResults, nearest, checkedState, ui.panelTab]);
 
   // ---- Edits: every one is a Plan of core actions run as one history entry ----
   /** Run a plan. Returns the error (for a dialog to show) or undefined. `coalesce` folds repeated edits of one thing into one entry. */
@@ -125,16 +154,35 @@ export function App() {
       return r.reason;
     }
     setDialog(null);
+    const notices = result.notices ?? [];
     setNotice({
-      text: [`${result.annotation}: 완료했습니다.`, ...r.warnings].join(' '),
-      tone: r.warnings.length > 0 ? 'warn' : 'info',
+      text: [`${result.annotation}: 완료했습니다.`, ...r.warnings, ...notices].join(' '),
+      tone: r.warnings.length > 0 || notices.includes(NOT_CONNECTED_NOTICE) ? 'warn' : 'info',
     });
     return undefined;
   };
 
   const setTool = (tool: Tool) => {
     patchUi({ tool, pickFrom: null });
+    setStrip(initialStrip);
     setNotice(null);
+  };
+
+  /** Placing something on another floor shows that floor from then on; the outdoors never takes the view away from a floor. */
+  const followScope = (scope: Scope) => {
+    if (scope.kind === 'building' && !sameScope(scope, ui.scope)) {
+      setUi((u) => ({ ...u, scope, selectedBuildingId: scope.buildingId }));
+    }
+  };
+
+  /** [ and ]: the floor below / above the one shown. */
+  const stepFloor = (dir: -1 | 1) => {
+    if (!state) return;
+    const b = ui.scope.kind === 'building' ? buildingById(state, ui.scope.buildingId) : ui.selectedBuildingId ? buildingById(state, ui.selectedBuildingId) : undefined;
+    if (!b) return info('건물 선택으로 건물을 고르면 [ ] 로 층을 옮길 수 있습니다.');
+    const next = ui.scope.kind === 'building' ? levelStep(b, ui.scope.level, dir) : defaultLevel(b);
+    if (next === null) return info(dir < 0 ? '더 내려갈 층이 없습니다.' : '더 올라갈 층이 없습니다.');
+    showFloor({ kind: 'building', buildingId: b.id, level: next });
   };
 
   const showFloor = (scope: Scope, keepPick = false) => setUi((u) => ({
@@ -146,13 +194,14 @@ export function App() {
     pickFrom: keepPick ? u.pickFrom : null,
   }));
 
-  const onPathDrawn = useCallback((vertices: PathVertex[]) => {
+  const onPathDrawn = useCallback((vertices: PathVertex[], scope: Scope) => {
     if (!session || !state) return;
-    const plan = planOutdoorPath(state, session.ctx, vertices, ui.outdoorKind);
-    if (plan) perform(plan);
-    else setNotice(null);
+    const plan = planDrawnPath(state, session.ctx, vertices, ui.outdoorKind, scope);
+    if (plan) {
+      if (perform(plan) === undefined) followScope(scope);
+    } else setNotice(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, state, ui.outdoorKind]);
+  }, [session, state, ui.outdoorKind, ui.scope]);
 
   /** Two-click tools: remember the first node, then build the edge on the second. */
   const pickPair = (node: EditNode | undefined, make: (a: string, b: string) => PlanResult, next: string) => {
@@ -166,7 +215,50 @@ export function App() {
     perform(r);
   };
 
-  const onMapClick = ({ position, node, edge, building, shift }: MapClick) => {
+  /** Nodes the plan added, to remember the last door. */
+  const addedNodes = (before: EditState) => Object.values(session!.history.current().nodes).filter((n) => !(n.id in before.nodes));
+
+  const placeDoor = (position: Position, scope: Scope, back: boolean) => {
+    if (!session || !state) return;
+    const run = ui.doorRun;
+    const ref = back ? run.lastRef ?? '' : run.nextRef;
+    if (back && run.lastRef === null) return fail('뒷문은 앞문을 찍은 다음에 만들 수 있습니다. 먼저 앞문을 눌러 주세요.');
+    const plan = planDoor(state, session.ctx, { position, scope, ref, back });
+    if (perform(plan) !== undefined) return;
+    followScope(scope);
+    const door = addedNodes(state).find((n) => n.props.node_type === 'door');
+    patchUi({
+      doorRun: back
+        ? { ...run, lastDoorId: door?.id ?? run.lastDoorId }
+        : { ...run, lastRef: ref.trim(), nextRef: nextRefAfter(ref.trim(), run.step), lastDoorId: door?.id ?? null },
+    });
+  };
+
+  const stripInput = (s: StripState): StripInput | null => (s.first && s.last ? {
+    corridorEdgeIds: s.edgeIds, first: s.first, last: s.last, count: Math.floor(Number(s.count)), startRef: s.startRef, refStep: s.refStep, doorsPerRoom: s.doorsPerRoom,
+  } : null);
+
+  const onStripClick = (position: Position, edge: MapClick['edge']) => {
+    if (!state) return;
+    const stage = stripStage(strip);
+    if (edge && (stage === 'corridor' || stage === 'first')) {
+      if (edge.props.highway !== 'corridor' || edge.props.edge_type !== 'indoor') return fail('복도 구간(건물 안 복도)을 눌러 주세요.');
+      setStrip((st) => ({ ...st, edgeIds: st.edgeIds.includes(edge.id) ? st.edgeIds.filter((id) => id !== edge.id) : [...st.edgeIds, edge.id] }));
+      return setNotice(null);
+    }
+    if (stage === 'corridor') return info('먼저 복도 구간을 눌러 주세요.');
+    if (stage === 'first') return setStrip((st) => ({ ...st, first: position }));
+    if (stage === 'last') return setStrip((st) => ({ ...st, last: position }));
+  };
+
+  const runStrip = () => {
+    if (!session || !state) return;
+    const input = stripInput(strip);
+    if (!input) return fail('첫 문과 마지막 문 자리를 먼저 눌러 주세요.');
+    if (perform(planStrip(state, session.ctx, input)) === undefined) setStrip(initialStrip);
+  };
+
+  const onMapClick = ({ position, node, edge, building, shift, scope: clicked }: MapClick) => {
     if (!session || !state) return;
     const ctx = session.ctx;
     const scope = ui.scope;
@@ -183,11 +275,28 @@ export function App() {
         return b ? setNotice(null) : info('여기에는 건물이 없습니다. 건물 외곽선 안쪽을 눌러 주세요.');
       }
       case 'add-node': {
+        // The kind is the user's choice; WHERE it goes (outdoors or which floor) comes from the clicked place (SPEC-v0.2 5.2).
         const kind = effectiveAddKind(ui);
-        if (kind === 'classroom' || kind === 'elevator' || kind === 'stairs' || kind === 'poi') return setDialog({ kind, position });
-        if (kind === 'outdoor') return perform(planOutdoorNode(state, ctx, position));
-        if (scope.kind !== 'building') return;
-        return perform(planIndoorNode(state, ctx, { buildingId: scope.buildingId, level: scope.level, kind, position }));
+        if (kind === 'outdoor' || kind === 'poi') {
+          if (clicked.kind !== 'outdoor') return fail('바깥 지점은 건물 밖을 눌러 만드세요. (O 키를 누르고 있으면 건물 위라도 바깥으로 찍힙니다.)');
+          if (kind === 'poi') return setDialog({ kind, position, scope: clicked });
+          return perform(planOutdoorNode(state, ctx, position));
+        }
+        if (clicked.kind !== 'building') return fail(NEED_FLOOR);
+        if (kind === 'classroom' || kind === 'stairs') return setDialog({ kind, position, scope: clicked });
+        if (perform(planIndoorNode(state, ctx, { buildingId: clicked.buildingId, level: clicked.level, kind, position })) === undefined) followScope(clicked);
+        return;
+      }
+      case 'door':
+        return placeDoor(position, clicked, shift);
+      case 'strip':
+        return onStripClick(position, edge);
+      case 'restroom':
+        return clicked.kind === 'building' ? setDialog({ kind: 'restroom', position, scope: clicked }) : fail(NEED_FLOOR);
+      case 'elevator': {
+        const stop = node && node.props.node_type === 'elevator_stop' ? node : undefined;
+        if (stop?.props.elevator_id) return setDialog({ kind: 'elevator-edit', elevatorId: stop.props.elevator_id });
+        return clicked.kind === 'building' ? setDialog({ kind: 'elevator', position, buildingId: clicked.buildingId }) : fail(NEED_FLOOR);
       }
       case 'connect':
         return pickPair(node, (a, b) => planConnect(state, ctx, a, b), '이을 다른 지점을 눌러 주세요.');
@@ -209,16 +318,22 @@ export function App() {
 
   const onBoxSelect = (ids: string[]) => {
     patchUi({ selection: ids, ...(ids.length > 0 ? { panelTab: 'properties' as const } : {}) });
-    info(ids.length > 0 ? `지점 ${ids.length}개를 골랐습니다.` : '상자 안에 고를 수 있는 지점이 없습니다.');
+    const buildings = state ? ids.filter((id) => buildingById(state, id)).length : 0;
+    const nodes = ids.length - buildings;
+    info(ids.length > 0 ? `지점 ${nodes}개${buildings > 0 ? `, 건물 ${buildings}개` : ''}를 골랐습니다.` : '상자 안에 고를 수 있는 지점이나 건물이 없습니다.');
   };
 
   const beginDrag = (nodeId: string) => new NodeDrag(session!.history, session!.ctx, nodeId);
+  const beginHandleDrag = (edgeId: string): HandleDrag | string => {
+    const mid = state ? edgeMidpoint(state, edgeId) : undefined;
+    return mid ? HandleDrag.create(session!.history, session!.ctx, edgeId, mid) : '구간을 찾을 수 없습니다.';
+  };
   const onDragEnd = (result: DragResult | null) => {
     lastProp.current = null;
     sync();
     if (result === null) return info('끌기를 취소했습니다. 지점을 원래 자리로 되돌렸습니다.');
     if (!result.ok) return fail(`${result.reason} 지점을 원래 자리로 되돌렸습니다.`);
-    const text = { move: '지점을 옮겼습니다.', merge: '지점을 합쳤습니다.', split: '구간 위에 지점을 이었습니다.' }[result.kind];
+    const text = { move: '지점을 옮겼습니다.', merge: '지점을 합쳤습니다.', split: '구간 위에 지점을 이었습니다.', handle: '구간 가운데에 새 지점을 만들었습니다.' }[result.kind];
     setNotice({ text: [text, ...result.warnings].join(' '), tone: result.warnings.length > 0 ? 'warn' : 'info' });
   };
 
@@ -251,6 +366,11 @@ export function App() {
   }, [state, ui.selection, deleteBlocked]);
   const mergeBlocked = useMemo(() => reasonOf(mergePlan), [mergePlan, state]); // eslint-disable-line react-hooks/exhaustive-deps
   const flipPlan = useMemo(() => (state ? planFlip(state, ui.selection) : null), [state, ui.selection]);
+  const splitPlanR = useMemo(() => (session && state ? planSplit(state, session.ctx, ui.selection) : null), [session, state, ui.selection]);
+  const splitBlocked = useMemo(() => reasonOf(splitPlanR), [splitPlanR, state]); // eslint-disable-line react-hooks/exhaustive-deps
+  const waiting = useMemo(() => (state && ui.scope.kind === 'building'
+    ? unattachedNodes(state).filter((n) => n.props.building_id === (ui.scope as { buildingId: string }).buildingId && n.props.level === (ui.scope as { level: number }).level)
+    : []), [state, ui.scope]);
   const flipBlocked = useMemo(() => reasonOf(flipPlan), [flipPlan, state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doDelete = (heal: boolean) => {
@@ -273,6 +393,26 @@ export function App() {
   };
   const doFlip = () => {
     if (flipPlan) perform(flipPlan);
+  };
+  const doSplit = () => {
+    if (splitPlanR) perform(splitPlanR);
+  };
+  /** 연결 안 된 지점 잇기: every unattached point of this floor in one entry; the ones that cannot be attached are listed with why. */
+  const doAttachAll = () => {
+    if (!session || !state) return;
+    const { plan, failed } = planAttachUnattached(state, session.ctx, ui.scope);
+    const report = failed.map((f) => ({ label: f.label, reason: f.reason }));
+    if (plan) {
+      if (perform(plan) !== undefined) return;
+      if (report.length > 0) setDialog({ kind: 'attach-report', attached: plan.steps.length, failed: report });
+    } else if (report.length > 0) setDialog({ kind: 'attach-report', attached: 0, failed: report });
+    else info('이 층에는 연결 안 된 지점이 없습니다.');
+  };
+  /** V on a selected elevator stop: edit its floors; otherwise the 엘리베이터 tool. */
+  const startElevator = () => {
+    const only = ui.selection.length === 1 ? state?.nodes[ui.selection[0]!] : undefined;
+    if (only?.props.node_type === 'elevator_stop' && only.props.elevator_id) setDialog({ kind: 'elevator-edit', elevatorId: only.props.elevator_id });
+    else setTool('elevator');
   };
   const doUndo = () => {
     if (!session) return;
@@ -297,6 +437,14 @@ export function App() {
     { id: 'delete-heal', label: '이어 붙이며 삭제', shortcut: 'Shift+Delete', blocked: healBlocked, onClick: blockedOr(healBlocked, () => doDelete(true)) },
     { id: 'merge', label: '합치기', shortcut: 'M', blocked: mergeBlocked, onClick: blockedOr(mergeBlocked, doMerge) },
     { id: 'flip', label: '뒤집기', shortcut: 'F', blocked: flipBlocked, onClick: blockedOr(flipBlocked, doFlip) },
+    { id: 'split', label: '나누기', shortcut: 'X', blocked: splitBlocked, onClick: blockedOr(splitBlocked, doSplit) },
+    {
+      id: 'attach-unattached',
+      label: waiting.length > 0 ? `연결 안 된 지점 잇기 (${waiting.length})` : '연결 안 된 지점 잇기',
+      shortcut: '',
+      blocked: ui.scope.kind !== 'building' ? '층을 먼저 보여 주세요(건물 선택). 이 층의 연결 안 된 지점을 한 번에 잇습니다.' : waiting.length === 0 ? '이 층에는 연결 안 된 지점이 없습니다.' : false,
+      onClick: doAttachAll,
+    },
     { id: 'undo', label: '되돌리기', shortcut: 'Ctrl+Z', blocked: session?.history.canUndo() ? false : '되돌릴 변경이 없습니다.', onClick: doUndo },
     { id: 'redo', label: '다시 하기', shortcut: 'Ctrl+Shift+Z', blocked: session?.history.canRedo() ? false : '다시 할 변경이 없습니다.', onClick: doRedo },
   ];
@@ -352,8 +500,45 @@ export function App() {
     } else if (!mod && !e.altKey && !e.shiftKey && ui.tool === 'select' && k === 'f') {
       e.preventDefault();
       blockedOr(flipBlocked, doFlip)();
+    } else if (!mod && !e.altKey && !e.shiftKey && ui.tool === 'select' && k === 'x') {
+      e.preventDefault();
+      blockedOr(splitBlocked, doSplit)();
+    } else if (!mod && !e.altKey && !e.shiftKey && (k === '[' || k === ']')) {
+      e.preventDefault();
+      stepFloor(k === '[' ? -1 : 1);
+    } else if (!mod && !e.altKey && !e.shiftKey && k === 'd') {
+      e.preventDefault();
+      setTool('door');
+    } else if (!mod && !e.altKey && !e.shiftKey && k === 'r') {
+      e.preventDefault();
+      setTool('strip');
+    } else if (!mod && !e.altKey && !e.shiftKey && k === 't') {
+      e.preventDefault();
+      setTool('restroom');
+    } else if (!mod && !e.altKey && !e.shiftKey && k === 'p') {
+      e.preventDefault();
+      setTool('path');
+    } else if (!mod && !e.altKey && !e.shiftKey && k === 'v') {
+      e.preventDefault();
+      startElevator();
+    } else if (!mod && !e.altKey && ui.tool === 'door' && (e.key === '1' || e.key === '2')) {
+      e.preventDefault();
+      patchUi({ doorRun: { ...ui.doorRun, step: e.key === '2' ? 2 : 1 } });
+    } else if (!mod && !e.altKey && !e.shiftKey && ui.tool === 'door' && k === 'f') {
+      e.preventDefault();
+      // The door just placed turns into the other one (front <-> back).
+      const plan = state && ui.doorRun.lastDoorId ? planFlip(state, [ui.doorRun.lastDoorId]) : { error: '뒤집을 문이 없습니다. 먼저 문을 찍어 주세요.' };
+      perform(plan);
+    } else if (!mod && !e.altKey && !e.shiftKey && ui.tool === 'strip' && k === 'f') {
+      e.preventDefault();
+      setStrip((st) => ({ ...st, first: st.last, last: st.first }));
+    } else if (e.key === 'Enter' && ui.tool === 'strip' && stripStage(strip) === 'numbers') {
+      e.preventDefault();
+      runStrip();
     } else if (e.key === 'Escape') {
-      if (ui.pickFrom) {
+      if (ui.tool === 'strip' && strip.edgeIds.length > 0) {
+        setStrip(initialStrip);
+      } else if (ui.pickFrom) {
         patchUi({ pickFrom: null });
         setNotice(null);
       } else if (ui.selection.length > 0) {
@@ -369,11 +554,27 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const highlight = useMemo(() => new Set([ui.pickFrom, ...ui.selection].filter((id): id is string => !!id)), [ui.pickFrom, ui.selection]);
+  const highlight = useMemo(() => new Set([ui.pickFrom, ...ui.selection, ...(ui.tool === 'strip' ? strip.edgeIds : [])].filter((id): id is string => !!id)), [ui.pickFrom, ui.selection, ui.tool, strip.edgeIds]);
+
+  /** What stays on the map while 강의실 줄 is being set up: the two clicked places, then the doors the row would place (core's own layout). */
+  const stripShown = useMemo(() => {
+    if (ui.tool !== 'strip' || !state) return { shapes: null, status: null as string | null };
+    const input = stripInput(strip);
+    if (input) {
+      const pv = stripPreview(state, { ...input, count: Number.isFinite(input.count) ? input.count : 0 });
+      return { shapes: pv.shapes, status: pv.text };
+    }
+    const points = [strip.first, strip.last].filter((p): p is [number, number] => p !== null);
+    return {
+      shapes: { type: 'FeatureCollection' as const, features: points.map((p) => ({ type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: p }, properties: { role: 'door' } })) },
+      status: null as string | null,
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ui.tool, state, strip]);
 
   /** Second click of 포탈 picks an outdoor point; everything else picks on the floor being shown. */
   const canPick = useCallback((n: EditNode) => (
-    ui.tool === 'portal' && ui.pickFrom ? n.props.building_id === null : nodeInScope(n, ui.scope)
+    ui.tool === 'portal' && ui.pickFrom ? n.props.building_id === null : ui.tool === 'select' ? nodeStrong(n, ui.scope) : nodeInScope(n, ui.scope)
   ), [ui.tool, ui.pickFrom, ui.scope]);
 
   const counts = useMemo(() => {
@@ -392,7 +593,6 @@ export function App() {
   if (!session || !state) return <p className="load-message">캠퍼스 데이터를 불러오는 중입니다…</p>;
 
   const selected = ui.selectedBuildingId ? Object.values(state.buildings).find((b) => b.id === ui.selectedBuildingId) : undefined;
-  const scopeBuilding = ui.scope.kind === 'building' ? Object.values(state.buildings).find((b) => b.id === (ui.scope as { buildingId: string }).buildingId) : undefined;
   const closeDialog = () => setDialog(null);
   const one = ui.selection.length === 1 ? propsOf(state, ui.selection[0]!) : undefined;
   const editProps = (edits: CommonEdits) => {
@@ -406,6 +606,15 @@ export function App() {
       <Toolbar
         ui={ui}
         operations={operations}
+        toolForm={ui.tool === 'strip' ? (
+          <StripForm
+            strip={strip}
+            status={stripShown.status}
+            onChange={(patch) => setStrip((st) => ({ ...st, ...patch }))}
+            onRun={runStrip}
+            onReset={() => setStrip(initialStrip)}
+          />
+        ) : undefined}
         campusName={session.meta.name}
         canSave={dirty}
         saving={saving}
@@ -425,11 +634,15 @@ export function App() {
           canPick={canPick}
           routes={routeLines}
           focus={focus}
+          hover={['door', 'restroom', 'elevator'].includes(ui.tool) ? (pos, sc) => doorPreview(state, pos, sc) : null}
+          previewShapes={stripShown.shapes}
           onPathDrawn={onPathDrawn}
           onPolygonDrawn={(ring) => setDialog({ kind: 'building', ring })}
           onMapClick={onMapClick}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
+          beginHandleDrag={beginHandleDrag}
+          onHandleRefused={fail}
           onDragEnd={onDragEnd}
         />
         {selected && (
@@ -450,7 +663,10 @@ export function App() {
             fromId={ui.routeFrom}
             toId={ui.routeTo}
             results={routeResults}
-            onPick={(end, id) => patchUi(end === 'from' ? { routeFrom: id } : { routeTo: id })}
+            nearest={nearest}
+            warnings={graph?.warnings ?? []}
+            onPick={(end, id) => patchUi(end === 'from' ? { routeFrom: id } : { routeTo: id, nearest: null })}
+            onNearest={(kind) => patchUi({ nearest: kind })}
           />
         )}
       </SidePanel>
@@ -460,7 +676,7 @@ export function App() {
         edges={counts.edges}
         dirty={dirty}
         notice={notice}
-        hint={ui.tool === 'outdoor-path' || ui.tool === 'add-node' ? TOOL_HINTS[ui.tool] : null}
+        hint={ui.tool === 'path' || ui.tool === 'add-node' || ui.tool === 'door' ? TOOL_HINTS[ui.tool] : null}
       />
 
       {dialog?.kind === 'building' && (
@@ -475,32 +691,65 @@ export function App() {
       {dialog?.kind === 'poi' && (
         <PoiDialog onCancel={closeDialog} onSubmit={(name) => perform(planOutdoorNode(state, session.ctx, dialog.position, name))} />
       )}
-      {dialog?.kind === 'classroom' && ui.scope.kind === 'building' && (() => {
-        const scope = ui.scope;
+      {dialog?.kind === 'classroom' && dialog.scope.kind === 'building' && (() => {
+        const at = dialog.scope;
         return (
           <ClassroomDialog
             onCancel={closeDialog}
-            onSubmit={({ ref, spaceName }) => perform(planIndoorNode(state, session.ctx, {
-              buildingId: scope.buildingId, level: scope.level, kind: 'classroom', position: dialog.position, ref, spaceName,
-            }))}
+            onSubmit={({ ref, spaceName }) => {
+              const err = perform(planIndoorNode(state, session.ctx, { buildingId: at.buildingId, level: at.level, kind: 'classroom', position: dialog.position, ref, spaceName }));
+              if (err === undefined) followScope(at);
+              return err;
+            }}
           />
         );
       })()}
-      {dialog?.kind === 'elevator' && scopeBuilding && (
+      {dialog?.kind === 'restroom' && (
+        <RestroomDialog
+          onCancel={closeDialog}
+          onSubmit={(form: RestroomForm) => {
+            const err = perform(planRestroom(state, session.ctx, { position: dialog.position, scope: dialog.scope, form }));
+            if (err === undefined) followScope(dialog.scope);
+            return err;
+          }}
+        />
+      )}
+      {dialog?.kind === 'elevator' && buildingById(state, dialog.buildingId) && (
         <ElevatorDialog
-          building={scopeBuilding}
+          building={buildingById(state, dialog.buildingId)!}
           onCancel={closeDialog}
-          onSubmit={(levels) => perform(planElevator(state, session.ctx, { buildingId: scopeBuilding.id, position: dialog.position, levels }))}
+          onSubmit={(levels) => perform(planElevator(state, session.ctx, { buildingId: dialog.buildingId, position: dialog.position, levels }))}
         />
       )}
-      {dialog?.kind === 'stairs' && scopeBuilding && ui.scope.kind === 'building' && (
-        <StairsDialog
-          building={scopeBuilding}
-          startLevel={ui.scope.level}
-          onCancel={closeDialog}
-          onSubmit={({ from, to }) => perform(planStairs(state, session.ctx, { buildingId: scopeBuilding.id, position: dialog.position, from, to }))}
-        />
-      )}
+      {dialog?.kind === 'elevator-edit' && (() => {
+        const stops = stopsOf(state, dialog.elevatorId);
+        const b = stops[0]?.props.building_id ? buildingById(state, stops[0].props.building_id) : undefined;
+        if (!b) return null;
+        return (
+          <ElevatorDialog
+            building={b}
+            initial={stops.map((n) => n.props.level!)}
+            onCancel={closeDialog}
+            onSubmit={(levels) => perform(planElevatorEdit(state, session.ctx, dialog.elevatorId, levels))}
+          />
+        );
+      })()}
+      {dialog?.kind === 'stairs' && dialog.scope.kind === 'building' && buildingById(state, dialog.scope.buildingId) && (() => {
+        const at = dialog.scope;
+        return (
+          <StairsDialog
+            building={buildingById(state, at.buildingId)!}
+            startLevel={at.level}
+            onCancel={closeDialog}
+            onSubmit={({ from, to }) => {
+              const err = perform(planStairs(state, session.ctx, { buildingId: at.buildingId, position: dialog.position, from, to }));
+              if (err === undefined) followScope(at);
+              return err;
+            }}
+          />
+        );
+      })()}
+      {dialog?.kind === 'attach-report' && <AttachReportDialog attached={dialog.attached} failed={dialog.failed} onClose={closeDialog} />}
     </div>
   );
 }

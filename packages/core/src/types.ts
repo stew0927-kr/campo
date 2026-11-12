@@ -250,6 +250,8 @@ export const ERROR_CODES = {
   elevatorGroupSplit: 'elevator-group-split',
   /** E12 */
   escalatorNotStepFree: 'escalator-not-step-free',
+  /** E13 */
+  elevatorEdgeNotStops: 'elevator-edge-not-stops',
 } as const;
 
 export const WARNING_CODES = {

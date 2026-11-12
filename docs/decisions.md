@@ -43,3 +43,6 @@
 - 2026-11-12 · serialize 배치: 지점·room은 바깥/층 파일, 한 건물 밖으로 걸친 구간은 connections.geojson, 실내 구간은 아래층 파일, overrides·observations·calibration은 다시 쓰지 않음 · 불러온 직후 저장하면 바이트 단위로 같게 함 · 윤준혁
 - 2026-11-12 · override가 걸린 구간을 나누면 새 조각에 같은 내용을 복사하고(overrideCopies), heal로 합치면 사라지는 구간의 override를 남는 구간으로 옮김, 편집기는 저장할 때 overrides.json에 반영하고 PUT이 overrides.json을 쓸 수 있게 함 · 고장 구간에 문을 붙였을 때 한쪽 조각만 닫혀 길찾기가 새는 일을 막음 · 윤준혁
 - 2026-11-12 · 동작 addBuilding(id는 bldg_{코드}, ground_levels 기본은 1층 또는 가장 낮은 층), reverseEdge(from/to·vertices·conveying·incline에 level_from/to·building_from/to도 함께 뒤집음), compose(여러 동작을 이력 한 줄로) 추가, 편집기 작업(plan)은 compose로 실행하고 건물 그리기와 F 키를 연결(F는 구간이면 방향, 문이면 앞문·뒷문) · 편집기가 perform(noop)+replace로 흉내 내던 것을 엔진 동작으로, 층이 다른 구간을 뒤집어도 level_from/to가 어긋나지 않게 함 · 윤준혁
+- 2026-11-12 · 엘리베이터는 전용 도구로만 만든다. 정차 지점은 복도 지점과 따로 두고 짧게 잇는다(한 로비 여러 대 대비), 검사 E13(엘리베이터 구간의 양 끝이 정차 지점이 아니면 오류)과 buildGraph의 warnings 추가 · 복도 지점을 엘리베이터 구간으로 직접 이어 길찾기가 조용히 실패한 일을 막음 · 윤준혁
+- 2026-11-12 · 화장실은 addNode + attachDoorAction(기존 지점 대상)을 compose 한 줄로 만든다 · core에 새 동작을 만들지 않으려고 · 윤준혁
+- 2026-11-12 · 작업 순서와 상관없이 잇기: 복도가 없으면 지점만 만들고 경고, 복도를 끝내면 같은 건물·층 8m 안의 연결 안 된 문·화장실·정차 지점을 같은 compose로 이음, 도구 막대에 "연결 안 된 지점 잇기" · 엘리베이터나 문을 먼저 찍어도 데이터가 같아지게 함 · 윤준혁

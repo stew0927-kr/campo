@@ -1,16 +1,21 @@
-import type { OutdoorKind } from '../model/tools.ts';
+import type { ReactNode } from 'react';
+import { ELEVATOR_NOT_DRAWN, type OutdoorKind } from '../model/tools.ts';
 import { basemaps, type BasemapId } from '../map/basemaps.ts';
-import { INDOOR_ADD_KINDS, OUTDOOR_ADD_KINDS, TOOL_HINTS, effectiveAddKind, toolAvailable, type AddKind, type Tool, type UiState } from './ui-state.ts';
+import { INDOOR_ADD_KINDS, OUTDOOR_ADD_KINDS, TOOL_HINTS, TOOL_KEYS, effectiveAddKind, toolAvailable, type AddKind, type Tool, type UiState } from './ui-state.ts';
 
 const TOOLS: { id: Tool; label: string }[] = [
   { id: 'select', label: '선택' },
-  { id: 'outdoor-path', label: '바깥 길' },
+  { id: 'path', label: '길 그리기' },
   { id: 'building', label: '건물' },
   { id: 'select-building', label: '건물 선택' },
   { id: 'add-node', label: '지점 추가' },
   { id: 'connect', label: '잇기' },
   { id: 'portal', label: '포탈' },
   { id: 'bridge', label: '연결통로' },
+  { id: 'door', label: '문 연속 찍기' },
+  { id: 'strip', label: '강의실 줄' },
+  { id: 'restroom', label: '화장실' },
+  { id: 'elevator', label: '엘리베이터' },
 ];
 
 const OUTDOOR_KINDS: { id: OutdoorKind; label: string; sample: string }[] = [
@@ -24,7 +29,6 @@ const ADD_KINDS: { id: AddKind; label: string; dot: string }[] = [
   { id: 'door', label: '문', dot: 'dot-door' },
   { id: 'classroom', label: '강의실 문', dot: 'dot-classroom' },
   { id: 'corridor', label: '복도', dot: 'dot-door' },
-  { id: 'elevator', label: '엘리베이터', dot: 'dot-elevator' },
   { id: 'stairs', label: '계단', dot: 'dot-stairs' },
   { id: 'outdoor', label: '바깥 지점', dot: 'dot-door' },
   { id: 'poi', label: '출발·도착 후보', dot: 'dot-poi' },
@@ -43,6 +47,8 @@ export interface Operation {
 interface Props {
   ui: UiState;
   operations: Operation[];
+  /** Form of the tool that has one (강의실 줄). */
+  toolForm?: ReactNode;
   campusName: string;
   canSave: boolean;
   saving: boolean;
@@ -51,7 +57,7 @@ interface Props {
   onSave: () => void;
 }
 
-export function Toolbar({ ui, operations, campusName, canSave, saving, onTool, onChange, onSave }: Props) {
+export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving, onTool, onChange, onSave }: Props) {
   return (
     <header className="toolbar">
       <div className="toolbar-main">
@@ -67,7 +73,7 @@ export function Toolbar({ ui, operations, campusName, canSave, saving, onTool, o
               className="tool"
               aria-pressed={ui.tool === t.id}
               disabled={!toolAvailable(t.id, ui.scope)}
-              title={toolAvailable(t.id, ui.scope) ? undefined : t.id === 'portal' || t.id === 'bridge' ? '건물 선택으로 층을 먼저 골라 주세요' : '바깥 모드에서 쓸 수 있습니다'}
+              title={toolAvailable(t.id, ui.scope) ? (TOOL_KEYS[t.id] ? `${t.label} (${TOOL_KEYS[t.id]})` : undefined) : t.id === 'portal' || t.id === 'bridge' ? '건물 선택으로 층을 먼저 골라 주세요' : '바깥 모드에서 쓸 수 있습니다'}
               onClick={() => onTool(t.id)}
             >
               {t.label}
@@ -109,7 +115,7 @@ export function Toolbar({ ui, operations, campusName, canSave, saving, onTool, o
 
       {/* Fixed-height row: tool options or the tool's hint. Its height never changes, so the map never jumps under the cursor. */}
       <div className="toolbar-options">
-        {ui.tool === 'outdoor-path' && (
+        {ui.tool === 'path' && (
           <fieldset className="kinds">
             <legend className="visually-hidden">길 종류</legend>
             {OUTDOOR_KINDS.map((k) => (
@@ -119,8 +125,38 @@ export function Toolbar({ ui, operations, campusName, canSave, saving, onTool, o
                 {k.label}
               </label>
             ))}
+            <label className="kind kind-disabled" title={ELEVATOR_NOT_DRAWN}>
+              <input type="radio" name="outdoor-kind" disabled checked={false} readOnly />
+              <span className="kind-dot dot-elevator" aria-hidden="true" />
+              엘리베이터
+            </label>
           </fieldset>
         )}
+        {ui.tool === 'path' && <p className="tool-hint" role="note">{ELEVATOR_NOT_DRAWN}.</p>}
+
+        {ui.tool === 'door' && (
+          <>
+            <label className="inline-field">다음 호실 번호
+              <input
+                className="door-ref"
+                value={ui.doorRun.nextRef}
+                placeholder="301"
+                onChange={(e) => onChange({ doorRun: { ...ui.doorRun, nextRef: e.target.value } })}
+              />
+            </label>
+            <fieldset className="kinds">
+              <legend className="visually-hidden">번호 간격</legend>
+              {([1, 2] as const).map((n) => (
+                <label key={n} className="kind">
+                  <input type="radio" name="door-step" checked={ui.doorRun.step === n} onChange={() => onChange({ doorRun: { ...ui.doorRun, step: n } })} />
+                  간격 {n}{n === 2 ? ' (2)' : ' (1)'}
+                </label>
+              ))}
+            </fieldset>
+            <p className="tool-hint">Shift+누르기는 뒷문, F는 앞문·뒷문 뒤집기입니다.</p>
+          </>
+        )}
+        {ui.tool === 'strip' && toolForm}
 
         {ui.tool === 'add-node' && (
           <fieldset className="kinds">
@@ -134,7 +170,7 @@ export function Toolbar({ ui, operations, campusName, canSave, saving, onTool, o
             ))}
           </fieldset>
         )}
-        {ui.tool !== 'outdoor-path' && ui.tool !== 'add-node' && <p className="tool-hint">{TOOL_HINTS[ui.tool] ?? '지도를 끌어서 옮기고, 휠로 확대합니다.'}</p>}
+        {ui.tool !== 'path' && ui.tool !== 'add-node' && ui.tool !== 'door' && ui.tool !== 'strip' && <p className="tool-hint">{TOOL_HINTS[ui.tool] ?? '지도를 끌어서 옮기고, 휠로 확대합니다.'}</p>}
       </div>
     </header>
   );

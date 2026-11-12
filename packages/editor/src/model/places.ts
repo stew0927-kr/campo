@@ -14,10 +14,10 @@ export function routePlaces(state: EditState): Place[] {
     const p = n.props;
     if (p.node_type === 'poi') {
       places.push({ id: n.id, label: p.name ?? n.id });
-    } else if (p.node_type === 'door' && (p.space_name !== undefined || p.ref !== undefined)) {
+    } else if (p.node_type === 'door' && (p.space_name !== undefined || p.ref !== undefined || (p.room_ref !== undefined && p.door_role !== 'back'))) {
       const b = p.building_id ? buildingById(state, p.building_id) : undefined;
       const where = [b?.props.name, p.level !== null ? floorLabel(p.level) : null].filter(Boolean).join(' ');
-      places.push({ id: n.id, label: `${p.space_name ?? p.ref ?? n.id}${where ? ` (${where})` : ''}` });
+      places.push({ id: n.id, label: `${p.space_name ?? p.ref ?? (p.room_ref !== undefined ? `${p.room_ref}호` : n.id)}${where ? ` (${where})` : ''}` });
     }
   }
   places.sort((a, b) => a.label.localeCompare(b.label, 'ko'));

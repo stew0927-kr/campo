@@ -5,8 +5,9 @@ import { planAddBuilding } from '../src/model/building.ts';
 import { buildingsToDelete, classify, nextSelection, planDelete, planFlip, planMerge, planSetProps, propsPatch } from '../src/model/ops.ts';
 import { isError, planReason, runPlan, type Plan, type PlanResult } from '../src/model/plan.ts';
 import {
-  planBridge, planConnect, planElevator, planIndoorNode, planOutdoorNode, planOutdoorPath, planPortal, planStairs,
+  planBridge, planConnect, planIndoorNode, planOutdoorNode, planOutdoorPath, planPortal, planStairs,
 } from '../src/model/tools.ts';
+import { planElevator } from '../src/model/elevator.ts';
 
 const ok = (r: PlanResult | null): Plan => {
   if (!r || isError(r)) throw new Error(r ? r.error : 'no plan');
@@ -81,9 +82,10 @@ describe('지점 추가, 엘리베이터, 계단', () => {
     const stops = Object.values(after.nodes).filter((n) => n.props.elevator_id === 'A_elevB');
     expect(stops.map((n) => n.props.level).sort()).toEqual([1, 2, 4]);
     expect(new Set(stops.map((n) => n.coord.join(','))).size).toBe(1);
-    const edges = Object.values(after.edges).filter((e) => !(e.id in st.edges));
+    // The stops also join the corridor of their floor when one is near (connect.ts), so only the ride edges are counted here.
+    const edges = Object.values(after.edges).filter((e) => !(e.id in st.edges) && e.props.highway === 'elevator');
     expect(edges).toHaveLength(2);
-    expect(edges.every((e) => e.props.highway === 'elevator' && e.props.step_free === true)).toBe(true);
+    expect(edges.every((e) => e.props.step_free === true)).toBe(true);
     expect(s.history.size()).toBe(1);
   });
 

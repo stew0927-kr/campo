@@ -4,17 +4,21 @@ import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { TerraDraw, TerraDrawLineStringMode, TerraDrawPolygonMode, type TerraDrawMouseEvent } from 'terra-draw';
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
+import type { FeatureCollection } from 'geojson';
 import { edgeCoords, scopeOfNode, type EditBuilding, type EditEdge, type EditNode, type EditState, type Position } from '@campo/core';
-import type { DragResult, DropTarget, NodeDrag } from '../model/drag.ts';
+import type { DragResult, DropTarget, HandleDrag, NodeDrag } from '../model/drag.ts';
+import type { Preview } from '../model/doors.ts';
+import { edgeMidpoint } from '../model/split.ts';
 import type { OutdoorKind, PathVertex } from '../model/tools.ts';
-import { buildingInScope, edgeInScope, type Scope } from '../model/scope.ts';
+import { buildingInScope, edgeStrong, scopeAt, scopeLabel, snappable, type Scope } from '../model/scope.ts';
 import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } from '../model/snap.ts';
-import type { Tool } from '../ui/ui-state.ts';
+import { PLACING_TOOLS, type Tool } from '../ui/ui-state.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
-  DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, WAY_COLORS,
-  dragGeoJSON, dragMembers, hideInData, routesGeoJSON, toDisplayGeoJSON, type RouteLine,
+  DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, WAY_COLORS,
+  dragGeoJSON, dragMembers, hideInData, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON, type RouteLine,
 } from './layers.ts';
+import { registerRestroomIcons } from './icons.ts';
 
 /** Clicking within this many pixels of a node picks it (잇기, 선택). Larger than the 5px snap: it is a pick, not a placement. */
 const PICK_PX = 10;
@@ -33,6 +37,8 @@ export interface MapClick {
   building: EditBuilding | undefined;
   /** Shift was held (add to / remove from the selection). */
   shift: boolean;
+  /** The scope of the clicked place: the building floor under the pointer, the outdoors, or the outdoors forced by the O key. */
+  scope: Scope;
 }
 
 /** A request to move the map; `seq` changes on every request so the same place can be asked for twice. */
@@ -53,13 +59,21 @@ interface Props {
   canPick: (node: EditNode) => boolean;
   routes: RouteLine[];
   focus: FocusRequest | null;
-  onPathDrawn: (vertices: PathVertex[]) => void;
+  /** What 길 그리기 drew, and the scope its first click fixed. */
+  onPathDrawn: (vertices: PathVertex[], scope: Scope) => void;
+  /** Preview under the pointer while a placing tool is active (null: none). */
+  hover: ((position: Position, scope: Scope) => Preview) | null;
+  /** Preview that stays (the doors of a 강의실 줄). */
+  previewShapes: FeatureCollection | null;
   onPolygonDrawn: (ring: Position[]) => void;
   onMapClick: (click: MapClick) => void;
   /** Shift + drag on the map: the nodes inside the box. */
   onBoxSelect: (nodeIds: string[]) => void;
   /** A node drag begins: the history side of it (SPEC-v0.2 5.1). */
   beginDrag: (nodeId: string) => NodeDrag;
+  /** A handle in the middle of a selected edge is pulled: the drag, or why the edge cannot be split. */
+  beginHandleDrag: (edgeId: string) => HandleDrag | string;
+  onHandleRefused: (reason: string) => void;
   /** The drag is over: the result, or null when it was cancelled (Esc). */
   onDragEnd: (result: DragResult | null) => void;
 }
@@ -68,10 +82,10 @@ interface Props {
 setWorkerUrl(workerUrl);
 
 const KIND_COLOR: Record<OutdoorKind, string> = { flat: WAY_COLORS.footway, steps: WAY_COLORS.steps, ramp: WAY_COLORS.ramp };
-const DRAW_MODE: Partial<Record<Tool, string>> = { 'outdoor-path': 'linestring', building: 'polygon' };
+const DRAW_MODE: Partial<Record<Tool, string>> = { path: 'linestring', building: 'polygon' };
 
 interface ActiveDrag {
-  ctl: NodeDrag;
+  ctl: NodeDrag | HandleDrag;
   nodeId: string;
   last: MapMouseEvent;
   raf: number | null;
@@ -82,6 +96,10 @@ export function MapView(props: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const drawRef = useRef<TerraDraw | null>(null);
+  /** The scope the first click of the path being drawn fixed (null between paths). */
+  const pathScope = useRef<Scope | null>(null);
+  const hoverShapes = useRef<FeatureCollection | null>(null);
+  const badgeEl = useRef<HTMLDivElement | null>(null);
   /** The drag visuals (temporary source, hidden originals) are cleared once the main source has the new data. */
   const clearDragAfterData = useRef(false);
   /** Work queued by the effects below until the map and Terra Draw are set up. */
@@ -93,6 +111,7 @@ export function MapView(props: Props) {
   // Map and Terra Draw callbacks are registered once; they read the latest props through this ref.
   const latest = useRef(props);
   latest.current = props;
+  const pushPreview = () => whenReady((map) => (map.getSource(PREVIEW_SOURCE) as GeoJSONSource).setData(previewGeoJSON(latest.current.previewShapes, hoverShapes.current)));
 
   useEffect(() => {
     const map = new MapLibreMap({
@@ -106,6 +125,8 @@ export function MapView(props: Props) {
     map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left');
     map.boxZoom.disable(); // Shift + drag is the box select
     mapRef.current = map;
+    // The e2e tests turn coordinates into pixels with this (dev server only).
+    if (import.meta.env.DEV) (window as unknown as { __campoMap?: MapLibreMap }).__campoMap = map;
 
     const nearestNode = (point: ScreenPoint, accept: (n: EditNode) => boolean, maxPx?: number) => {
       const candidates = Object.values(latest.current.state.nodes)
@@ -113,8 +134,10 @@ export function MapView(props: Props) {
         .map((node) => ({ node, screen: map.project(node.coord) }));
       return nearestWithin(candidates, point, maxPx)?.node;
     };
-    /** The 바깥 길 tool attaches only to outdoor points (same scope as the line being drawn), within SNAP_PX. */
-    const snapOutdoor = (point: ScreenPoint) => nearestNode(point, (n) => n.props.building_id === null);
+    let oHeld = false;
+    const autoScope = (at: Position) => scopeAt(latest.current.state, at, latest.current.scope, oHeld);
+    /** 길 그리기 attaches to nodes of the path's own scope, and to entrances from the outdoors (SPEC-v0.2 5.2), within SNAP_PX. */
+    const snapPath = (point: ScreenPoint, scope: Scope) => nearestNode(point, (n) => snappable(n, scope));
     const clearDragVisuals = () => {
       for (const [id, filter] of hideInData([])) map.setFilter(id, filter ?? null);
       (map.getSource(DRAG_SOURCE) as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: [] });
@@ -123,6 +146,8 @@ export function MapView(props: Props) {
 
     // ---- click: pick a node, an edge or a building outline ----
     map.on('click', (e) => {
+      const at: Position = [e.lngLat.lng, e.lngLat.lat];
+      if (latest.current.tool === 'path' && !pathScope.current) pathScope.current = autoScope(at);
       if (DRAW_MODE[latest.current.tool]) return; // Terra Draw owns clicks while drawing
       const { state: st, scope: sc, canPick } = latest.current;
       const node = nearestNode(e.point, canPick, PICK_PX);
@@ -131,7 +156,7 @@ export function MapView(props: Props) {
       if (!node) {
         let best = PICK_PX;
         for (const f of Object.values(st.edges)) {
-          if (!st.nodes[f.props.from] || !st.nodes[f.props.to] || !edgeInScope(st, f, sc)) continue;
+          if (!st.nodes[f.props.from] || !st.nodes[f.props.to] || !edgeStrong(st, f, sc)) continue;
           const pts = edgeCoords(st, f).map((c) => map.project(c));
           for (let i = 0; i + 1 < pts.length; i++) {
             const dist = distanceToSegment(e.point, pts[i]!, pts[i + 1]!);
@@ -155,11 +180,11 @@ export function MapView(props: Props) {
           }
         }
       }
-      latest.current.onMapClick({ position: [e.lngLat.lng, e.lngLat.lat], node, edge, building, shift: e.originalEvent.shiftKey });
+      latest.current.onMapClick({ position: at, node, edge, building, shift: e.originalEvent.shiftKey, scope: autoScope(at) });
     });
 
     // ---- node drag and box select (선택 tool) ----
-    let press: { nodeId: string; x: number; y: number } | null = null;
+    let press: { nodeId?: string; edgeId?: string; x: number; y: number } | null = null;
     let box: { x: number; y: number; el: HTMLDivElement } | null = null;
     let drag: ActiveDrag | null = null;
 
@@ -214,13 +239,10 @@ export function MapView(props: Props) {
       (map.getSource(DRAG_SOURCE) as GeoJSONSource).setData(dragGeoJSON(st, drag.nodeId, drop.ring));
     };
 
-    const startDrag = (nodeId: string, e: MapMouseEvent) => {
-      const { state: st, beginDrag } = latest.current;
-      const { nodes, edgeIds } = dragMembers(st, nodeId);
-      const ctl = beginDrag(nodeId);
+    const startDrag = (ctl: NodeDrag | HandleDrag, hide: readonly string[], e: MapMouseEvent) => {
       ctl.start();
-      drag = { ctl, nodeId, last: e, raf: null };
-      for (const [id, filter] of hideInData([...nodes.map((n) => n.id), ...edgeIds])) map.setFilter(id, filter ?? null);
+      drag = { ctl, nodeId: ctl.nodeId, last: e, raf: null };
+      for (const [id, filter] of hideInData(hide)) map.setFilter(id, filter ?? null);
       map.getContainer().setAttribute('data-dragging', 'true');
       drag.raf = requestAnimationFrame(frame);
     };
@@ -242,13 +264,16 @@ export function MapView(props: Props) {
       const [x0, x1] = [Math.min(x, e.point.x), Math.max(x, e.point.x)];
       const [y0, y1] = [Math.min(y, e.point.y), Math.max(y, e.point.y)];
       if (x1 - x0 < DRAG_PX && y1 - y0 < DRAG_PX) return;
-      const ids = Object.values(latest.current.state.nodes)
-        .filter((n) => latest.current.canPick(n))
-        .filter((n) => {
-          const p = map.project(n.coord);
-          return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
-        })
-        .map((n) => n.id);
+      const inBox = (c: Position) => {
+        const p = map.project(c);
+        return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+      };
+      const ids = Object.values(latest.current.state.nodes).filter((n) => latest.current.canPick(n) && inBox(n.coord)).map((n) => n.id);
+      // A building is in the box when its whole outline is (a box drawn inside a building picks only what is in it).
+      for (const b of Object.values(latest.current.state.buildings)) {
+        const ring = b.polygon[0] ?? [];
+        if (ring.length > 0 && ring.every(inBox)) ids.push(b.id);
+      }
       latest.current.onBoxSelect(ids);
     };
 
@@ -268,6 +293,19 @@ export function MapView(props: Props) {
       if (node) {
         e.preventDefault(); // the map must not pan while the node is pulled
         press = { nodeId: node.id, x: e.point.x, y: e.point.y };
+        return;
+      }
+      // The handle in the middle of a selected edge: pulling it makes a new node there.
+      const { state: st, highlight: sel } = latest.current;
+      for (const id of sel) {
+        const mid = st.edges[id] ? edgeMidpoint(st, id) : undefined;
+        if (!mid) continue;
+        const p = map.project(mid);
+        if (Math.hypot(p.x - e.point.x, p.y - e.point.y) <= PICK_PX) {
+          e.preventDefault();
+          press = { edgeId: id, x: e.point.x, y: e.point.y };
+          return;
+        }
       }
     });
     map.on('mousemove', (e) => {
@@ -276,7 +314,16 @@ export function MapView(props: Props) {
         const y = Math.min(box.y, e.point.y);
         box.el.style.cssText = `left:${x}px;top:${y}px;width:${Math.abs(e.point.x - box.x)}px;height:${Math.abs(e.point.y - box.y)}px`;
       } else if (press && !drag && Math.hypot(e.point.x - press.x, e.point.y - press.y) >= DRAG_PX) {
-        startDrag(press.nodeId, e);
+        const { state: st, beginDrag, beginHandleDrag, onHandleRefused } = latest.current;
+        if (press.nodeId !== undefined) {
+          const { nodes, edgeIds } = dragMembers(st, press.nodeId);
+          startDrag(beginDrag(press.nodeId), [...nodes.map((n) => n.id), ...edgeIds], e);
+        } else {
+          const made = beginHandleDrag(press.edgeId!);
+          if (typeof made === 'string') onHandleRefused(made);
+          else startDrag(made, [press.edgeId!], e);
+        }
+        press = null;
       } else if (drag) {
         drag.last = e;
         drag.raf ??= requestAnimationFrame(frame);
@@ -309,28 +356,97 @@ export function MapView(props: Props) {
       }
       if (drag) cancelDrag();
     };
+    // ---- the scope next to the cursor, and the preview of what a click would do (SPEC-v0.2 5.2, 6.5) ----
+    const badge = document.createElement('div');
+    badge.className = 'scope-badge';
+    badge.hidden = true;
+    map.getContainer().appendChild(badge);
+    badgeEl.current = badge;
+    let lastMove: MapMouseEvent | null = null;
+    let moveRaf: number | null = null;
+    const refreshHover = () => {
+      moveRaf = null;
+      const { tool, state: st, hover } = latest.current;
+      if (!lastMove || !PLACING_TOOLS.includes(tool)) {
+        badge.hidden = true;
+        return;
+      }
+      const at: Position = [lastMove.lngLat.lng, lastMove.lngLat.lat];
+      const sc = pathScope.current ?? autoScope(at);
+      let text = scopeLabel(sc, st);
+      if (oHeld && !pathScope.current) text += ' (O)';
+      const pv = hover ? hover(at, sc) : null;
+      hoverShapes.current = pv?.shapes ?? null;
+      pushPreview();
+      if (pv?.text) text += ` · ${pv.text}`;
+      badge.textContent = text;
+      badge.style.left = `${lastMove.point.x + 16}px`;
+      badge.style.top = `${lastMove.point.y + 16}px`;
+      badge.hidden = false;
+    };
+    const scheduleHover = () => {
+      moveRaf ??= requestAnimationFrame(refreshHover);
+    };
+    map.on('mousemove', (e) => {
+      lastMove = e;
+      scheduleHover();
+    });
+    map.getContainer().addEventListener('mouseleave', () => {
+      lastMove = null;
+      badge.hidden = true;
+    });
+    const typing = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelDrag();
+      if (e.key === 'Escape') {
+        cancelDrag();
+        pathScope.current = null;
+      }
+      if ((e.key === 'o' || e.key === 'O') && !typing(e) && !e.ctrlKey && !e.metaKey && !e.altKey && !oHeld) {
+        oHeld = true;
+        scheduleHover();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'o' || e.key === 'O') {
+        oHeld = false;
+        scheduleHover();
+      }
+    };
+    const onBlur = () => {
+      oHeld = false;
     };
     window.addEventListener('mouseup', onWindowUp);
     window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
 
     map.on('load', () => {
       map.addSource(DATA_SOURCE, { type: 'geojson', data: toDisplayGeoJSON(latest.current.state, latest.current.scope, latest.current.highlight) });
       map.addSource(ROUTE_SOURCE, { type: 'geojson', data: routesGeoJSON(latest.current.routes) });
       map.addSource(DRAG_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
+      registerRestroomIcons(map);
       // Routes sit above the faded data but below the points, so the points stay clickable and readable.
       for (const layer of DATA_LAYERS) {
         if (layer.id === 'campo-nodes-highlight') for (const r of ROUTE_LAYERS) map.addLayer(r);
         map.addLayer(layer);
       }
+      for (const layer of PREVIEW_LAYERS) map.addLayer(layer);
       for (const layer of DRAG_LAYERS) map.addLayer(layer);
 
       const draw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map }),
         modes: [
           new TerraDrawLineStringMode({
-            snapping: { toCustom: (ev: TerraDrawMouseEvent) => snapOutdoor({ x: ev.containerX, y: ev.containerY })?.coord },
+            snapping: {
+              toCustom: (ev: TerraDrawMouseEvent) => {
+                const sc = pathScope.current ?? autoScope([ev.lng, ev.lat]);
+                return snapPath({ x: ev.containerX, y: ev.containerY }, sc)?.coord;
+              },
+            },
             styles: lineStyles(KIND_COLOR.flat),
           }),
           new TerraDrawPolygonMode({
@@ -353,11 +469,14 @@ export function MapView(props: Props) {
         const drawn = draw.getSnapshotFeature(id);
         draw.removeFeatures([id]);
         if (drawn?.geometry.type === 'LineString') {
-          const vertices = (drawn.geometry.coordinates as Position[]).map((position): PathVertex => {
-            const node = snapOutdoor(map.project(position));
+          const coords = drawn.geometry.coordinates as Position[];
+          const sc = pathScope.current ?? autoScope(coords[0]!);
+          pathScope.current = null;
+          const vertices = coords.map((position): PathVertex => {
+            const node = snapPath(map.project(position), sc);
             return node ? { nodeId: node.id } : { position: [position[0], position[1]] };
           });
-          latest.current.onPathDrawn(vertices);
+          latest.current.onPathDrawn(vertices, sc);
         } else if (drawn?.geometry.type === 'Polygon') {
           latest.current.onPolygonDrawn((drawn.geometry.coordinates[0] as Position[]).map(([x, y]) => [x, y]));
         }
@@ -371,6 +490,9 @@ export function MapView(props: Props) {
     return () => {
       window.removeEventListener('mouseup', onWindowUp);
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      if (moveRaf !== null) cancelAnimationFrame(moveRaf);
       drawRef.current?.stop();
       drawRef.current = null;
       pending.current = [];
@@ -405,7 +527,15 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     whenReady(() => drawRef.current?.setMode(DRAW_MODE[tool] ?? 'static'));
+    pathScope.current = null;
+    hoverShapes.current = null;
+    if (badgeEl.current) badgeEl.current.hidden = true;
+    pushPreview();
   }, [tool]);
+
+  useEffect(() => {
+    pushPreview();
+  }, [props.previewShapes]);
 
   useEffect(() => {
     whenReady(() => drawRef.current?.setModeStyles('linestring', lineStyles(KIND_COLOR[outdoorKind])));

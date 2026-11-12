@@ -1,6 +1,7 @@
 // Forms for the tools that need more than a click. Each submit returns an error message, or nothing on success.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { EditBuilding } from '@campo/core';
+import type { EditBuilding, RestroomGender, Wheelchair } from '@campo/core';
+import { GENDERS, WHEELCHAIRS, type RestroomForm } from '../model/doors.ts';
 import { parseLevels } from '../model/building.ts';
 import { floorLabel } from '../model/scope.ts';
 
@@ -78,9 +79,10 @@ export function ClassroomDialog({ onSubmit, onCancel }: { onSubmit: Submit<{ ref
   );
 }
 
-export function ElevatorDialog({ building, onSubmit, onCancel }: { building: EditBuilding; onSubmit: Submit<number[]>; onCancel: () => void }) {
+/** Stop floors of an elevator: new (all floors checked) or an existing one (`initial` = the floors it stops at now). */
+export function ElevatorDialog({ building, initial, onSubmit, onCancel }: { building: EditBuilding; initial?: number[]; onSubmit: Submit<number[]>; onCancel: () => void }) {
   const levels = [...building.props.levels].sort((a, b) => b - a);
-  const [checked, setChecked] = useState<Set<number>>(new Set(levels));
+  const [checked, setChecked] = useState<Set<number>>(new Set(initial ?? levels));
   const [error, setError] = useState<string>();
   const toggle = (l: number) => setChecked((s) => {
     const next = new Set(s);
@@ -89,14 +91,45 @@ export function ElevatorDialog({ building, onSubmit, onCancel }: { building: Edi
     return next;
   });
   return (
-    <Modal title="엘리베이터 정차 층" submitLabel="엘리베이터 만들기" error={error} onSubmit={() => setError(onSubmit([...checked]))} onCancel={onCancel}>
-      <p className="field-help">고른 층마다 같은 자리에 정차 지점이 생기고, 이웃한 정차 층끼리 이어집니다.</p>
+    <Modal title="엘리베이터 정차 층" submitLabel={initial ? '정차 층 바꾸기' : '엘리베이터 만들기'} error={error} onSubmit={() => setError(onSubmit([...checked]))} onCancel={onCancel}>
+      <p className="field-help">고른 층마다 같은 자리에 정차 지점이 생기고, 이웃한 정차 층끼리 이어집니다. 그 층에 복도가 가까이 있으면 복도에도 이어집니다.</p>
       <fieldset className="checks">
         <legend className="visually-hidden">정차 층</legend>
         {levels.map((l) => (
           <label key={l}><input type="checkbox" checked={checked.has(l)} onChange={() => toggle(l)} />{floorLabel(l)}</label>
         ))}
       </fieldset>
+    </Modal>
+  );
+}
+
+export function RestroomDialog({ onSubmit, onCancel }: { onSubmit: Submit<RestroomForm>; onCancel: () => void }) {
+  const [gender, setGender] = useState<RestroomGender>('male');
+  const [wheelchair, setWheelchair] = useState<Wheelchair>('unknown');
+  const [table, setTable] = useState<'unknown' | 'yes' | 'no'>('unknown');
+  const [error, setError] = useState<string>();
+  const submit = () => setError(onSubmit({ gender, wheelchair, changingTable: table === 'unknown' ? null : table === 'yes' }));
+  return (
+    <Modal title="화장실" submitLabel="화장실 만들기" error={error} onSubmit={submit} onCancel={onCancel}>
+      <fieldset className="checks">
+        <legend>성별</legend>
+        {GENDERS.map((g) => (
+          <label key={g.id}><input type="radio" name="restroom-gender" checked={gender === g.id} onChange={() => setGender(g.id)} />{g.label}</label>
+        ))}
+      </fieldset>
+      <label className="field">휠체어
+        <select value={wheelchair} onChange={(e) => setWheelchair(e.target.value as Wheelchair)}>
+          {WHEELCHAIRS.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+        </select>
+      </label>
+      <p className="field-help">'쓸 수 있어요'는 현장에서 확인했을 때만 고르세요. 확인하지 않았으면 그대로 두세요.</p>
+      <label className="field">기저귀 교환대
+        <select value={table} onChange={(e) => setTable(e.target.value as 'unknown' | 'yes' | 'no')}>
+          <option value="unknown">모르겠어요</option>
+          <option value="yes">있어요</option>
+          <option value="no">없어요</option>
+        </select>
+      </label>
     </Modal>
   );
 }
@@ -150,6 +183,21 @@ export function DeleteBuildingDialog({ items, onConfirm, onCancel }: { items: De
         </p>
       ))}
       <p className="field-help">구간 개수에는 포탈과 연결통로가 들어 있습니다. 지운 뒤에도 Ctrl+Z로 되돌릴 수 있습니다.</p>
+    </Modal>
+  );
+}
+
+export interface AttachReportItem { label: string; reason: string }
+
+/** Result of 연결 안 된 지점 잇기: how many were attached, and the ones that could not be, each with the reason. */
+export function AttachReportDialog({ attached, failed, onClose }: { attached: number; failed: AttachReportItem[]; onClose: () => void }) {
+  return (
+    <Modal title="연결 안 된 지점 잇기" submitLabel="확인" error={undefined} onSubmit={onClose} onCancel={onClose}>
+      <p>{attached > 0 ? `${attached}개를 복도에 이었습니다.` : '복도에 이은 지점이 없습니다.'} 잇지 못한 지점 {failed.length}개입니다.</p>
+      <ul className="attach-failed">
+        {failed.map((f, i) => <li key={i}><strong>{f.label}</strong>: {f.reason}</li>)}
+      </ul>
+      <p className="field-help">복도를 가까이 그리거나 지점을 복도 쪽으로 옮긴 다음 다시 눌러 주세요.</p>
     </Modal>
   );
 }

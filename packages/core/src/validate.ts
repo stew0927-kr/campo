@@ -400,6 +400,14 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     }
   }
 
+  // E13. An elevator edge joins two elevator stops; anything else cannot be expanded into a ride (the graph skips it).
+  for (const { file, edge, from, to } of linked) {
+    if (edge.properties.highway !== 'elevator') continue;
+    if (from.properties.node_type !== 'elevator_stop' || to.properties.node_type !== 'elevator_stop') {
+      error(file, edge.id, E.elevatorEdgeNotStops, '엘리베이터 구간의 양 끝이 엘리베이터 정차 지점이 아닙니다. 엘리베이터 도구로 다시 만드세요.');
+    }
+  }
+
   // W12. An indoor escalator should change floors. Outdoor ones have a single scope, so they are skipped
   // (a hill's height can only be checked once elevation data is joined).
   for (const { file, edge, from, to } of linked) {

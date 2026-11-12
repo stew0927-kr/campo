@@ -77,7 +77,7 @@ describe('campus API (dev server)', () => {
 });
 
 describe('campus API: extras', () => {
-  it('sends overrides, calibration and observations on GET, but PUT refuses calibration and observations', async () => {
+  it('sends overrides, calibration and observations on GET; PUT writes observations/*.jsonl but refuses calibration.json', async () => {
     await mkdir(join(root, 'c3', 'observations'), { recursive: true });
     await writeFile(join(root, 'c3', 'overrides.json'), '[]\n');
     await writeFile(join(root, 'c3', 'observations', 'a.jsonl'), '{"target":"edge:x"}\n');
@@ -85,6 +85,12 @@ describe('campus API: extras', () => {
     const read = (await (await fetch(`${base}/api/campuses/c3`)).json()) as { files: { path: string }[] };
     expect(read.files.map((f) => f.path)).toEqual(['observations/a.jsonl', 'overrides.json']);
     expect((await put('c3', { 'calibration.json': '{}' })).status).toBe(400);
-    expect((await put('c3', { 'observations/a.jsonl': '{}' })).status).toBe(400);
+    // measurements typed in the editor: observations/*.jsonl, one level deep
+    const line = '{"target":"edge:x"}\n';
+    expect((await put('c3', { 'observations/editor.jsonl': line })).status).toBe(200);
+    expect(await readFile(join(root, 'c3', 'observations', 'editor.jsonl'), 'utf8')).toBe(line);
+    expect((await put('c3', { 'observations/sub/x.jsonl': line })).status).toBe(400);
+    expect((await put('c3', { 'observations/x.txt': line })).status).toBe(400);
+    expect((await put('c3', { 'observations/../outdoor.jsonl': line })).status).toBe(400);
   });
 });

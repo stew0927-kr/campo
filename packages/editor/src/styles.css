@@ -113,7 +113,7 @@ button, select, input { font: inherit; color: inherit; }
 /* ---- Map ---- */
 .map-area { grid-area: map; position: relative; min-height: 0; }
 .map { position: absolute; inset: 0; }
-.map:is([data-tool="path"], [data-tool="building"], [data-tool="add-node"], [data-tool="connect"], [data-tool="door"], [data-tool="strip"], [data-tool="restroom"], [data-tool="elevator"]) .maplibregl-canvas { cursor: crosshair; }
+.map:is([data-tool="path"], [data-tool="building"], [data-tool="add-node"], [data-tool="connect"], [data-tool="door"], [data-tool="strip"], [data-tool="restroom"], [data-tool="elevator"], [data-tool="escalator"], [data-tool="bridge"]) .maplibregl-canvas { cursor: crosshair; }
 .map[data-tool="select-building"] .maplibregl-canvas { cursor: pointer; }
 
 /* Floor picker: the button panel inside a lift, top floor first. */
@@ -293,3 +293,39 @@ button.check-item:hover { background: var(--chrome); }
 .route-warnings { margin-top: 8px; padding: 8px; border-left: 3px solid var(--warning); background: var(--chrome); }
 .route-warnings h3 { margin: 0 0 4px; font-size: var(--text-m); }
 .route-warnings ul, .attach-failed { margin: 0; padding-left: 18px; }
+
+/* ---- 연결통로 / 에스컬레이터 window: sits where the floor picker does, so the map stays clickable ---- */
+.cross {
+  position: absolute; top: 12px; right: 12px; z-index: 2; width: 236px;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; box-shadow: 0 2px 10px rgb(30 41 51 / 0.12);
+}
+.cross-title { margin: 0; font-size: var(--text-m); }
+.cross-buildings { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; }
+.cross-building, .cross-floor, .cross-cancel { padding: 5px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.cross-building { display: flex; justify-content: space-between; gap: 8px; text-align: left; }
+.cross-distance { color: var(--muted); font-size: var(--text-s); }
+.cross-building[aria-pressed="true"], .cross-floor[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.cross-floor:disabled { opacity: 0.45; cursor: not-allowed; }
+.cross-floors { display: flex; flex-wrap: wrap; gap: 4px; }
+.cross-modes { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; }
+.cross-modes legend { margin-bottom: 4px; padding: 0; color: var(--muted); }
+.cross-modes label { display: flex; align-items: center; gap: 6px; }
+.cross .field-help { margin: 0; }
+.cross-cancel { align-self: flex-end; font-size: var(--text-s); }
+
+/* ---- 측정 ---- */
+.conveying-note { margin: -4px 0 0; color: var(--ink); }
+.measure { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.measure-title { margin: 0; font-size: var(--text-l); }
+.measure-target { margin: 0; word-break: break-all; }
+.measure-direction { margin: 0 0 2px; font-weight: 700; }
+.measure-stats { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.measure-stats div { display: flex; justify-content: space-between; }
+.measure-stats dt { color: var(--muted); }
+.measure-stats dd { margin: 0; font-variant-numeric: tabular-nums; }
+.measure-stale { margin: 4px 0 0; color: var(--warning); }
+.measure-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.measure-add, .measure-clear { padding: 5px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.measure-add { border-color: var(--footway); background: var(--footway); color: #fff; font-weight: 600; }
+.measure-add[aria-disabled="true"] { border-color: var(--rule); background: var(--chrome); color: var(--muted); cursor: not-allowed; }

@@ -8,6 +8,7 @@ import type { FeatureCollection } from 'geojson';
 import { edgeCoords, scopeOfNode, type EditBuilding, type EditEdge, type EditNode, type EditState, type Position } from '@campo/core';
 import type { DragResult, DropTarget, HandleDrag, NodeDrag } from '../model/drag.ts';
 import type { Preview } from '../model/doors.ts';
+import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import type { OutdoorKind, PathVertex } from '../model/tools.ts';
 import { buildingInScope, edgeStrong, scopeAt, scopeLabel, snappable, type Scope } from '../model/scope.ts';
@@ -18,7 +19,7 @@ import {
   DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, WAY_COLORS,
   dragGeoJSON, dragMembers, hideInData, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON, type RouteLine,
 } from './layers.ts';
-import { registerRestroomIcons } from './icons.ts';
+import { registerBeltIcons, registerRestroomIcons } from './icons.ts';
 
 /** Clicking within this many pixels of a node picks it (잇기, 선택). Larger than the 5px snap: it is a pick, not a placement. */
 const PICK_PX = 10;
@@ -155,11 +156,19 @@ export function MapView(props: Props) {
       let building: EditBuilding | undefined;
       if (!node) {
         let best = PICK_PX;
+        const pairs = pairOffsets(st);
         for (const f of Object.values(st.edges)) {
           if (!st.nodes[f.props.from] || !st.nodes[f.props.to] || !edgeStrong(st, f, sc)) continue;
-          const pts = edgeCoords(st, f).map((c) => map.project(c));
+          const pts: ScreenPoint[] = edgeCoords(st, f).map((c) => map.project(c));
+          const shift = (pairs.get(f.id) ?? 0) * PAIR_OFFSET_PX; // the line is drawn this far to the right of its direction: pick where it is drawn
           for (let i = 0; i + 1 < pts.length; i++) {
-            const dist = distanceToSegment(e.point, pts[i]!, pts[i + 1]!);
+            let [p0, p1] = [pts[i]!, pts[i + 1]!];
+            if (shift !== 0) {
+              const len = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+              const [ox, oy] = [(-(p1.y - p0.y) / len) * shift, ((p1.x - p0.x) / len) * shift];
+              [p0, p1] = [{ x: p0.x + ox, y: p0.y + oy }, { x: p1.x + ox, y: p1.y + oy }];
+            }
+            const dist = distanceToSegment(e.point, p0, p1);
             if (dist <= best) {
               best = dist;
               edge = f;
@@ -429,6 +438,7 @@ export function MapView(props: Props) {
       map.addSource(DRAG_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
       registerRestroomIcons(map);
+      registerBeltIcons(map);
       // Routes sit above the faded data but below the points, so the points stay clickable and readable.
       for (const layer of DATA_LAYERS) {
         if (layer.id === 'campo-nodes-highlight') for (const r of ROUTE_LAYERS) map.addLayer(r);

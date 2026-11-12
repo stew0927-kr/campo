@@ -10,7 +10,7 @@ import type { Plugin } from 'vite';
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
 /** Every path a campus folder may contain (SPEC §4.3). Anything else is refused. */
 const CAMPUS_PATH = /^(campus\.json|outdoor\.geojson|connections\.geojson|buildings\/[A-Za-z0-9]+\/(building|L-?[1-9][0-9]*)\.geojson)$/;
-/** Files the editor reads for its checks: overrides, calibration, observations. PUT writes only overrides.json of them. */
+/** Files the editor reads for its checks: overrides, calibration, observations. PUT writes overrides.json and observations/*.jsonl, never calibration.json (npm run calibrate makes it). */
 const EXTRA_PATH = /^(overrides\.json|calibration\.json|observations\/[^/]+\.jsonl)$/;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
 
@@ -18,9 +18,14 @@ export function isCampusPath(path: string): boolean {
   return CAMPUS_PATH.test(path);
 }
 
-/** PUT may write the layout files and overrides.json (the editor adds entries when a split or heal carries one over). */
+const OBSERVATION_PATH = /^observations\/[^/]+\.jsonl$/;
+
+/**
+ * PUT may write the layout files, overrides.json (the editor adds entries when a split or heal carries one over) and
+ * observations/*.jsonl (measurements typed in the editor, SPEC-v0.2 3.9). calibration.json is computed by npm run calibrate: refused.
+ */
 function isWritablePath(path: string): boolean {
-  return isCampusPath(path) || path === 'overrides.json';
+  return isCampusPath(path) || path === 'overrides.json' || OBSERVATION_PATH.test(path);
 }
 
 export async function readCampusFiles(dir: string): Promise<{ path: string; text: string }[]> {

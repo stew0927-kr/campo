@@ -5,8 +5,9 @@ import { planAddBuilding } from '../src/model/building.ts';
 import { buildingsToDelete, classify, nextSelection, planDelete, planFlip, planMerge, planSetProps, propsPatch } from '../src/model/ops.ts';
 import { isError, planReason, runPlan, type Plan, type PlanResult } from '../src/model/plan.ts';
 import {
-  planBridge, planConnect, planIndoorNode, planOutdoorNode, planOutdoorPath, planPortal, planStairs,
+  planConnect, planIndoorNode, planOutdoorNode, planOutdoorPath, planPortal, planStairs,
 } from '../src/model/tools.ts';
+import { planBridge } from '../src/model/bridge.ts';
 import { planElevator } from '../src/model/elevator.ts';
 
 const ok = (r: PlanResult | null): Plan => {

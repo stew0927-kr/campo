@@ -24,6 +24,7 @@ import {
   type LoadedFeature,
   type LoadedFile,
   type NodeProperties,
+  type Observation,
   type Override,
   type RoomProperties,
 } from '@campo/core';
@@ -36,8 +37,10 @@ export interface Session {
   /** Features the engine left out on load (schema errors, missing end nodes, repeated ids). Written back untouched on save. */
   passthrough: readonly LoadedFeature[];
   issues: readonly LoadIssue[];
-  /** overrides.json, observations/*.jsonl, calibration.json: checks and routes read them. Only overrides.json is rewritten, by pendingOverrides. */
+  /** overrides.json, observations/*.jsonl, calibration.json: checks and routes read them. overrides.json is rewritten by pendingOverrides, observations/editor.jsonl by pendingObservationsText. */
   extras: LoadedFile[];
+  /** Measurements typed in since the last save. They are written to OBSERVATION_FILE with the next save (not part of the edit history). */
+  pendingObservations: Observation[];
 }
 
 /** Rough centre of Hanyang University Seoul campus, used when campus.json is missing. */
@@ -73,6 +76,7 @@ export function createSession(campusId: string, files: readonly LoadedFile[], se
     passthrough: leftOut(loaded, issues),
     issues,
     extras: files.filter((f) => EXTRA_FILE.test(f.path)),
+    pendingObservations: [],
   };
 }
 
@@ -107,6 +111,33 @@ export function pendingOverrides(session: Session): PendingOverrides | null {
 export function commitOverrides(session: Session, pending: PendingOverrides): void {
   session.extras = [...session.extras.filter((f) => f.path !== OVERRIDES), { path: OVERRIDES, text: pending.text }];
   session.ctx.overrideIds = new Set(pending.overrides.map((o) => o.feature_id));
+}
+
+/** The one observations file the editor adds lines to. Other observations/*.jsonl are read, never rewritten. */
+export const OBSERVATION_FILE = 'observations/editor.jsonl';
+
+/** Text of OBSERVATION_FILE after the unsaved measurements are appended, or null when there are none. */
+export function pendingObservationsText(session: Session): string | null {
+  if (session.pendingObservations.length === 0) return null;
+  const old = session.extras.find((f) => f.path === OBSERVATION_FILE)?.text ?? '';
+  const head = old === '' || old.endsWith('\n') ? old : `${old}\n`;
+  return head + session.pendingObservations.map((o) => `${JSON.stringify(o)}\n`).join('');
+}
+
+/** The extras as a save would leave them: with the unsaved measurements in OBSERVATION_FILE. */
+export function extrasWithPending(session: Session, overrides?: LoadedFile): LoadedFile[] {
+  const text = pendingObservationsText(session);
+  let extras = overrides ? [...session.extras.filter((f) => f.path !== overrides.path), overrides] : session.extras;
+  if (text !== null) extras = [...extras.filter((f) => f.path !== OBSERVATION_FILE), { path: OBSERVATION_FILE, text }];
+  return extras;
+}
+
+/** After a save: the unsaved measurements are part of the loaded file now. */
+export function commitObservations(session: Session): void {
+  const text = pendingObservationsText(session);
+  if (text === null) return;
+  session.extras = [...session.extras.filter((f) => f.path !== OBSERVATION_FILE), { path: OBSERVATION_FILE, text }];
+  session.pendingObservations = [];
 }
 
 /** The loaded Features that did not go into the state: schema failures, and the ones the issues name. */

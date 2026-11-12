@@ -4,6 +4,7 @@ import type { EditBuilding, RestroomGender, Wheelchair } from '@campo/core';
 import { GENDERS, WHEELCHAIRS, type RestroomForm } from '../model/doors.ts';
 import { parseLevels } from '../model/building.ts';
 import { floorLabel } from '../model/scope.ts';
+import { directionLabel, type Direction, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 
 type Submit<T> = (value: T) => string | undefined;
 
@@ -167,6 +168,38 @@ export function PoiDialog({ onSubmit, onCancel }: { onSubmit: Submit<string>; on
     <Modal title="출발·도착 후보" submitLabel="후보 만들기" error={error} onSubmit={() => setError(onSubmit(name))} onCancel={onCancel}>
       <label className="field">이름<input value={name} onChange={(e) => setName(e.target.value)} placeholder="한양대역 2번 출구" autoFocus /></label>
       <p className="field-help">길찾기 탭에서 이 이름으로 검색합니다. 바깥 길과 잇기 도구로 이어 주세요.</p>
+    </Modal>
+  );
+}
+
+/** 측정 추가 (SPEC-v0.2 3.9): the time in seconds, the direction of an edge that runs both ways, a note. */
+export function MeasureDialog({ target, directions, onSubmit, onCancel }: {
+  target: MeasureTarget;
+  directions: Direction[];
+  onSubmit: Submit<MeasureForm>;
+  onCancel: () => void;
+}) {
+  const [seconds, setSeconds] = useState('');
+  const [direction, setDirection] = useState<Direction>(directions[0] ?? 'forward');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string>();
+  return (
+    <Modal title="측정 추가" submitLabel="측정 넣기" error={error} onSubmit={() => setError(onSubmit({ seconds, direction, note }))} onCancel={onCancel}>
+      <p className="field-help">{target.label}을(를) 직접 잰 시간을 넣어 주세요. 현장에서 잰 값(field)으로 기록합니다.</p>
+      <label className="field">시간(초)
+        <input type="number" inputMode="decimal" min="0" step="0.1" value={seconds} onChange={(e) => setSeconds(e.target.value)} placeholder="21.4" autoFocus />
+      </label>
+      {target.isEdge && directions.length > 1 && (
+        <label className="field">방향
+          <select value={direction} onChange={(e) => setDirection(e.target.value as Direction)}>
+            {directions.map((d) => <option key={d} value={d}>{directionLabel(d)}</option>)}
+          </select>
+        </label>
+      )}
+      <label className="field">메모
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="서서 탐" />
+      </label>
+      <p className="field-help">저장하면 observations/editor.jsonl에 더해집니다. 보정값은 저장한 뒤 npm run calibrate로 계산합니다.</p>
     </Modal>
   );
 }

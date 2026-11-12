@@ -15,6 +15,13 @@ const KIND_LABELS: Record<string, string> = {
   footway: '평지 길', steps: '계단', corridor_edge: '복도', elevator: '엘리베이터', ramp: '경사로',
 };
 
+/** What `conveying` says, read from the drawn direction (from → to). Turning it round is the 뒤집기 operation (F). */
+const CONVEYING_TEXT: Record<string, string> = {
+  forward: '움직이는 방향: 그린 방향(시작 → 끝)으로 움직입니다.',
+  backward: '움직이는 방향: 그린 방향의 반대(끝 → 시작)로 움직입니다.',
+  reversible: '움직이는 방향: 시간에 따라 바뀝니다(양쪽으로 갈 수 있음).',
+};
+
 /** SPEC §8: step_free, needs_check and source are always shown. Other fields come later. */
 const STEP_FREE_OPTIONS = [
   { value: 'true', label: '있음: 계단·문턱 없이 지날 수 있음 (현장 확인)' },
@@ -27,13 +34,17 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
   if (!feature) return <p className="panel-empty">선택 도구로 지점이나 구간을 누르면 여기에서 속성을 고칠 수 있습니다.</p>;
   const p = feature.props;
   const kind = p.kind === 'node' ? KIND_LABELS[p.node_type] : p.kind === 'edge'
-    ? (p.edge_type === 'portal' ? '포탈' : p.edge_type === 'bridge' ? '연결통로' : KIND_LABELS[p.highway === 'corridor' ? 'corridor_edge' : p.highway])
+    ? (p.conveying !== undefined && p.highway === 'steps' ? '에스컬레이터' : p.conveying !== undefined ? '무빙워크'
+      : p.edge_type === 'portal' ? '포탈' : p.edge_type === 'bridge' ? '연결통로' : KIND_LABELS[p.highway === 'corridor' ? 'corridor_edge' : p.highway])
     : p.kind === 'room' ? '강의실 영역' : KIND_LABELS.building;
   const sources = SOURCES.some((s) => s.value === p.source) ? SOURCES : [...SOURCES, { value: p.source, label: p.source }];
   return (
     <form className="props" onSubmit={(e) => e.preventDefault()}>
       <p className="props-kind">{kind}</p>
       <p className="props-id">{feature.id}</p>
+      {p.kind === 'edge' && p.conveying !== undefined && (
+        <p className="conveying-note">{CONVEYING_TEXT[p.conveying] ?? p.conveying} 방향을 바꾸려면 뒤집기(F)를 쓰세요.</p>
+      )}
       {p.kind === 'edge' && (
         <label className="field">계단·문턱 없이 지날 수 있는지 (step_free)
           <select value={String(p.step_free)} onChange={(e) => onEdit({ step_free: e.target.value === 'null' ? null : e.target.value === 'true' })}>
@@ -41,7 +52,7 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
           </select>
         </label>
       )}
-      {p.kind === 'edge' && p.highway === 'steps' && p.edge_type === 'indoor' && p.step_count === undefined && (
+      {p.kind === 'edge' && p.highway === 'steps' && p.conveying === undefined && p.edge_type === 'indoor' && p.step_count === undefined && (
         <div className="field">
           <label>한 층 오르는 시간: {p.flight_sec ?? FLOOR_FLIGHT_SEC}초{p.flight_sec === undefined ? ' (기본값)' : ''}
             <input

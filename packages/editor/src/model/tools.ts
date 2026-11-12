@@ -1,4 +1,4 @@
-// The drawing tools (SPEC §8) as Plans of core actions: 길 그리기, 지점 추가, 계단, 잇기, 포탈, 연결통로. (엘리베이터: elevator.ts)
+// The drawing tools (SPEC §8) as Plans of core actions: 길 그리기, 지점 추가, 계단, 잇기, 포탈. (엘리베이터: elevator.ts, 연결통로: bridge.ts, 에스컬레이터: escalator.ts)
 // New ids come from core (freshId with the session's generator), new Features start at rev 1 inside addNode / addEdge.
 // step_free defaults follow SPEC-v0.2 §2.1: steps false, elevator true, everything else null (not known).
 import {
@@ -180,7 +180,7 @@ export function planStairs(state: EditState, ctx: EditContext, s: { buildingId: 
   return { annotation: `계단 추가(${flights.length}개 층)`, steps };
 }
 
-// ---- 잇기, 포탈, 연결통로 ----
+// ---- 잇기, 포탈 ----
 
 const joined = (state: EditState, a: string, b: string, match?: (e: EditState['edges'][string]) => boolean) =>
   Object.values(state.edges).some((e) => ((e.props.from === a && e.props.to === b) || (e.props.from === b && e.props.to === a)) && (!match || match(e)));
@@ -219,24 +219,6 @@ export function planPortal(state: EditState, ctx: EditContext, entranceId: strin
     annotation: '포탈 추가',
     steps: [edgeStep({
       kind: 'edge', highway: 'footway', edge_type: 'portal', step_free: null, from: entranceId, to: outdoorId, bidirectional: true, source: DRAWN_SOURCE,
-    }, ctx)],
-  };
-}
-
-/** Corridor between two buildings (SPEC §4.2 bridge: building_from/to and level_from/to required). */
-export function planBridge(state: EditState, ctx: EditContext, fromId: string, toId: string): PlanResult {
-  const a = state.nodes[fromId];
-  const b = state.nodes[toId];
-  if (!a || !b) return { error: '이을 지점을 찾을 수 없습니다.' };
-  const [pa, pb] = [a.props, b.props];
-  if (pa.building_id === null || pb.building_id === null) return { error: '연결통로는 두 건물 안의 지점을 잇습니다.' };
-  if (pa.building_id === pb.building_id) return { error: '같은 건물 안은 잇기 도구로 이어 주세요.' };
-  if (!buildingById(state, pa.building_id) || !buildingById(state, pb.building_id)) return { error: '건물 정보를 찾을 수 없습니다.' };
-  return {
-    annotation: '연결통로 추가',
-    steps: [edgeStep({
-      kind: 'edge', highway: 'corridor', edge_type: 'bridge', step_free: null, from: fromId, to: toId, bidirectional: true,
-      building_from: pa.building_id, building_to: pb.building_id, level_from: pa.level!, level_to: pb.level!, source: DRAWN_SOURCE,
     }, ctx)],
   };
 }

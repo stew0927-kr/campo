@@ -160,7 +160,7 @@ describe('elevator', () => {
   it('an elevator edge whose ends are not stops is left out of the graph and reported in graph.warnings', () => {
     expect(graph.warnings).toEqual([]);
     const bad = structuredClone(campus);
-    const edge = bad.features.map((f) => f.feature).find((f) => f.id === 'e_A_elevA_L1__A_elevA_L2') as AnyFeature;
+    const edge = bad.features.map((f) => f.feature as AnyFeature).find((f) => f.id === 'e_A_elevA_L1__A_elevA_L2');
     edge.properties.from = 'n_A_1_hall';
     const g = buildGraph(bad);
     expect(g.warnings).toHaveLength(1);

@@ -3,38 +3,46 @@ import { buildGraph, buildingById, findFeature, findNearest, findRoute, validate
 import { fetchCampusFiles, saveCampus } from './api.ts';
 import type { RouteLine } from './map/layers.ts';
 import { MapView, type FocusRequest, type MapClick } from './map/MapView.tsx';
+import { planBridge } from './model/bridge.ts';
 import { buildingAt, planAddBuilding } from './model/building.ts';
 import { NOT_CONNECTED_NOTICE, planAttachUnattached, planDrawnPath, unattachedNodes } from './model/connect.ts';
 import { HandleDrag, NodeDrag, type DragResult } from './model/drag.ts';
 import {
   NEED_FLOOR, doorPreview, nextRefAfter, planDoor, planRestroom, planStrip, stripOptions, stripPreview, type RestroomForm, type StripInput,
 } from './model/doors.ts';
+import { bridgeTargets, type CrossEnd } from './model/cross.ts';
 import { planElevator, planElevatorEdit, stopsOf } from './model/elevator.ts';
+import { planEscalator } from './model/escalator.ts';
 import { featureCenter, featureScope } from './model/locate.ts';
+import { makeObservation, measureSummary, measureTargetOf, type Direction, type MeasureForm, type MeasureSummary, type MeasureTarget } from './model/measure.ts';
 import {
   buildingsToDelete, nextSelection, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits,
 } from './model/ops.ts';
 import { isError, planReason, runPlan, type Plan, type PlanResult } from './model/plan.ts';
 import { routeLine, routePlaces } from './model/places.ts';
 import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong, sameScope, scopeLabel, type Scope } from './model/scope.ts';
-import { commitOverrides, createSession, pendingOverrides, propsOf, stateToCampus, stateToFiles, type Session } from './model/session.ts';
+import {
+  OBSERVATION_FILE, commitObservations, commitOverrides, createSession, extrasWithPending, pendingObservationsText, pendingOverrides, propsOf, stateToCampus, stateToFiles, type Session,
+} from './model/session.ts';
 import { edgeMidpoint, planSplit } from './model/split.ts';
 import {
-  planBridge, planConnect, planIndoorNode, planOutdoorNode, planPortal, planStairs, type PathVertex,
+  planConnect, planIndoorNode, planOutdoorNode, planPortal, planStairs, type PathVertex,
 } from './model/tools.ts';
 import { ChecksPanel } from './ui/ChecksPanel.tsx';
+import { CrossPicker } from './ui/CrossPicker.tsx';
 import {
-  AttachReportDialog, BuildingDialog, ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, PoiDialog, RestroomDialog, StairsDialog,
+  AttachReportDialog, BuildingDialog, ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, MeasureDialog, PoiDialog, RestroomDialog, StairsDialog,
   type AttachReportItem, type DeleteBuildingItem,
 } from './ui/Dialogs.tsx';
 import { FloorPicker } from './ui/FloorPicker.tsx';
+import { MeasurePanel } from './ui/MeasurePanel.tsx';
 import { PropertiesPanel } from './ui/PropertiesPanel.tsx';
 import { RoutePanel } from './ui/RoutePanel.tsx';
 import { SidePanel } from './ui/SidePanel.tsx';
 import { StatusBar } from './ui/StatusBar.tsx';
 import { StripForm } from './ui/StripForm.tsx';
 import { Toolbar, type Operation } from './ui/Toolbar.tsx';
-import { TOOL_HINTS, effectiveAddKind, initialStrip, initialUi, stripStage, toolAvailable, type StripState, type Tool, type UiState } from './ui/ui-state.ts';
+import { CROSS_TOOLS, TOOL_HINTS, effectiveAddKind, initialStrip, initialUi, stripStage, toolAvailable, type StripState, type Tool, type UiState } from './ui/ui-state.ts';
 
 // ?campus=<id> opens another campus folder (the e2e tests do); otherwise VITE_CAMPUS_ID, else hanyang-seoul.
 const CAMPUS_ID = new URLSearchParams(window.location.search).get('campus')?.trim() || import.meta.env.VITE_CAMPUS_ID?.trim() || 'hanyang-seoul';
@@ -46,6 +54,7 @@ type Dialog =
   | { kind: 'restroom'; position: Position; scope: Scope }
   | { kind: 'elevator'; position: Position; buildingId: string }
   | { kind: 'elevator-edit'; elevatorId: string }
+  | { kind: 'measure'; target: MeasureTarget; directions: Direction[] }
   | { kind: 'attach-report'; attached: number; failed: AttachReportItem[] }
   | { kind: 'building'; ring: Position[] }
   | { kind: 'delete-building'; plan: Plan; items: DeleteBuildingItem[] }
@@ -64,6 +73,8 @@ export function App() {
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [saving, setSaving] = useState(false);
+  /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
+  const [obsRev, setObsRev] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Key of the last property edit, so a slider drag becomes one history entry. */
   const lastProp = useRef<string | null>(null);
@@ -92,12 +103,13 @@ export function App() {
   const patchUi = (patch: Partial<UiState>) => setUi((u) => ({ ...u, ...patch }));
   const sync = () => session && setState(session.history.current());
 
+  const pendingMeasures = session?.pendingObservations.length ?? 0;
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && pendingMeasures === 0) return;
     const warn = (e: BeforeUnloadEvent) => e.preventDefault();
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [dirty, pendingMeasures]);
 
   // A selected Feature can disappear (delete, merge, undo): drop it from the selection.
   useEffect(() => {
@@ -136,6 +148,19 @@ export function App() {
     return found.flatMap((r) => (r.found && (r.profile === 'shortest' || r.profile === 'step_free')
       ? [{ profile: r.profile, coordinates: routeLine(r, checkedState) }] : []));
   }, [routeResults, nearest, checkedState, ui.panelTab]);
+
+  // ---- 측정: the selected edge or elevator, with core's predicted time (a graph built without calibration) ----
+  const measureTarget = useMemo(() => (state && ui.selection.length === 1 ? measureTargetOf(state, ui.selection) : null), [state, ui.selection]);
+  const measureGraph = useMemo(
+    () => (campus && ui.panelTab === 'properties' && measureTarget && 'target' in measureTarget ? buildGraph(campus, { calibration: {} }) : null),
+    [campus, ui.panelTab, measureTarget],
+  );
+  const measure = useMemo<MeasureSummary | { reason: string } | null>(() => {
+    if (!measureTarget || !session) return null;
+    if (!('target' in measureTarget)) return measureTarget;
+    return measureGraph ? measureSummary(measureTarget, measureGraph, session.extras, session.pendingObservations) : { reason: '길찾기 데이터를 확인하는 중입니다.' };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measureTarget, measureGraph, session, obsRev]);
 
   // ---- Edits: every one is a Plan of core actions run as one history entry ----
   /** Run a plan. Returns the error (for a dialog to show) or undefined. `coalesce` folds repeated edits of one thing into one entry. */
@@ -303,17 +328,53 @@ export function App() {
       case 'portal':
         return pickPair(node, (a, b) => planPortal(state, ctx, a, b), '이어질 바깥 지점을 눌러 주세요(흐리게 보이는 바깥 지점).');
       case 'bridge':
-        if (!node && ui.pickFrom) {
-          // Clicking another building opens its floor picker without losing the first pick.
-          const b = buildingAt(state, position);
-          if (b) {
-            patchUi({ selectedBuildingId: b.id });
-            return info(`${b.props.name}의 층을 고른 다음 이어질 지점을 눌러 주세요.`);
-          }
-        }
-        return pickPair(node, (a, b) => planBridge(state, ctx, a, b), '다른 건물을 눌러 층을 고른 다음, 이어질 지점을 눌러 주세요.');
+      case 'escalator':
+        return onCrossClick(ui.tool, { position, node, clicked });
       default:
     }
+  };
+
+  /**
+   * 연결통로 and 에스컬레이터: the first click picks the start and opens the small window; the floor chosen there is shown;
+   * the second click is a point on that floor, or an empty spot where a new point is made. One Plan, one Ctrl+Z.
+   */
+  const onCrossClick = (tool: 'bridge' | 'escalator', { position, node, clicked }: { position: Position; node: EditNode | undefined; clicked: Scope }) => {
+    if (!session || !state) return;
+    const ctx = session.ctx;
+    if (!ui.pickFrom) {
+      if (!node) return info(tool === 'bridge' ? '시작할 지점(건물 안의 지점)을 눌러 주세요.' : '시작할 지점(아래쪽 지점)을 눌러 주세요.');
+      let first: Scope | null = null;
+      if (tool === 'bridge') {
+        if (node.props.building_id === null) return fail('연결통로는 건물 안의 지점에서 시작합니다.');
+        const target = bridgeTargets(state, node.id)[0];
+        if (!target) return fail('이어질 다른 건물이 없습니다.');
+        first = { kind: 'building', buildingId: target.building.id, level: target.level };
+      } else if (node.props.building_id !== null) {
+        const b = buildingById(state, node.props.building_id);
+        const next = b && node.props.level !== null ? levelStep(b, node.props.level, 1) ?? levelStep(b, node.props.level, -1) : null;
+        if (!b || next === null) return fail('층이 하나뿐인 건물에서는 에스컬레이터를 만들 수 없습니다.');
+        first = { kind: 'building', buildingId: b.id, level: next };
+      }
+      patchUi({ pickFrom: node.id });
+      if (first) showFloor(first, true);
+      const where = first ? `${scopeLabel(first, state)}을(를) 보여 드립니다. ` : '';
+      return info(`${node.id}을(를) 골랐습니다. ${where}창에서 고른 뒤 이어질 지점이나 빈자리를 눌러 주세요.`);
+    }
+    const from = state.nodes[ui.pickFrom];
+    if (!from) return patchUi({ pickFrom: null });
+    let end: CrossEnd;
+    if (node) end = { nodeId: node.id };
+    else {
+      // An empty spot: a new point on the floor being shown (or outdoors).
+      if (!sameScope(clicked, ui.scope)) {
+        return fail(ui.scope.kind === 'building' ? '새 지점은 지금 보이는 층의 건물 안쪽에 만들 수 있습니다. 건물 안쪽을 눌러 주세요.' : '바깥에 새 지점을 만들려면 건물 밖을 눌러 주세요.');
+      }
+      end = clicked.kind === 'building' ? { position, buildingId: clicked.buildingId, level: clicked.level } : { position, buildingId: null, level: null };
+    }
+    const plan = tool === 'bridge'
+      ? planBridge(state, ctx, from.id, end, { covered: ui.crossPick.noRoof ? false : null })
+      : planEscalator(state, ctx, from.id, end, ui.crossPick.mode);
+    if (perform(plan) === undefined) patchUi({ pickFrom: null });
   };
 
   const onBoxSelect = (ids: string[]) => {
@@ -414,6 +475,23 @@ export function App() {
     if (only?.props.node_type === 'elevator_stop' && only.props.elevator_id) setDialog({ kind: 'elevator-edit', elevatorId: only.props.elevator_id });
     else setTool('elevator');
   };
+  /** 측정 추가: the line waits in the session until the next save (not an edit of the map: no Ctrl+Z). */
+  const addObservation = (target: MeasureTarget, form: MeasureForm): string | undefined => {
+    if (!session) return undefined;
+    const made = makeObservation(target, form, new Date());
+    if ('error' in made) return made.error;
+    session.pendingObservations.push(made.record);
+    setObsRev((v) => v + 1);
+    setDialog(null);
+    info('측정을 넣었습니다. 저장하면 observations/editor.jsonl에 더해지고, 그다음 npm run calibrate로 보정값을 계산합니다.');
+    return undefined;
+  };
+  const clearPendingMeasures = (target: MeasureTarget) => {
+    if (!session) return;
+    session.pendingObservations = session.pendingObservations.filter((o) => o.target !== target.target);
+    setObsRev((v) => v + 1);
+    info('저장 전 측정을 지웠습니다.');
+  };
   const doUndo = () => {
     if (!session) return;
     if (!session.history.canUndo()) return info('되돌릴 변경이 없습니다.');
@@ -455,7 +533,10 @@ export function App() {
     // A split or heal of a closed edge carries its overrides.json entries along.
     const pending = pendingOverrides(session);
     if (pending) files['overrides.json'] = pending.text;
-    const extras = pending ? [...session.extras.filter((f) => f.path !== 'overrides.json'), { path: 'overrides.json', text: pending.text }] : session.extras;
+    // Measurements typed since the last save are appended to observations/editor.jsonl (the other observation files stay as they are).
+    const observations = pendingObservationsText(session);
+    if (observations !== null) files[OBSERVATION_FILE] = observations;
+    const extras = extrasWithPending(session, pending ? { path: 'overrides.json', text: pending.text } : undefined);
     // SPEC §8: check before saving, on exactly the files that will be written.
     const { errors } = validateCampus(stateToCampus(state, session.meta, session.passthrough, extras));
     if (errors.length > 0 && !window.confirm(`검사 오류가 ${errors.length}개 있습니다. 그래도 저장하시겠습니까?`)) return;
@@ -465,6 +546,8 @@ export function App() {
       const { written, removed } = await saveCampus(session.campusId, files);
       session.history.markSaved();
       if (pending) commitOverrides(session, pending);
+      commitObservations(session);
+      setObsRev((v) => v + 1);
       setSavedState(state);
       const removedText = removed.length > 0 ? `, 지운 파일 ${removed.length}개` : '';
       info(`저장했습니다. 쓴 파일 ${written.length}개${removedText}. 커밋은 Git에서 해 주세요.`);
@@ -518,6 +601,9 @@ export function App() {
     } else if (!mod && !e.altKey && !e.shiftKey && k === 'p') {
       e.preventDefault();
       setTool('path');
+    } else if (!mod && !e.altKey && !e.shiftKey && k === 'e') {
+      e.preventDefault();
+      setTool('escalator');
     } else if (!mod && !e.altKey && !e.shiftKey && k === 'v') {
       e.preventDefault();
       startElevator();
@@ -594,6 +680,8 @@ export function App() {
 
   const selected = ui.selectedBuildingId ? Object.values(state.buildings).find((b) => b.id === ui.selectedBuildingId) : undefined;
   const closeDialog = () => setDialog(null);
+  /** The first click of 연결통로 / 에스컬레이터 while its small window is open. */
+  const crossFrom = CROSS_TOOLS.includes(ui.tool) && ui.pickFrom ? state.nodes[ui.pickFrom] : undefined;
   const one = ui.selection.length === 1 ? propsOf(state, ui.selection[0]!) : undefined;
   const editProps = (edits: CommonEdits) => {
     if (!one) return;
@@ -616,7 +704,7 @@ export function App() {
           />
         ) : undefined}
         campusName={session.meta.name}
-        canSave={dirty}
+        canSave={dirty || pendingMeasures > 0}
         saving={saving}
         onTool={setTool}
         onChange={patchUi}
@@ -645,17 +733,41 @@ export function App() {
           onHandleRefused={fail}
           onDragEnd={onDragEnd}
         />
-        {selected && (
+        {crossFrom && (
+          <CrossPicker
+            tool={ui.tool as 'bridge' | 'escalator'}
+            state={state}
+            fromId={crossFrom.id}
+            scope={ui.scope}
+            pick={ui.crossPick}
+            onPick={(patch) => patchUi({ crossPick: { ...ui.crossPick, ...patch } })}
+            onShow={(scope) => showFloor(scope, true)}
+            onCancel={() => patchUi({ pickFrom: null })}
+          />
+        )}
+        {selected && !crossFrom && (
           <FloorPicker
             building={selected}
             scope={ui.scope}
-            onPick={(level) => showFloor({ kind: 'building', buildingId: selected.id, level }, ui.tool === 'bridge')}
+            onPick={(level) => showFloor({ kind: 'building', buildingId: selected.id, level }, CROSS_TOOLS.includes(ui.tool))}
             onOutdoor={() => showFloor(OUTDOOR)}
           />
         )}
       </div>
       <SidePanel tab={ui.panelTab} onTab={(panelTab) => patchUi({ panelTab })} badges={{ checks: checks.errors.length }}>
-        {ui.panelTab === 'properties' && <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} />}
+        {ui.panelTab === 'properties' && (
+          <>
+            <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} />
+            {measure && measureTarget && (
+              <MeasurePanel
+                summary={measure}
+                pending={'target' in measureTarget ? session.pendingObservations.filter((o) => o.target === measureTarget.target).length : 0}
+                onAdd={() => 'target' in measure && setDialog({ kind: 'measure', target: measure.target, directions: measure.directions.map((d) => d.direction) })}
+                onClearPending={() => 'target' in measureTarget && clearPendingMeasures(measureTarget)}
+              />
+            )}
+          </>
+        )}
         {ui.panelTab === 'checks' && <ChecksPanel result={checks} onLocate={onLocate} />}
         {ui.panelTab === 'routes' && (
           <RoutePanel
@@ -749,6 +861,9 @@ export function App() {
           />
         );
       })()}
+      {dialog?.kind === 'measure' && (
+        <MeasureDialog target={dialog.target} directions={dialog.directions} onCancel={closeDialog} onSubmit={(form) => addObservation(dialog.target, form)} />
+      )}
       {dialog?.kind === 'attach-report' && <AttachReportDialog attached={dialog.attached} failed={dialog.failed} onClose={closeDialog} />}
     </div>
   );

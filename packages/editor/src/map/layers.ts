@@ -4,6 +4,7 @@ import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
 import { edgeCoords, edgesAt, movedTogether, type EditNode, type EditState, type Position, type Profile } from '@campo/core';
 import { unattachedIds } from '../model/connect.ts';
 import { edgeMidpoint } from '../model/split.ts';
+import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { buildingInScope, edgeStrong, nodeStrong, roomInScope, type Scope } from '../model/scope.ts';
 
 export const DATA_SOURCE = 'campo-data';
@@ -16,6 +17,23 @@ export const restroomIcon = (n: EditNode): string =>
   n.props.node_type === 'restroom' ? `restroom-${n.props.restroom_gender ?? 'unisex'}-${n.props.wheelchair ?? 'unknown'}` : '';
 
 const isClassroom = (n: EditNode) => n.props.node_type === 'door' && (n.props.space_name !== undefined || n.props.ref !== undefined);
+
+/**
+ * Display properties of a moving belt (escalator, moving walkway): `conveying` ('' when none), the side of a pair (`pairOffset`, -1 / 0 / +1),
+ * and the arrow that shows the way it moves. The arrow symbol follows the line but not line-offset, so its own offset is given here:
+ * in the icon's frame (turned half round for backward) down is the right-hand side of the arrow's heading.
+ */
+function beltProps(conveying: string | undefined, pairOffset: number): Record<string, string | number> {
+  const px = pairOffset * PAIR_OFFSET_PX;
+  if (conveying === undefined) return { conveying: '', pairOffset: 0, arrow: '', arrowRot: 0, arrowOffset: 0 };
+  const backward = conveying === 'backward';
+  return {
+    conveying, pairOffset,
+    arrow: conveying === 'reversible' ? 'belt-arrow-both' : 'belt-arrow',
+    arrowRot: backward ? 180 : 0,
+    arrowOffset: backward ? -px : px,
+  };
+}
 
 export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: ReadonlySet<string> = new Set()): FeatureCollection {
   const features: FeatureCollection['features'] = [];
@@ -38,6 +56,7 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       properties: { id: r.id, kind: 'room', highway: null, node_type: null, classroom: false, emphasis: roomInScope(r, scope) ? 1 : 0, selected: false, highlight: highlight.has(r.id) },
     });
   }
+  const pairs = pairOffsets(state);
   for (const e of Object.values(state.edges)) {
     if (!state.nodes[e.props.from] || !state.nodes[e.props.to]) continue;
     features.push({
@@ -47,6 +66,7 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       properties: {
         id: e.id, kind: 'edge', highway: e.props.highway, node_type: null, classroom: false,
         emphasis: edgeStrong(state, e, scope) ? 1 : 0, selected: false, highlight: highlight.has(e.id),
+        ...beltProps(e.props.conveying, pairs.get(e.id) ?? 0),
       },
     });
     if (highlight.has(e.id)) {
@@ -104,6 +124,14 @@ const strong: ExpressionSpecification = ['==', ['get', 'emphasis'], 1];
 const opacity: ExpressionSpecification = ['case', strong, 1, 0.18];
 const isEdge: ExpressionSpecification = ['==', ['get', 'kind'], 'edge'];
 const isNode: ExpressionSpecification = ['==', ['get', 'kind'], 'node'];
+const isBelt: ExpressionSpecification = ['!=', ['get', 'conveying'], ''];
+/** Pixels to move an edge aside so a pair of escalators between the same two points shows both. */
+/** icon-offset of a belt arrow: [0, px] for the few sides a pair can have (a match, because an offset cannot be built from a number at run time). */
+const arrowShift = ['match', ['get', 'arrowOffset'],
+  ...[-2, -1, 1, 2].flatMap((side) => [side * PAIR_OFFSET_PX, ['literal', [0, side * PAIR_OFFSET_PX]]]),
+  ['literal', [0, 0]],
+] as unknown as ExpressionSpecification;
+const pairShift: ExpressionSpecification = ['*', ['get', 'pairOffset'], PAIR_OFFSET_PX];
 
 const wayColor = [
   'match', ['get', 'highway'],
@@ -150,7 +178,7 @@ export const DATA_LAYERS: LayerSpecification[] = [
     source: DATA_SOURCE,
     filter: ['all', isEdge, ['get', 'highlight']],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#f2b705', 'line-width': 13, 'line-opacity': 0.6 },
+    paint: { 'line-color': '#f2b705', 'line-width': 13, 'line-opacity': 0.6, 'line-offset': pairShift },
   },
   {
     id: 'campo-edges-casing',
@@ -158,7 +186,7 @@ export const DATA_LAYERS: LayerSpecification[] = [
     source: DATA_SOURCE,
     filter: isEdge,
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-opacity': opacity },
+    paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-opacity': opacity, 'line-offset': pairShift },
   },
   {
     id: 'campo-edges',
@@ -166,15 +194,42 @@ export const DATA_LAYERS: LayerSpecification[] = [
     source: DATA_SOURCE,
     filter: ['all', isEdge, ['!=', ['get', 'highway'], 'steps']],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': wayColor as never, 'line-width': 4, 'line-opacity': opacity },
+    paint: { 'line-color': wayColor as never, 'line-width': 4, 'line-opacity': opacity, 'line-offset': pairShift },
   },
   {
     // Stairs: short heavy dashes, read as treads.
     id: 'campo-edges-steps',
     type: 'line',
     source: DATA_SOURCE,
-    filter: ['all', isEdge, ['==', ['get', 'highway'], 'steps']],
+    filter: ['all', isEdge, ['==', ['get', 'highway'], 'steps'], ['!', isBelt]],
     paint: { 'line-color': WAY_COLORS.steps, 'line-width': 6, 'line-dasharray': [0.6, 0.5], 'line-opacity': opacity },
+  },
+  {
+    // Escalators: the same colour as stairs, but a solid belt with an arrow for the way it runs.
+    id: 'campo-edges-escalator',
+    type: 'line',
+    source: DATA_SOURCE,
+    filter: ['all', isEdge, ['==', ['get', 'highway'], 'steps'], isBelt],
+    layout: { 'line-cap': 'butt' },
+    paint: { 'line-color': WAY_COLORS.steps, 'line-width': 6, 'line-opacity': opacity, 'line-offset': pairShift },
+  },
+  {
+    id: 'campo-belt-arrows',
+    type: 'symbol',
+    source: DATA_SOURCE,
+    filter: ['all', isEdge, isBelt],
+    layout: {
+      'symbol-placement': 'line',
+      'symbol-spacing': 48,
+      'icon-image': ['get', 'arrow'],
+      'icon-rotate': ['get', 'arrowRot'],
+      'icon-offset': arrowShift,
+      'icon-rotation-alignment': 'map',
+      'icon-size': 1,
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
+    paint: { 'icon-opacity': opacity },
   },
   {
     id: 'campo-nodes-highlight',

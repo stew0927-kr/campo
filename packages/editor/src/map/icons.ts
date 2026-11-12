@@ -57,3 +57,41 @@ export function registerRestroomIcons(map: MapLibreMap): void {
     }
   }
 }
+
+/**
+ * Arrow of an escalator or moving walkway (belt-arrow: heading right = the way the belt runs; belt-arrow-both: both ways).
+ * The symbol layer turns it to follow the line. A white rim keeps it readable on the red belt.
+ */
+function drawArrow(both: boolean): ImageData {
+  const w = 22;
+  const h = 18;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const c = canvas.getContext('2d')!;
+  const head = (cx: number, dir: 1 | -1) => {
+    c.beginPath();
+    c.moveTo(cx - 5 * dir, 3);
+    c.lineTo(cx + 4 * dir, 9);
+    c.lineTo(cx - 5 * dir, 15);
+    c.closePath();
+    c.fillStyle = '#ffffff';
+    c.strokeStyle = '#1e2933';
+    c.lineWidth = 1.5;
+    c.lineJoin = 'round';
+    c.stroke();
+    c.fill();
+  };
+  if (both) {
+    head(5, -1);
+    head(17, 1);
+  } else {
+    head(11, 1);
+  }
+  return c.getImageData(0, 0, w, h);
+}
+
+export function registerBeltIcons(map: MapLibreMap): void {
+  if (!map.hasImage('belt-arrow')) map.addImage('belt-arrow', drawArrow(false));
+  if (!map.hasImage('belt-arrow-both')) map.addImage('belt-arrow-both', drawArrow(true));
+}

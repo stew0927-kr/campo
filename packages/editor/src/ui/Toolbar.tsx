@@ -16,6 +16,7 @@ const TOOLS: { id: Tool; label: string }[] = [
   { id: 'strip', label: '강의실 줄' },
   { id: 'restroom', label: '화장실' },
   { id: 'elevator', label: '엘리베이터' },
+  { id: 'escalator', label: '에스컬레이터' },
 ];
 
 const OUTDOOR_KINDS: { id: OutdoorKind; label: string; sample: string }[] = [

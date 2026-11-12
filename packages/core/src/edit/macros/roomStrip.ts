@@ -6,7 +6,7 @@ import { attachDoorSteps } from './attachDoor.ts';
 import { defineMacro, resultOf, type MacroAction, type MacroResult, type Runner } from './compose.ts';
 import { chainOf, type Chain } from './corridor.ts';
 import { pointAlong, project, segmentAt, sideways } from './geo.ts';
-import { ATTACH_MAX_DIST_M, DOOR_SIDE_FRACTIONS, SNAP_VERTEX_M } from './tolerances.ts';
+import { ATTACH_MAX_DIST_M, DOOR_SIDE_FRACTIONS, SNAP_VERTEX_M } from '../tolerances.ts';
 
 export interface RoomStripOptions {
   /** Corridor edges the rooms line, joined into one line that runs in the drawn direction of the first edge. */

@@ -5,7 +5,7 @@ import { splitPlan } from '../actions/splitEdgeAt.ts';
 import { footOnLine } from '../geo.ts';
 import { copy, edgeCoords, scopeOfNode, sortedValues, type EditEdge, type EditState, type Scope } from '../state.ts';
 import { lineLength, metres } from './geo.ts';
-import { SNAP_VERTEX_M } from './tolerances.ts';
+import { SNAP_VERTEX_M } from '../tolerances.ts';
 
 /** A corridor edge inside one scope that a macro may split. */
 export function isSplittableCorridor(state: EditState, edge: EditEdge, scope?: Scope): boolean {

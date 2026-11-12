@@ -7,7 +7,7 @@ import { attachDoorSteps } from './attachDoor.ts';
 import { defineMacro, resultOf, type MacroAction, type MacroResult, type Runner } from './compose.ts';
 import { corridorCandidates, nearestOf } from './corridor.ts';
 import { lineLength, pointAlong, pointInRing, project, sideways } from './geo.ts';
-import { ATTACH_MAX_DIST_M, DOOR_INSET_M, DOOR_SIDE_FRACTIONS } from './tolerances.ts';
+import { ATTACH_MAX_DIST_M, DOOR_INSET_M, DOOR_SIDE_FRACTIONS } from '../tolerances.ts';
 
 export type RoomDoors = 'front' | 'back' | 'both';
 

@@ -9,7 +9,7 @@ import { edgeFileScope, edgeIdPrefix, nodeIdPrefix } from '../ids.ts';
 import { isPosition, scopeOf, type EditState } from '../state.ts';
 import { addedKeys, defineMacro, resultOf, type MacroAction, type MacroResult, type Runner } from './compose.ts';
 import { findFoot, type CandidateOptions } from './corridor.ts';
-import { ATTACH_MAX_DIST_M } from './tolerances.ts';
+import { ATTACH_MAX_DIST_M } from '../tolerances.ts';
 
 export interface AttachDoorOptions {
   /** Building of a new door. Needed when the door is a coordinate; ignored for an existing door. */

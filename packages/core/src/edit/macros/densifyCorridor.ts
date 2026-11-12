@@ -8,7 +8,7 @@ import { edgeCoords, type EditState } from '../state.ts';
 import { addedKeys, defineMacro, resultOf, type MacroAction, type MacroResult, type Runner } from './compose.ts';
 import { chainOf } from './corridor.ts';
 import { pointAlong } from './geo.ts';
-import { SNAP_VERTEX_M } from './tolerances.ts';
+import { SNAP_VERTEX_M } from '../tolerances.ts';
 
 /** Either a spacing in metres or a number of nodes spread evenly. */
 export type DensifyOptions = { interval: number; count?: never } | { count: number; interval?: never };

@@ -11,7 +11,6 @@ export {
   type MacroSuccess,
   type Runner,
 } from './compose.ts';
-export { ATTACH_MAX_DIST_M, DOOR_INSET_M, DOOR_SIDE_FRACTIONS } from './tolerances.ts';
 export { chainOf, corridorCandidates, findFoot, type Chain, type FootPlan } from './corridor.ts';
 export {
   attachDoor,

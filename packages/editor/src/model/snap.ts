@@ -32,3 +32,13 @@ export function distanceToSegment(p: ScreenPoint, a: ScreenPoint, b: ScreenPoint
   const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
+
+/** The point of segment a–b closest to `p`, and how far it is, in pixels. */
+export function footOnSegment(p: ScreenPoint, a: ScreenPoint, b: ScreenPoint): { point: ScreenPoint; dist: number } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  const point = { x: a.x + t * dx, y: a.y + t * dy };
+  return { point, dist: Math.hypot(p.x - point.x, p.y - point.y) };
+}

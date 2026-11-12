@@ -1,37 +1,89 @@
-// How saved data is drawn on the map. Display only: builds a throwaway GeoJSON from CampusDoc.
+// How the edit state is drawn on the map. Display only: builds a throwaway GeoJSON from the EditState.
 import type { FeatureCollection } from 'geojson';
 import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
-import type { Position, Profile } from '@campo/core';
-import type { CampusDoc } from '../model/document.ts';
-import { inScope, type Scope } from '../model/scope.ts';
+import { edgeCoords, edgesAt, movedTogether, type EditNode, type EditState, type Position, type Profile } from '@campo/core';
+import { buildingInScope, edgeInScope, nodeInScope, roomInScope, type Scope } from '../model/scope.ts';
 
 export const DATA_SOURCE = 'campo-data';
 
 /** Line colours per kind of way. Same values as the CSS tokens --footway / --steps / --ramp. */
 export const WAY_COLORS = { footway: '#2463a6', corridor: '#3d4c5a', steps: '#d4461a', ramp: '#1f8f68', elevator: '#6a4fc4', other: '#5b6875' } as const;
 
-export function toDisplayGeoJSON(doc: CampusDoc, scope: Scope, highlight: ReadonlySet<string> = new Set()): FeatureCollection {
+const isClassroom = (n: EditNode) => n.props.node_type === 'door' && (n.props.space_name !== undefined || n.props.ref !== undefined);
+
+export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: ReadonlySet<string> = new Set()): FeatureCollection {
   const features: FeatureCollection['features'] = [];
-  for (const f of doc.features.values()) {
-    const p = f.properties;
+  for (const b of Object.values(state.buildings)) {
     features.push({
       type: 'Feature',
-      id: f.id,
-      geometry: f.geometry,
+      id: b.id,
+      geometry: { type: 'Polygon', coordinates: b.polygon },
       properties: {
-        id: f.id,
-        kind: p.kind,
-        highway: p.kind === 'edge' ? p.highway : null,
-        node_type: p.kind === 'node' ? p.node_type : null,
-        classroom: p.kind === 'node' && p.node_type === 'door' && (p.space_name !== undefined || p.ref !== undefined),
-        emphasis: inScope(f, scope, doc) ? 1 : 0,
-        selected: scope.kind === 'building' && f.id === scope.buildingId,
-        highlight: highlight.has(f.id),
+        id: b.id, kind: 'building', highway: null, node_type: null, classroom: false,
+        emphasis: buildingInScope(b, scope) ? 1 : 0, selected: scope.kind === 'building' && b.id === scope.buildingId, highlight: highlight.has(b.id),
+      },
+    });
+  }
+  for (const r of Object.values(state.rooms)) {
+    features.push({
+      type: 'Feature',
+      id: r.id,
+      geometry: { type: 'Polygon', coordinates: r.polygon },
+      properties: { id: r.id, kind: 'room', highway: null, node_type: null, classroom: false, emphasis: roomInScope(r, scope) ? 1 : 0, selected: false, highlight: highlight.has(r.id) },
+    });
+  }
+  for (const e of Object.values(state.edges)) {
+    if (!state.nodes[e.props.from] || !state.nodes[e.props.to]) continue;
+    features.push({
+      type: 'Feature',
+      id: e.id,
+      geometry: { type: 'LineString', coordinates: edgeCoords(state, e) },
+      properties: {
+        id: e.id, kind: 'edge', highway: e.props.highway, node_type: null, classroom: false,
+        emphasis: edgeInScope(state, e, scope) ? 1 : 0, selected: false, highlight: highlight.has(e.id),
+      },
+    });
+  }
+  for (const n of Object.values(state.nodes)) {
+    features.push({
+      type: 'Feature',
+      id: n.id,
+      geometry: { type: 'Point', coordinates: n.coord },
+      properties: {
+        id: n.id, kind: 'node', highway: null, node_type: n.props.node_type, classroom: isClassroom(n),
+        emphasis: nodeInScope(n, scope) ? 1 : 0, selected: false, highlight: highlight.has(n.id),
       },
     });
   }
   // Strong features last, so they draw above faded ones at the same spot (stacked elevator stops).
   features.sort((a, b) => Number(a.properties!['emphasis']) - Number(b.properties!['emphasis']));
+  return { type: 'FeatureCollection', features };
+}
+
+// ---- Dragging a node: a small temporary source (the node and the edges on it) ----
+
+export const DRAG_SOURCE = 'campo-drag';
+
+/** The nodes a drag moves (an elevator stop moves with its shaft) and the edges on them. */
+export function dragMembers(state: EditState, nodeId: string): { nodes: EditNode[]; edgeIds: string[] } {
+  const nodes = movedTogether(state, nodeId);
+  const edgeIds = [...new Set(nodes.flatMap((n) => edgesAt(state, n.id).map((e) => e.id)))].sort();
+  return { nodes, edgeIds };
+}
+
+/** The dragged node(s) and their edges as they are now (edges follow by construction), plus a ring on the drop target. */
+export function dragGeoJSON(state: EditState, nodeId: string, target?: Position | null): FeatureCollection {
+  const { nodes, edgeIds } = dragMembers(state, nodeId);
+  const features: FeatureCollection['features'] = [];
+  for (const id of edgeIds) {
+    const e = state.edges[id]!;
+    if (!state.nodes[e.props.from] || !state.nodes[e.props.to]) continue;
+    features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: edgeCoords(state, e) }, properties: { role: 'edge', highway: e.props.highway } });
+  }
+  for (const n of nodes) {
+    features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: n.coord }, properties: { role: 'node', node_type: n.props.node_type, classroom: isClassroom(n) } });
+  }
+  if (target) features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: target }, properties: { role: 'target' } });
   return { type: 'FeatureCollection', features };
 }
 
@@ -73,10 +125,19 @@ export const DATA_LAYERS: LayerSpecification[] = [
     source: DATA_SOURCE,
     filter: ['==', ['get', 'kind'], 'building'],
     paint: {
-      'line-color': '#1e2933',
-      'line-width': ['case', ['get', 'selected'], 2.5, 1.5] as never,
+      'line-color': ['case', ['get', 'highlight'], '#f2b705', '#1e2933'] as never,
+      'line-width': ['case', ['get', 'highlight'], 4, ['get', 'selected'], 2.5, 1.5] as never,
       'line-opacity': ['case', strong, 0.8, 0.3] as never,
     },
+  },
+  {
+    // Selected edges: a yellow halo under the line.
+    id: 'campo-edges-highlight',
+    type: 'line',
+    source: DATA_SOURCE,
+    filter: ['all', isEdge, ['get', 'highlight']],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#f2b705', 'line-width': 13, 'line-opacity': 0.6 },
   },
   {
     id: 'campo-edges-casing',
@@ -122,6 +183,51 @@ export const DATA_LAYERS: LayerSpecification[] = [
       'circle-opacity': opacity,
       'circle-stroke-opacity': opacity,
     },
+  },
+];
+
+/** While a node is dragged the main source still holds its old place: hide the node and its edges there. */
+export function hideInData(ids: readonly string[]): Map<string, ExpressionSpecification | undefined> {
+  const out = new Map<string, ExpressionSpecification | undefined>();
+  for (const layer of DATA_LAYERS) {
+    const base = (layer as { filter?: ExpressionSpecification }).filter;
+    out.set(layer.id, ids.length === 0 || !base ? base : ['all', base, ['!', ['in', ['get', 'id'], ['literal', [...ids]]]]] as ExpressionSpecification);
+  }
+  return out;
+}
+
+// ---- Drag layers: above everything while a node is being dragged ----
+
+export const DRAG_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-drag-edges-casing',
+    type: 'line',
+    source: DRAG_SOURCE,
+    filter: ['==', ['get', 'role'], 'edge'],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#ffffff', 'line-width': 7 },
+  },
+  {
+    id: 'campo-drag-edges',
+    type: 'line',
+    source: DRAG_SOURCE,
+    filter: ['==', ['get', 'role'], 'edge'],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': wayColor as never, 'line-width': 4 },
+  },
+  {
+    id: 'campo-drag-target',
+    type: 'circle',
+    source: DRAG_SOURCE,
+    filter: ['==', ['get', 'role'], 'target'],
+    paint: { 'circle-radius': 12, 'circle-color': '#f2b705', 'circle-opacity': 0.5 },
+  },
+  {
+    id: 'campo-drag-nodes',
+    type: 'circle',
+    source: DRAG_SOURCE,
+    filter: ['==', ['get', 'role'], 'node'],
+    paint: { 'circle-radius': 6, 'circle-color': ['case', ['get', 'classroom'], '#2463a6', nodeColor] as never, 'circle-stroke-color': '#1e2933', 'circle-stroke-width': 2 },
   },
 ];
 

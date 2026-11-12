@@ -10,6 +10,8 @@ import type { Plugin } from 'vite';
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
 /** Every path a campus folder may contain (SPEC §4.3). Anything else is refused. */
 const CAMPUS_PATH = /^(campus\.json|outdoor\.geojson|connections\.geojson|buildings\/[A-Za-z0-9]+\/(building|L-?[1-9][0-9]*)\.geojson)$/;
+/** Read-only files the editor reads for its checks (never written by PUT): overrides, calibration, observations. */
+const EXTRA_PATH = /^(overrides\.json|calibration\.json|observations\/[^/]+\.jsonl)$/;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
 
 export function isCampusPath(path: string): boolean {
@@ -30,6 +32,24 @@ export async function readCampusFiles(dir: string): Promise<{ path: string; text
     const abs = join(entry.parentPath, entry.name);
     const path = relative(dir, abs).split(sep).join('/');
     if (isCampusPath(path)) files.push({ path, text: await readFile(abs, 'utf8') });
+  }
+  return files.sort((a, b) => (a.path < b.path ? -1 : 1));
+}
+
+export async function readExtraFiles(dir: string): Promise<{ path: string; text: string }[]> {
+  let entries;
+  try {
+    entries = await readdir(dir, { recursive: true, withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+  const files: { path: string; text: string }[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const abs = join(entry.parentPath, entry.name);
+    const path = relative(dir, abs).split(sep).join('/');
+    if (EXTRA_PATH.test(path)) files.push({ path, text: await readFile(abs, 'utf8') });
   }
   return files.sort((a, b) => (a.path < b.path ? -1 : 1));
 }
@@ -81,7 +101,7 @@ export function createCampusApi(campusesDir: string) {
       const dir = join(campusesDir, id);
 
       if (req.method === 'GET') {
-        return send(res, 200, { files: await readCampusFiles(dir) });
+        return send(res, 200, { files: [...(await readCampusFiles(dir)), ...(await readExtraFiles(dir))] });
       }
       if (req.method === 'PUT') {
         const body = JSON.parse(await readBody(req)) as { files?: unknown };

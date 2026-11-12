@@ -1,7 +1,6 @@
 // "건물" and "건물 선택" tools (SPEC §8).
-import type { BuildingFeature, Position } from '@campo/core';
-import { withFeatures, type CampusDoc } from './document.ts';
-import { DRAWN_SOURCE } from './outdoor-path.ts';
+// Registering a new building needs a core action (addBuilding) that does not exist yet, so only the form helpers live here.
+import type { EditBuilding, EditState, Position } from '@campo/core';
 
 /**
  * "1-4", "1~4", "-2~3", "-1, 1, 2" → sorted levels. 0 is never a level (SPEC §3);
@@ -28,59 +27,14 @@ export function parseLevels(text: string): { levels: number[] } | { error: strin
   return { levels: [...levels].sort((a, b) => a - b) };
 }
 
-export interface NewBuilding {
-  /** Outer ring as drawn; closed here if needed. */
-  ring: Position[];
-  name: string;
-  code: string;
-  levels: number[];
-  groundLevels: number[];
-}
-
-export function addBuilding(doc: CampusDoc, b: NewBuilding): { doc: CampusDoc; id: string } | { error: string } {
-  const name = b.name.trim();
-  const code = b.code.trim();
-  if (!name) return { error: '건물 이름을 입력해 주세요.' };
-  if (!/^[A-Za-z0-9]+$/.test(code)) return { error: '건물 코드는 영문과 숫자만 쓸 수 있습니다. 예: ENG1' };
-  const id = `bldg_${code}`;
-  if (doc.features.has(id)) return { error: `코드 ${code}인 건물이 이미 있습니다.` };
-  if (b.levels.length === 0) return { error: '층 목록을 입력해 주세요.' };
-  if (b.groundLevels.length === 0) return { error: '지면에 닿는 층을 하나 이상 입력해 주세요.' };
-  const missing = b.groundLevels.filter((l) => !b.levels.includes(l));
-  if (missing.length > 0) return { error: `지면 층 ${missing.join(', ')}이 층 목록에 없습니다.` };
-
-  const ring = b.ring.map(([x, y]) => [x, y] as Position);
-  const first = ring[0];
-  const last = ring[ring.length - 1];
-  if (first && last && (first[0] !== last[0] || first[1] !== last[1])) ring.push([first[0], first[1]]);
-  if (ring.length < 4) return { error: '외곽선은 점이 세 개 이상이어야 합니다.' };
-
-  const feature: BuildingFeature = {
-    type: 'Feature',
-    id,
-    geometry: { type: 'Polygon', coordinates: [ring] },
-    properties: {
-      kind: 'building',
-      name,
-      code,
-      levels: [...b.levels].sort((x, y) => x - y),
-      ground_levels: [...b.groundLevels].sort((x, y) => x - y),
-      source: DRAWN_SOURCE,
-      rev: 1,
-    },
-  };
-  return { doc: withFeatures(doc, [feature]), id };
-}
-
 /** The building whose outline contains `position` (the smallest one if outlines overlap). */
-export function buildingAt(doc: Pick<CampusDoc, 'features'>, position: Position): BuildingFeature | undefined {
-  let best: { b: BuildingFeature; area: number } | undefined;
-  for (const f of doc.features.values()) {
-    if (f.properties.kind !== 'building') continue;
-    const ring = (f as BuildingFeature).geometry.coordinates[0] ?? [];
+export function buildingAt(state: Pick<EditState, 'buildings'>, position: Position): EditBuilding | undefined {
+  let best: { b: EditBuilding; area: number } | undefined;
+  for (const b of Object.values(state.buildings)) {
+    const ring = b.polygon[0] ?? [];
     if (!pointInRing(position, ring)) continue;
     const area = Math.abs(ringArea(ring));
-    if (!best || area < best.area) best = { b: f as BuildingFeature, area };
+    if (!best || area < best.area) best = { b, area };
   }
   return best?.b;
 }

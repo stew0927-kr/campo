@@ -1,6 +1,6 @@
 // Forms for the tools that need more than a click. Each submit returns an error message, or nothing on success.
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { BuildingFeature } from '@campo/core';
+import type { EditBuilding } from '@campo/core';
 import { parseLevels } from '../model/building.ts';
 import { floorLabel } from '../model/scope.ts';
 
@@ -78,8 +78,8 @@ export function ClassroomDialog({ onSubmit, onCancel }: { onSubmit: Submit<{ ref
   );
 }
 
-export function ElevatorDialog({ building, onSubmit, onCancel }: { building: BuildingFeature; onSubmit: Submit<number[]>; onCancel: () => void }) {
-  const levels = [...building.properties.levels].sort((a, b) => b - a);
+export function ElevatorDialog({ building, onSubmit, onCancel }: { building: EditBuilding; onSubmit: Submit<number[]>; onCancel: () => void }) {
+  const levels = [...building.props.levels].sort((a, b) => b - a);
   const [checked, setChecked] = useState<Set<number>>(new Set(levels));
   const [error, setError] = useState<string>();
   const toggle = (l: number) => setChecked((s) => {
@@ -102,12 +102,12 @@ export function ElevatorDialog({ building, onSubmit, onCancel }: { building: Bui
 }
 
 export function StairsDialog({ building, startLevel, onSubmit, onCancel }: {
-  building: BuildingFeature;
+  building: EditBuilding;
   startLevel: number;
   onSubmit: Submit<{ from: number; to: number }>;
   onCancel: () => void;
 }) {
-  const levels = [...building.properties.levels].sort((a, b) => a - b);
+  const levels = [...building.props.levels].sort((a, b) => a - b);
   const [from, setFrom] = useState(startLevel);
   const [to, setTo] = useState(levels.find((l) => l !== startLevel && l > startLevel) ?? levels[levels.length - 1]!);
   const [error, setError] = useState<string>();
@@ -134,6 +134,22 @@ export function PoiDialog({ onSubmit, onCancel }: { onSubmit: Submit<string>; on
     <Modal title="출발·도착 후보" submitLabel="후보 만들기" error={error} onSubmit={() => setError(onSubmit(name))} onCancel={onCancel}>
       <label className="field">이름<input value={name} onChange={(e) => setName(e.target.value)} placeholder="한양대역 2번 출구" autoFocus /></label>
       <p className="field-help">길찾기 탭에서 이 이름으로 검색합니다. 바깥 길과 잇기 도구로 이어 주세요.</p>
+    </Modal>
+  );
+}
+
+export interface DeleteBuildingItem { code: string; name: string; nodes: number; edges: number; rooms: number }
+
+/** Confirmation before a building goes (SPEC-v0.2 4.1 deleteBuilding): shows what goes with it. */
+export function DeleteBuildingDialog({ items, onConfirm, onCancel }: { items: DeleteBuildingItem[]; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <Modal title="건물 삭제" submitLabel="삭제" error={undefined} onSubmit={onConfirm} onCancel={onCancel}>
+      {items.map((b) => (
+        <p key={b.code} className="delete-building" data-code={b.code}>
+          <strong>{b.name}({b.code})</strong>를 지우면 안에 있는 지점 {b.nodes}개, 구간 {b.edges}개, 강의실 영역 {b.rooms}개도 함께 지워집니다.
+        </p>
+      ))}
+      <p className="field-help">구간 개수에는 포탈과 연결통로가 들어 있습니다. 지운 뒤에도 Ctrl+Z로 되돌릴 수 있습니다.</p>
     </Modal>
   );
 }

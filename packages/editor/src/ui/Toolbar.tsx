@@ -1,9 +1,9 @@
-import type { OutdoorKind } from '../model/outdoor-path.ts';
+import type { OutdoorKind } from '../model/tools.ts';
 import { basemaps, type BasemapId } from '../map/basemaps.ts';
 import { INDOOR_ADD_KINDS, OUTDOOR_ADD_KINDS, TOOL_HINTS, effectiveAddKind, toolAvailable, type AddKind, type Tool, type UiState } from './ui-state.ts';
 
 const TOOLS: { id: Tool; label: string }[] = [
-  { id: 'pan', label: '이동' },
+  { id: 'select', label: '선택' },
   { id: 'outdoor-path', label: '바깥 길' },
   { id: 'building', label: '건물' },
   { id: 'select-building', label: '건물 선택' },
@@ -30,8 +30,19 @@ const ADD_KINDS: { id: AddKind; label: string; dot: string }[] = [
   { id: 'poi', label: '출발·도착 후보', dot: 'dot-poi' },
 ];
 
+/** A button for an operation (SPEC-v0.2 5.1 작업): its key, and why it cannot run now. */
+export interface Operation {
+  id: string;
+  label: string;
+  shortcut: string;
+  /** Korean reason shown as the tooltip, or false when it can run. */
+  blocked: string | false;
+  onClick: () => void;
+}
+
 interface Props {
   ui: UiState;
+  operations: Operation[];
   campusName: string;
   canSave: boolean;
   saving: boolean;
@@ -40,7 +51,7 @@ interface Props {
   onSave: () => void;
 }
 
-export function Toolbar({ ui, campusName, canSave, saving, onTool, onChange, onSave }: Props) {
+export function Toolbar({ ui, operations, campusName, canSave, saving, onTool, onChange, onSave }: Props) {
   return (
     <header className="toolbar">
       <div className="toolbar-main">
@@ -56,10 +67,26 @@ export function Toolbar({ ui, campusName, canSave, saving, onTool, onChange, onS
               className="tool"
               aria-pressed={ui.tool === t.id}
               disabled={!toolAvailable(t.id, ui.scope)}
-              title={toolAvailable(t.id, ui.scope) ? undefined : t.id === 'portal' || t.id === 'bridge' ? '건물 선택으로 층을 먼저 골라 주세요' : '바깥 모드에서 쓸 수 있습니다'}
+              title={toolAvailable(t.id, ui.scope) ? undefined : t.id === 'building' ? '건물을 새로 등록하는 편집 동작(addBuilding)이 아직 없어 잠시 쓸 수 없습니다' : t.id === 'portal' || t.id === 'bridge' ? '건물 선택으로 층을 먼저 골라 주세요' : '바깥 모드에서 쓸 수 있습니다'}
               onClick={() => onTool(t.id)}
             >
               {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="toolbar-group" role="group" aria-label="작업">
+          {operations.map((o) => (
+            <button
+              key={o.id}
+              type="button"
+              className="tool op"
+              data-op={o.id}
+              aria-disabled={o.blocked !== false}
+              title={o.blocked !== false ? o.blocked : `${o.label} (${o.shortcut})`}
+              onClick={o.onClick}
+            >
+              {o.label}
             </button>
           ))}
         </div>

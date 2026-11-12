@@ -1,5 +1,6 @@
-import { FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, FLOOR_FLIGHT_SEC, type CampoFeature } from '@campo/core';
-import type { CommonEdits } from '../model/links.ts';
+import { FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, FLOOR_FLIGHT_SEC } from '@campo/core';
+import type { CommonEdits } from '../model/ops.ts';
+import type { AnyProps } from '../model/session.ts';
 
 const SOURCES = [
   { value: 'field-survey-2026-11', label: '현장 확인 (2026-11)' },
@@ -21,9 +22,10 @@ const STEP_FREE_OPTIONS = [
   { value: 'null', label: '모름 (확인 전)' },
 ];
 
-export function PropertiesPanel({ feature, onEdit }: { feature: CampoFeature | undefined; onEdit: (edits: CommonEdits) => void }) {
-  if (!feature) return <p className="panel-empty">이동 도구로 지점이나 구간을 누르면 여기에서 속성을 고칠 수 있습니다.</p>;
-  const p = feature.properties;
+export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: { id: string; props: AnyProps } | undefined; selectedCount: number; onEdit: (edits: CommonEdits) => void }) {
+  if (selectedCount > 1) return <p className="panel-empty">{selectedCount}개를 골랐습니다. 속성은 하나만 골랐을 때 고칠 수 있습니다.</p>;
+  if (!feature) return <p className="panel-empty">선택 도구로 지점이나 구간을 누르면 여기에서 속성을 고칠 수 있습니다.</p>;
+  const p = feature.props;
   const kind = p.kind === 'node' ? KIND_LABELS[p.node_type] : p.kind === 'edge'
     ? (p.edge_type === 'portal' ? '포탈' : p.edge_type === 'bridge' ? '연결통로' : KIND_LABELS[p.highway === 'corridor' ? 'corridor_edge' : p.highway])
     : p.kind === 'room' ? '강의실 영역' : KIND_LABELS.building;

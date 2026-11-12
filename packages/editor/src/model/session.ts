@@ -1,0 +1,117 @@
+// The editor's data: one edit engine state plus its history (SPEC-v0.2 §5.1: the engine is the only source of truth).
+// The screen never changes a Feature itself; it asks an action of @campo/core/edit (see plan.ts) and reads the new state.
+import {
+  SCHEMA_VERSION,
+  createHistory,
+  createIdGen,
+  findFeature,
+  formatFeatureCollection,
+  fromCampus,
+  isValidFeature,
+  observationTargetsOf,
+  overrideIdsOf,
+  parseCampus,
+  serialize,
+  type BuildingProperties,
+  type CampusMeta,
+  type EdgeProperties,
+  type EditContext,
+  type EditState,
+  type History,
+  type LoadIssue,
+  type LoadedCampus,
+  type LoadedFeature,
+  type LoadedFile,
+  type NodeProperties,
+  type RoomProperties,
+} from '@campo/core';
+
+export interface Session {
+  campusId: string;
+  meta: CampusMeta;
+  history: History;
+  ctx: EditContext;
+  /** Features the engine left out on load (schema errors, missing end nodes, repeated ids). Written back untouched on save. */
+  passthrough: readonly LoadedFeature[];
+  issues: readonly LoadIssue[];
+  /** overrides.json, observations/*.jsonl, calibration.json: never rewritten, but checks and routes read them. */
+  extras: readonly LoadedFile[];
+}
+
+/** Rough centre of Hanyang University Seoul campus, used when campus.json is missing. */
+export function defaultMeta(campusId: string): CampusMeta {
+  return {
+    id: campusId,
+    schema_version: SCHEMA_VERSION,
+    name: campusId,
+    center: [127.045, 37.5572],
+    bbox: [127.0395, 37.5530, 127.0505, 37.5615],
+  };
+}
+
+function isMeta(value: unknown): value is Omit<CampusMeta, 'schema_version'> {
+  const m = value as Partial<CampusMeta> | null;
+  return typeof m === 'object' && m !== null && typeof m.id === 'string' && typeof m.name === 'string' &&
+    Array.isArray(m.center) && m.center.length === 2 && Array.isArray(m.bbox) && m.bbox.length === 4;
+}
+
+const EXTRA_FILE = /^(overrides\.json|calibration\.json|observations\/.+\.jsonl)$/;
+
+/** Files as the dev server sends them -> a session. `seed` fixes the new-id generator (tests). */
+export function createSession(campusId: string, files: readonly LoadedFile[], seed = (Math.random() * 2 ** 32) >>> 0): Session {
+  const loaded = parseCampus(files);
+  const { state, issues } = fromCampus(loaded);
+  // A campus.json without schema_version is v0.1: saving stamps it v0.2.
+  const meta = isMeta(loaded.meta) ? { ...loaded.meta, schema_version: SCHEMA_VERSION as typeof SCHEMA_VERSION } : defaultMeta(campusId);
+  return {
+    campusId,
+    meta,
+    history: createHistory(state),
+    ctx: { ids: createIdGen(seed), observationTargets: observationTargetsOf(loaded), overrideIds: overrideIdsOf(loaded) },
+    passthrough: leftOut(loaded, issues),
+    issues,
+    extras: files.filter((f) => EXTRA_FILE.test(f.path)),
+  };
+}
+
+/** The loaded Features that did not go into the state: schema failures, and the ones the issues name. */
+function leftOut(loaded: LoadedCampus, issues: readonly LoadIssue[]): LoadedFeature[] {
+  const named = new Set(issues.filter((i) => i.code !== 'I2' && i.featureId !== null).map((i) => `${i.file}\u0000${i.featureId}`));
+  return loaded.features.filter((lf) => {
+    if (!isValidFeature(lf.feature)) return true;
+    return named.has(`${lf.file}\u0000${(lf.feature as { id: string }).id}`);
+  });
+}
+
+/** Every file of the campus folder as it would be saved: the engine's files plus the left-out Features in their own files. */
+export function stateToFiles(state: EditState, meta: CampusMeta, passthrough: readonly LoadedFeature[] = []): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const f of serialize(state, meta)) files[f.path] = f.text;
+  const byFile = new Map<string, unknown[]>();
+  for (const { file, feature } of passthrough) byFile.set(file, [...(byFile.get(file) ?? []), feature]);
+  for (const [file, extra] of byFile) {
+    const present = files[file] === undefined ? [] : (JSON.parse(files[file]) as { features: unknown[] }).features;
+    files[file] = formatFeatureCollection([...present, ...extra]);
+  }
+  return files;
+}
+
+/** The campus exactly as it would be saved, read back the way core reads it. Used for checks and routes. */
+export function stateToCampus(state: EditState, meta: CampusMeta, passthrough: readonly LoadedFeature[], extras: readonly LoadedFile[]): LoadedCampus {
+  const files = Object.entries(stateToFiles(state, meta, passthrough)).map(([path, text]) => ({ path, text }));
+  return parseCampus([...files, ...extras]);
+}
+
+/** Properties of any Feature by id (for the 속성 tab). */
+export type AnyProps = NodeProperties | EdgeProperties | BuildingProperties | RoomProperties;
+
+export function propsOf(state: EditState, id: string): { id: string; props: AnyProps } | undefined {
+  const where = findFeature(state, id);
+  if (!where) return undefined;
+  switch (where.collection) {
+    case 'nodes': return { id, props: state.nodes[where.key]!.props };
+    case 'edges': return { id, props: state.edges[where.key]!.props };
+    case 'buildings': return { id, props: state.buildings[where.key]!.props };
+    case 'rooms': return { id, props: state.rooms[where.key]!.props };
+  }
+}

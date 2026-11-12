@@ -1,7 +1,5 @@
 // Departure / arrival candidates for the 길찾기 tab (SPEC §8): poi points and classroom doors.
-import { isClassroomDoor, type NodeFeature, type Position, type Route } from '@campo/core';
-import type { CampusDoc } from './document.ts';
-import { getBuilding, getNode } from './ids.ts';
+import { buildingById, type EditState, type Position, type Route } from '@campo/core';
 import { floorLabel } from './scope.ts';
 
 export interface Place {
@@ -10,17 +8,15 @@ export interface Place {
   label: string;
 }
 
-export function routePlaces(doc: CampusDoc): Place[] {
+export function routePlaces(state: EditState): Place[] {
   const places: Place[] = [];
-  for (const f of doc.features.values()) {
-    if (f.properties.kind !== 'node') continue;
-    const n = f as NodeFeature;
-    const p = n.properties;
+  for (const n of Object.values(state.nodes)) {
+    const p = n.props;
     if (p.node_type === 'poi') {
       places.push({ id: n.id, label: p.name ?? n.id });
-    } else if (isClassroomDoor(n)) {
-      const b = p.building_id ? getBuilding(doc, p.building_id) : undefined;
-      const where = [b?.properties.name, p.level !== null ? floorLabel(p.level) : null].filter(Boolean).join(' ');
+    } else if (p.node_type === 'door' && (p.space_name !== undefined || p.ref !== undefined)) {
+      const b = p.building_id ? buildingById(state, p.building_id) : undefined;
+      const where = [b?.props.name, p.level !== null ? floorLabel(p.level) : null].filter(Boolean).join(' ');
       places.push({ id: n.id, label: `${p.space_name ?? p.ref ?? n.id}${where ? ` (${where})` : ''}` });
     }
   }
@@ -32,6 +28,6 @@ export function routePlaces(doc: CampusDoc): Place[] {
 }
 
 /** Map line for a found route: the node positions in travel order. */
-export function routeLine(route: Route, doc: Pick<CampusDoc, 'features'>): Position[] {
-  return route.nodes.map((id) => getNode(doc, id)?.geometry.coordinates).filter((p): p is Position => !!p);
+export function routeLine(route: Route, state: Pick<EditState, 'nodes'>): Position[] {
+  return route.nodes.map((id) => state.nodes[id]?.coord).filter((p): p is Position => !!p);
 }

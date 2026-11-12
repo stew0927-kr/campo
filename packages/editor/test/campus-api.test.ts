@@ -66,3 +66,16 @@ describe('campus API (dev server)', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('campus API: read-only extras', () => {
+  it('sends overrides, calibration and observations on GET but never takes them on PUT', async () => {
+    await mkdir(join(root, 'c3', 'observations'), { recursive: true });
+    await writeFile(join(root, 'c3', 'overrides.json'), '[]\n');
+    await writeFile(join(root, 'c3', 'observations', 'a.jsonl'), '{"target":"edge:x"}\n');
+    await writeFile(join(root, 'c3', 'notes.txt'), 'no');
+    const read = (await (await fetch(`${base}/api/campuses/c3`)).json()) as { files: { path: string }[] };
+    expect(read.files.map((f) => f.path)).toEqual(['observations/a.jsonl', 'overrides.json']);
+    const res = await put('c3', { 'overrides.json': '[1]' });
+    expect(res.status).toBe(400);
+  });
+});

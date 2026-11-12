@@ -1,8 +1,8 @@
-import type { BuildingFeature } from '@campo/core';
+import type { EditBuilding } from '@campo/core';
 import { floorLabel, type Scope } from '../model/scope.ts';
 
 interface Props {
-  building: BuildingFeature;
+  building: EditBuilding;
   scope: Scope;
   onPick: (level: number) => void;
   onOutdoor: () => void;
@@ -10,7 +10,7 @@ interface Props {
 
 /** Floor buttons stacked top floor first, like the panel inside a lift. */
 export function FloorPicker({ building, scope, onPick, onOutdoor }: Props) {
-  const { name, levels, ground_levels } = building.properties;
+  const { name, levels, ground_levels } = building.props;
   const current = scope.kind === 'building' && scope.buildingId === building.id ? scope.level : null;
   return (
     <nav className="floors" aria-label={`${name} 층 선택`}>

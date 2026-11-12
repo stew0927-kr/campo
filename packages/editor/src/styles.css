@@ -77,6 +77,9 @@ button, select, input { font: inherit; color: inherit; }
 .tool + .tool { border-left: 1px solid var(--rule); }
 .tool[aria-pressed="true"] { background: var(--ink); color: #fff; }
 .tool:disabled { color: var(--rule); cursor: default; }
+.op[aria-disabled="true"] { color: var(--muted); opacity: 0.55; cursor: default; }
+.box-select { position: absolute; z-index: 2; border: 1.5px solid #f2b705; background: rgb(242 183 5 / 0.15); pointer-events: none; }
+.map[data-dragging="true"] canvas { cursor: grabbing; }
 
 /* Line-kind picker: each option shows the same line the map draws. */
 .kinds { display: flex; gap: 2px; margin: 0; padding: 2px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
@@ -245,6 +248,7 @@ button.check-item:hover { background: var(--chrome); }
 .status-message { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: right; color: #b9c3cc; }
 .notice-info { color: #fff; }
 .notice-error { color: #ffb4ad; }
+.notice-warn { color: #ffe08a; }
 
 .load-message { margin: 0; padding: 24px; }
 .load-message.notice-error { color: var(--danger); }

@@ -67,7 +67,7 @@ export function Toolbar({ ui, operations, campusName, canSave, saving, onTool, o
               className="tool"
               aria-pressed={ui.tool === t.id}
               disabled={!toolAvailable(t.id, ui.scope)}
-              title={toolAvailable(t.id, ui.scope) ? undefined : t.id === 'building' ? '건물을 새로 등록하는 편집 동작(addBuilding)이 아직 없어 잠시 쓸 수 없습니다' : t.id === 'portal' || t.id === 'bridge' ? '건물 선택으로 층을 먼저 골라 주세요' : '바깥 모드에서 쓸 수 있습니다'}
+              title={toolAvailable(t.id, ui.scope) ? undefined : t.id === 'portal' || t.id === 'bridge' ? '건물 선택으로 층을 먼저 골라 주세요' : '바깥 모드에서 쓸 수 있습니다'}
               onClick={() => onTool(t.id)}
             >
               {t.label}

@@ -3,11 +3,11 @@ import { buildGraph, findFeature, findRoute, validateCampus, type EditNode, type
 import { fetchCampusFiles, saveCampus } from './api.ts';
 import type { RouteLine } from './map/layers.ts';
 import { MapView, type FocusRequest, type MapClick } from './map/MapView.tsx';
-import { buildingAt } from './model/building.ts';
+import { buildingAt, planAddBuilding } from './model/building.ts';
 import { NodeDrag, type DragResult } from './model/drag.ts';
 import { featureCenter, featureScope } from './model/locate.ts';
 import {
-  buildingsToDelete, nextSelection, planDelete, planMerge, planSetProps, propsPatch, type CommonEdits,
+  buildingsToDelete, nextSelection, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits,
 } from './model/ops.ts';
 import { isError, planReason, runPlan, type Plan, type PlanResult } from './model/plan.ts';
 import { routeLine, routePlaces } from './model/places.ts';
@@ -17,7 +17,7 @@ import {
   planBridge, planConnect, planElevator, planIndoorNode, planOutdoorNode, planOutdoorPath, planPortal, planStairs, type PathVertex,
 } from './model/tools.ts';
 import { ChecksPanel } from './ui/ChecksPanel.tsx';
-import { ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, PoiDialog, StairsDialog, type DeleteBuildingItem } from './ui/Dialogs.tsx';
+import { BuildingDialog, ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, PoiDialog, StairsDialog, type DeleteBuildingItem } from './ui/Dialogs.tsx';
 import { FloorPicker } from './ui/FloorPicker.tsx';
 import { PropertiesPanel } from './ui/PropertiesPanel.tsx';
 import { RoutePanel } from './ui/RoutePanel.tsx';
@@ -32,6 +32,7 @@ type Notice = { text: string; tone: 'info' | 'warn' | 'error' } | null;
 /** Open form, with where it was asked for. Screen state. */
 type Dialog =
   | { kind: 'classroom' | 'elevator' | 'stairs' | 'poi'; position: Position }
+  | { kind: 'building'; ring: Position[] }
   | { kind: 'delete-building'; plan: Plan; items: DeleteBuildingItem[] }
   | null;
 
@@ -249,6 +250,8 @@ export function App() {
     return ui.selection.some((id) => id in state.nodes) ? deleteBlocked : '이어 붙이며 지우려면 지점을 골라 주세요.';
   }, [state, ui.selection, deleteBlocked]);
   const mergeBlocked = useMemo(() => reasonOf(mergePlan), [mergePlan, state]); // eslint-disable-line react-hooks/exhaustive-deps
+  const flipPlan = useMemo(() => (state ? planFlip(state, ui.selection) : null), [state, ui.selection]);
+  const flipBlocked = useMemo(() => reasonOf(flipPlan), [flipPlan, state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doDelete = (heal: boolean) => {
     if (!session || !state) return;
@@ -267,6 +270,9 @@ export function App() {
   const doMerge = () => {
     if (!session || !state) return;
     if (mergePlan) perform(mergePlan);
+  };
+  const doFlip = () => {
+    if (flipPlan) perform(flipPlan);
   };
   const doUndo = () => {
     if (!session) return;
@@ -290,6 +296,7 @@ export function App() {
     { id: 'delete', label: '삭제', shortcut: 'Delete', blocked: deleteBlocked, onClick: blockedOr(deleteBlocked, () => doDelete(false)) },
     { id: 'delete-heal', label: '이어 붙이며 삭제', shortcut: 'Shift+Delete', blocked: healBlocked, onClick: blockedOr(healBlocked, () => doDelete(true)) },
     { id: 'merge', label: '합치기', shortcut: 'M', blocked: mergeBlocked, onClick: blockedOr(mergeBlocked, doMerge) },
+    { id: 'flip', label: '뒤집기', shortcut: 'F', blocked: flipBlocked, onClick: blockedOr(flipBlocked, doFlip) },
     { id: 'undo', label: '되돌리기', shortcut: 'Ctrl+Z', blocked: session?.history.canUndo() ? false : '되돌릴 변경이 없습니다.', onClick: doUndo },
     { id: 'redo', label: '다시 하기', shortcut: 'Ctrl+Shift+Z', blocked: session?.history.canRedo() ? false : '다시 할 변경이 없습니다.', onClick: doRedo },
   ];
@@ -342,6 +349,9 @@ export function App() {
     } else if (!mod && !e.altKey && !e.shiftKey && ui.tool === 'select' && k === 'm') {
       e.preventDefault();
       blockedOr(mergeBlocked, doMerge)();
+    } else if (!mod && !e.altKey && !e.shiftKey && ui.tool === 'select' && k === 'f') {
+      e.preventDefault();
+      blockedOr(flipBlocked, doFlip)();
     } else if (e.key === 'Escape') {
       if (ui.pickFrom) {
         patchUi({ pickFrom: null });
@@ -416,7 +426,7 @@ export function App() {
           routes={routeLines}
           focus={focus}
           onPathDrawn={onPathDrawn}
-          onPolygonDrawn={() => {}}
+          onPolygonDrawn={(ring) => setDialog({ kind: 'building', ring })}
           onMapClick={onMapClick}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
@@ -453,6 +463,12 @@ export function App() {
         hint={ui.tool === 'outdoor-path' || ui.tool === 'add-node' ? TOOL_HINTS[ui.tool] : null}
       />
 
+      {dialog?.kind === 'building' && (
+        <BuildingDialog
+          onCancel={closeDialog}
+          onSubmit={(form) => perform(planAddBuilding(dialog.ring, form))}
+        />
+      )}
       {dialog?.kind === 'delete-building' && (
         <DeleteBuildingDialog items={dialog.items} onCancel={closeDialog} onConfirm={() => perform(dialog.plan)} />
       )}

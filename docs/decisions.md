@@ -42,3 +42,4 @@
 - 2026-11-12 · mergeNodes는 중요한 종류 먼저, 그다음 ids의 마지막 지점을 남김(iD connect 방식). splitEdgeAt은 conveying 구간과 양 끝 범위가 다른 구간을 거부, heal은 elevator·portal·bridge를 합치지 않음 · 층을 잇는 구간의 새 지점 층을 정할 수 없고 계단·에스컬레이터 규칙과 맞춤 · 윤준혁
 - 2026-11-12 · serialize 배치: 지점·room은 바깥/층 파일, 한 건물 밖으로 걸친 구간은 connections.geojson, 실내 구간은 아래층 파일, overrides·observations·calibration은 다시 쓰지 않음 · 불러온 직후 저장하면 바이트 단위로 같게 함 · 윤준혁
 - 2026-11-12 · override가 걸린 구간을 나누면 새 조각에 같은 내용을 복사하고(overrideCopies), heal로 합치면 사라지는 구간의 override를 남는 구간으로 옮김, 편집기는 저장할 때 overrides.json에 반영하고 PUT이 overrides.json을 쓸 수 있게 함 · 고장 구간에 문을 붙였을 때 한쪽 조각만 닫혀 길찾기가 새는 일을 막음 · 윤준혁
+- 2026-11-12 · 동작 addBuilding(id는 bldg_{코드}, ground_levels 기본은 1층 또는 가장 낮은 층), reverseEdge(from/to·vertices·conveying·incline에 level_from/to·building_from/to도 함께 뒤집음), compose(여러 동작을 이력 한 줄로) 추가, 편집기 작업(plan)은 compose로 실행하고 건물 그리기와 F 키를 연결(F는 구간이면 방향, 문이면 앞문·뒷문) · 편집기가 perform(noop)+replace로 흉내 내던 것을 엔진 동작으로, 층이 다른 구간을 뒤집어도 level_from/to가 어긋나지 않게 함 · 윤준혁

@@ -1,6 +1,27 @@
 // "건물" and "건물 선택" tools (SPEC §8).
-// Registering a new building needs a core action (addBuilding) that does not exist yet, so only the form helpers live here.
-import type { EditBuilding, EditState, Position } from '@campo/core';
+import { addBuilding, type EditBuilding, type EditState, type Position } from '@campo/core';
+import type { PlanResult } from './plan.ts';
+
+export interface BuildingFormValue {
+  name: string;
+  code: string;
+  levels: number[];
+  groundLevels: number[];
+}
+
+/** The 건물 tool's plan: the drawn outline (closed here when the pen left it open) becomes a building. */
+export function planAddBuilding(ring: readonly Position[], form: BuildingFormValue): PlanResult {
+  const code = form.code.trim();
+  const name = form.name.trim();
+  if (ring.length < 3) return { error: '외곽선은 점이 세 개 이상 필요합니다.' };
+  const first = ring[0]!;
+  const last = ring[ring.length - 1]!;
+  const closed: Position[] = first[0] === last[0] && first[1] === last[1] ? ring.map(([x, y]): Position => [x, y]) : [...ring, first].map(([x, y]): Position => [x, y]);
+  return {
+    annotation: `건물 "${name}" 추가`,
+    steps: [() => addBuilding({ polygon: [closed], code, name, levels: form.levels, ground_levels: form.groundLevels })],
+  };
+}
 
 /**
  * "1-4", "1~4", "-2~3", "-1, 1, 2" → sorted levels. 0 is never a level (SPEC §3);

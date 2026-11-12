@@ -9,6 +9,7 @@ import {
   deleteRooms,
   mergeNodes,
   previewDeleteBuilding,
+  reverseEdge,
   setProps,
   type DeleteBuildingPreview,
   type EditContext,
@@ -84,6 +85,24 @@ export function planMerge(state: EditState, ctx: EditContext, ids: readonly stri
   const nodes = classify(state, ids).nodes;
   if (nodes.length < 2) return { error: '합칠 지점을 두 개 이상 골라 주세요.' };
   return { annotation: `지점 ${nodes.length}개 합치기`, steps: [() => mergeNodes(nodes, ctx)] };
+}
+
+/**
+ * Flip the selection (F): edges are turned around (reverseEdge), doors swap front and back (setProps door_role).
+ * A door whose door_role is other / missing has no front or back and is left as it is.
+ */
+export function planFlip(state: EditState, ids: readonly string[]): PlanResult {
+  const sel = classify(state, ids);
+  const front = sel.nodes.filter((id) => state.nodes[id]!.props.door_role === 'front');
+  const back = sel.nodes.filter((id) => state.nodes[id]!.props.door_role === 'back');
+  const doors = front.length + back.length;
+  if (sel.edges.length + doors === 0) return { error: '방향을 뒤집을 구간이나 앞문·뒷문을 골라 주세요.' };
+  const steps: Plan['steps'] = [];
+  if (sel.edges.length > 0) steps.push(() => reverseEdge(sel.edges));
+  if (front.length > 0) steps.push(() => setProps(front, { door_role: 'back' }));
+  if (back.length > 0) steps.push(() => setProps(back, { door_role: 'front' }));
+  const annotation = sel.edges.length > 0 && doors > 0 ? '구간 방향과 앞문·뒷문 뒤집기' : sel.edges.length > 0 ? (sel.edges.length === 1 ? '구간 방향 뒤집기' : `구간 ${sel.edges.length}개 방향 뒤집기`) : '앞문·뒷문 뒤집기';
+  return { annotation, steps };
 }
 
 /** Fields the 속성 tab edits (SPEC §8). */

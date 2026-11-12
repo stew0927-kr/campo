@@ -1,11 +1,12 @@
 // A macro is one Action made of several engine actions (SPEC-v0.2 §4: a macro that adds 50 nodes is one history entry).
 // The plan runs the sub-actions one after another on immutable states; the macro's recipe writes the end state into
 // the draft, so History.perform records one entry and one undo takes all of it back.
-import { current, isDraft, type Draft } from 'immer';
+import { current, isDraft } from 'immer';
 import type { Action, EditContext, OverrideCopy } from '../action.ts';
 import { defineAction } from '../action.ts';
 import { freshId } from '../ids.ts';
-import { COLLECTIONS, idTaken, type EditState } from '../state.ts';
+import { idTaken, type EditState } from '../state.ts';
+import { writeBack } from '../writeback.ts';
 
 /** Thrown inside a plan to stop the macro; the macro is then disabled with this reason. */
 export class MacroStop extends Error {
@@ -154,17 +155,6 @@ export function defineMacro<R extends object>(
     },
   });
   return Object.assign(action, { run });
-}
-
-/** Make `draft` (currently `base`) equal to `end`, touching only the Features that differ (one patch per Feature). */
-function writeBack(draft: Draft<EditState>, base: EditState, end: EditState): void {
-  for (const c of COLLECTIONS) {
-    const d = draft[c] as unknown as Record<string, unknown>;
-    const b = base[c] as Record<string, unknown>;
-    const e = end[c] as Record<string, unknown>;
-    for (const k of Object.keys(b)) if (!(k in e)) delete d[k];
-    for (const k of Object.keys(e)) if (e[k] !== b[k]) d[k] = e[k];
-  }
 }
 
 /** Ids in `after[collection]` that `before` does not have, sorted. */

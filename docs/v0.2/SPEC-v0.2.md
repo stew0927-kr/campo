@@ -348,6 +348,9 @@ iD 편집기의 구조를 따른다.
 | `mergeNodes(ids)` | iD `actionConnect` 방식. 남길 지점을 고른다: 중요한 종류(출입구, 문, 엘리베이터 정차, 화장실, 강의실)를 먼저, 그다음 오래된 id. 나머지 지점의 구간 연결과 속성을 남길 지점으로 옮기고, 길이 0이 된 구간(자기 자신으로 가는 구간)을 지운다. 범위가 다르거나 중요한 종류가 둘 이상이면 `disabled`로 거부한다 |
 | `splitEdgeAt(edgeId, coord, {nodeId?})` | 구간 위의 한 점에서 구간을 둘로 나눈다. `nodeId`를 주면 그 기존 지점(끌던 지점)을 나눈 자리에 끼우고(iD `actionAddMidpoint`), 안 주면 새 지점을 만든다. 1.0m 안에 기존 꼭짓점이 있으면 그 점을 쓴다. 나누기 규칙은 4.1.1 |
 | `setProps(ids, patch)` | 속성 바꾸기 |
+| `addBuilding({polygon, code, name, levels, ground_levels?, building_type?})` | 건물 외곽선을 등록한다. id는 `bldg_{code}`, `rev` 1. 코드(영문자·숫자)가 겹치거나, 층이 비었거나 0이 있거나, `ground_levels`가 `levels` 밖이거나, 구름다리 건물의 층이 둘 이상이면 `disabled`. `ground_levels`를 안 주면 1층이 있으면 `[1]`, 없으면 가장 낮은 층 |
+| `reverseEdge(ids)` | 구간 방향을 뒤집는다. `from`/`to`와 `vertices` 순서, `conveying`(forward↔backward, reversible은 그대로), `incline`(up↔down), `level_from`↔`level_to`, `building_from`↔`building_to`를 함께 뒤집고 `rev`+1. 나머지 속성(`bidirectional`, `step_free`, `elevator_id` 등)은 그대로 |
+| `compose(steps, annotation)` | 여러 동작(또는 앞 동작이 남긴 상태로 동작을 만드는 함수)을 동작 하나로 묶는다. 이력 한 줄이고 되돌리기 한 번으로 취소된다. 어느 한 단계가 못 하면 그 이유로 `disabled`. 경고와 `overrideCopies`는 모든 단계 것을 모은다. 편집기의 작업(plan)과 매크로가 쓴다. 끌기만 이력 규칙(perform(noop) → replace → 설명 있는 replace)이 따로 있다 |
 
 **공통 규칙 (이번에 정함)**
 
@@ -442,7 +445,7 @@ I4는 검사에서 층 값을 비교한다. 길찾기가 아니라 검사이므�
 | `Shift+Delete` | 이어 붙이며 삭제 (`heal`) |
 | `M` | 합치기 |
 | `X` | 나누기 |
-| `F` | 앞문·뒷문 뒤집기 |
+| `F` | 뒤집기: 고른 구간은 방향(`reverseEdge`), 고른 문은 앞문·뒷문(`door_role` front↔back) |
 | `O` (누르고 있기) | 바깥 범위로 찍기 |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | 되돌리기 / 다시 하기 |
 | `Esc` | 모드 끝내기 |

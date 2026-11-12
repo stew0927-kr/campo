@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { deleteNodes, type EditState } from '@campo/core';
 import { fixtureSession } from './fixture.ts';
-import { buildingsToDelete, classify, nextSelection, planDelete, planMerge, planSetProps, propsPatch } from '../src/model/ops.ts';
+import { planAddBuilding } from '../src/model/building.ts';
+import { buildingsToDelete, classify, nextSelection, planDelete, planFlip, planMerge, planSetProps, propsPatch } from '../src/model/ops.ts';
 import { isError, planReason, runPlan, type Plan, type PlanResult } from '../src/model/plan.ts';
 import {
   planBridge, planConnect, planElevator, planIndoorNode, planOutdoorNode, planOutdoorPath, planPortal, planStairs,
@@ -274,5 +275,58 @@ describe('선택과 속성', () => {
     const flight = s.history.current().edges['e_A_1_stair__A_2_stair']!;
     expect(propsPatch(flight.props, { flight_sec: 99 })).toEqual({ flight_sec: 30 });
     expect(propsPatch(flight.props, { flight_sec: -4 })).toEqual({ flight_sec: 0 });
+  });
+});
+
+describe('건물 그리기 (planAddBuilding)', () => {
+  const ring: [number, number][] = [[127.1, 37.1], [127.101, 37.1], [127.101, 37.101], [127.1, 37.101]];
+  const form = { name: '새 건물', code: 'N1', levels: [1, 2, 3], groundLevels: [1] };
+
+  it('closes the pen outline and adds the building as one history entry', () => {
+    const s = fixtureSession();
+    const before = s.history.current();
+    expect(runPlan(s.history, ok(planAddBuilding(ring, form)))).toEqual({ ok: true, warnings: [] });
+    const b = s.history.current().buildings['N1']!;
+    expect(b.id).toBe('bldg_N1');
+    expect(b.polygon[0]).toHaveLength(5);
+    expect(b.polygon[0]![4]).toEqual(b.polygon[0]![0]);
+    expect(b.props).toMatchObject({ name: '새 건물', levels: [1, 2, 3], ground_levels: [1], rev: 1 });
+    expect(s.history.size()).toBe(1);
+    s.history.undo();
+    expect(s.history.current()).toEqual(before);
+  });
+
+  it('refuses a taken code and a too short outline, with the reason', () => {
+    const s = fixtureSession();
+    const dup = ok(planAddBuilding(ring, { ...form, code: 'A' }));
+    expect(planReason(s.history.current(), dup)).toMatch(/이미 있는 건물 코드/);
+    expect(runPlan(s.history, dup)).toMatchObject({ ok: false });
+    expect(s.history.size()).toBe(0);
+    expect(planAddBuilding(ring.slice(0, 2), form)).toEqual({ error: '외곽선은 점이 세 개 이상 필요합니다.' });
+  });
+});
+
+describe('뒤집기 (planFlip)', () => {
+  it('turns the selected edges around, one history entry', () => {
+    const s = fixtureSession();
+    const st = s.history.current();
+    const ids = ['e_A_1_esc__A_2_esc_up', 'e_A_1_esc__A_2_esc_down'];
+    expect(runPlan(s.history, ok(planFlip(st, ids))).ok).toBe(true);
+    const after = s.history.current();
+    expect(after.edges[ids[0]!]!.props).toMatchObject({ from: 'n_A_2_esc', conveying: 'backward', incline: 'down', rev: 2 });
+    expect(after.edges[ids[1]!]!.props).toMatchObject({ from: 'n_A_2_esc', conveying: 'forward', incline: 'down', rev: 2 });
+    expect(s.history.size()).toBe(1);
+    s.history.undo();
+    expect(s.history.current()).toEqual(st);
+  });
+
+  it('swaps front and back on doors, leaves other doors alone, and says so when nothing can flip', () => {
+    const s = fixtureSession();
+    const st = s.history.current();
+    runPlan(s.history, ok(planFlip(st, ['n_A_4_408door'])));
+    expect(s.history.current().nodes['n_A_4_408door']!.props.door_role).toBe('back');
+    runPlan(s.history, ok(planFlip(s.history.current(), ['n_A_4_408door'])));
+    expect(s.history.current().nodes['n_A_4_408door']!.props.door_role).toBe('front');
+    expect(planFlip(st, ['n_A_4_hall'])).toEqual({ error: '방향을 뒤집을 구간이나 앞문·뒷문을 골라 주세요.' });
   });
 });

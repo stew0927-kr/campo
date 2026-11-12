@@ -49,7 +49,7 @@ export function toolAvailable(tool: Tool, scope: Scope): boolean {
     case 'outdoor-path':
       return scope.kind === 'outdoor';
     case 'building':
-      return false; // needs the core action addBuilding, which does not exist yet
+      return scope.kind === 'outdoor';
     case 'portal':
     case 'bridge':
       return scope.kind === 'building';

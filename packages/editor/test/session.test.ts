@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { parseCampus, validateCampus } from '@campo/core';
+import { attachDoor, parseCampus, splitEdgeAt, validateCampus } from '@campo/core';
 import { FIXTURE, readFolder, fixtureSession } from './fixture.ts';
-import { createSession, defaultMeta, stateToCampus, stateToFiles } from '../src/model/session.ts';
+import { commitOverrides, createSession, defaultMeta, pendingOverrides, stateToCampus, stateToFiles } from '../src/model/session.ts';
 import { planOutdoorPath } from '../src/model/tools.ts';
 import { runPlan } from '../src/model/plan.ts';
 
@@ -40,5 +40,35 @@ describe('session (편집 엔진 상태)', () => {
     const files = stateToFiles(s.history.current(), s.meta);
     expect(Object.keys(files).sort()).toEqual(['campus.json', 'outdoor.geojson']);
     expect(validateCampus(parseCampus(Object.entries(files).map(([path, text]) => ({ path, text }))))).toEqual({ errors: [], warnings: [] });
+  });
+
+  describe('overrides.json follows a split', () => {
+    const EDGE = 'e_A_4_hall__A_elevA_L4';
+    const entry = { feature_id: EDGE, status: 'closed', until: '2026-12-31T00:00:00+09:00', report_id: 'rp-1' };
+    const closedSession = () =>
+      createSession('fixture', [...readFolder(FIXTURE), { path: 'overrides.json', text: JSON.stringify([entry]) }], 1);
+
+    it('writes the copy for the new piece, once, and not for undone edits', () => {
+      const s = closedSession();
+      expect(pendingOverrides(s)).toBeNull();
+      const door = attachDoor(s.history.current(), [127.0007, 37.00054], { building_id: 'bldg_A', level: 4 }, s.ctx);
+      if (!door.ok) throw new Error(door.reason);
+      s.history.perform(door.action);
+
+      const pending = pendingOverrides(s)!;
+      expect(pending.overrides.map((o) => o.feature_id).sort()).toEqual([EDGE, door.splitEdgeIds[0]!].sort());
+      expect(pending.text.endsWith('\n')).toBe(true);
+      s.history.undo();
+      expect(pendingOverrides(s)).toBeNull();
+      s.history.redo();
+
+      // After saving, the new file is the loaded one and a later split of the new piece copies it again.
+      s.history.markSaved();
+      commitOverrides(s, pending);
+      expect(pendingOverrides(s)).toBeNull();
+      expect(s.ctx.overrideIds?.has(door.splitEdgeIds[0]!)).toBe(true);
+      const again = splitEdgeAt(door.splitEdgeIds[0]!, [127.00075, 37.0005], {}, s.ctx);
+      expect(again.overrideCopies!(s.history.current())).toHaveLength(1);
+    });
   });
 });

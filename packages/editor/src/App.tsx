@@ -12,7 +12,7 @@ import {
 import { isError, planReason, runPlan, type Plan, type PlanResult } from './model/plan.ts';
 import { routeLine, routePlaces } from './model/places.ts';
 import { OUTDOOR, edgeInScope, nodeInScope, scopeLabel, type Scope } from './model/scope.ts';
-import { createSession, propsOf, stateToCampus, stateToFiles, type Session } from './model/session.ts';
+import { commitOverrides, createSession, pendingOverrides, propsOf, stateToCampus, stateToFiles, type Session } from './model/session.ts';
 import {
   planBridge, planConnect, planElevator, planIndoorNode, planOutdoorNode, planOutdoorPath, planPortal, planStairs, type PathVertex,
 } from './model/tools.ts';
@@ -297,14 +297,19 @@ export function App() {
   const onSave = useCallback(async () => {
     if (!session || !state || saving) return;
     const files = stateToFiles(state, session.meta, session.passthrough);
+    // A split or heal of a closed edge carries its overrides.json entries along.
+    const pending = pendingOverrides(session);
+    if (pending) files['overrides.json'] = pending.text;
+    const extras = pending ? [...session.extras.filter((f) => f.path !== 'overrides.json'), { path: 'overrides.json', text: pending.text }] : session.extras;
     // SPEC §8: check before saving, on exactly the files that will be written.
-    const { errors } = validateCampus(stateToCampus(state, session.meta, session.passthrough, session.extras));
+    const { errors } = validateCampus(stateToCampus(state, session.meta, session.passthrough, extras));
     if (errors.length > 0 && !window.confirm(`검사 오류가 ${errors.length}개 있습니다. 그래도 저장하시겠습니까?`)) return;
 
     setSaving(true);
     try {
       const { written, removed } = await saveCampus(session.campusId, files);
       session.history.markSaved();
+      if (pending) commitOverrides(session, pending);
       setSavedState(state);
       const removedText = removed.length > 0 ? `, 지운 파일 ${removed.length}개` : '';
       info(`저장했습니다. 쓴 파일 ${written.length}개${removedText}. 커밋은 Git에서 해 주세요.`);

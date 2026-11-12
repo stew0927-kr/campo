@@ -12,6 +12,16 @@ export interface EditContext {
   overrideIds?: ReadonlySet<string>;
 }
 
+/**
+ * An overrides.json entry that must follow a changed edge: the entries of `fromId` are copied to `toId`
+ * (a split's new piece). `move` also drops the `fromId` entries (heal: the dropped edge's entry goes to the kept one).
+ */
+export interface OverrideCopy {
+  fromId: string;
+  toId: string;
+  move?: boolean;
+}
+
 export interface Action {
   /** Korean history label, e.g. "지점 3개 삭제". A function when the label needs the state (deleteBuilding counts). */
   readonly annotation?: string | ((state: EditState) => string);
@@ -23,6 +33,11 @@ export interface Action {
   apply(state: EditState): EditState;
   /** Korean warnings for running the action on `state` (measurements to redo, overrides to clean up). It still runs. */
   warnings?(state: EditState): string[];
+  /**
+   * Overrides to carry over when the action runs on `state`. `overrideIds` are the feature ids that have an entry
+   * (default: the action's context); a macro passes the ids as they are after its earlier steps.
+   */
+  overrideCopies?(state: EditState, overrideIds?: ReadonlySet<string>): OverrideCopy[];
 }
 
 export interface ActionSpec {
@@ -30,6 +45,7 @@ export interface ActionSpec {
   disabled(state: EditState): string | false;
   recipe(draft: Draft<EditState>): void;
   warnings?(state: EditState): string[];
+  overrideCopies?(state: EditState, overrideIds?: ReadonlySet<string>): OverrideCopy[];
 }
 
 export function defineAction(spec: ActionSpec): Action {
@@ -88,6 +104,12 @@ export const OBSERVATION_CHANGED_MESSAGE = '이 구간의 측정은 바뀌기 �
 
 export function observationMessage(edgeId: string): string {
   return `구간 "${edgeId}": ${OBSERVATION_CHANGED_MESSAGE}.`;
+}
+
+export function overrideCopyMessage(fromId: string, toId: string, moved: boolean): string {
+  return moved
+    ? `구간 "${fromId}"의 override를 남는 구간 "${toId}"으로 옮깁니다(저장할 때 overrides.json에 반영됩니다).`
+    : `구간 "${fromId}"에 override가 있어 새 조각 "${toId}"에도 같은 내용을 추가합니다(저장할 때 overrides.json에 반영됩니다).`;
 }
 
 /** Override warnings for every Feature the action removes. `survivorOf` names the node a merged-away node lives on as. */

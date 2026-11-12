@@ -1,7 +1,7 @@
 // Edit history (SPEC-v0.2 §4). Same model as iD's coreHistory (modules/core/history.js: perform / replace /
 // overwrite / undo / redo that skip entries without an annotation); no iD code is copied. Undo and redo use Immer patches.
 import { applyPatches, produceWithPatches, type Patch } from 'immer';
-import { annotationOf, type Action } from './action.ts';
+import { annotationOf, type Action, type OverrideCopy } from './action.ts';
 import { COLLECTIONS, deepEqual, type Collection, type EditState } from './state.ts';
 
 export interface HistoryEntry {
@@ -10,6 +10,8 @@ export interface HistoryEntry {
   inversePatches: Patch[];
   /** Entries without one are skipped by undo / redo (the inside of a drag). */
   annotation: string | undefined;
+  /** overrides.json entries the entry's actions ask to copy or move (split / heal). */
+  overrideCopies: OverrideCopy[];
 }
 
 export interface HistoryOptions {
@@ -36,6 +38,11 @@ export interface History {
   canRedo(): boolean;
   /** The current state becomes the rev baseline (call after saving). */
   markSaved(): void;
+  /**
+   * overrides.json entries to carry over for the edits since the last markSaved, in order, up to the current entry
+   * (undone edits are not included). Apply them with applyOverrideCopies when saving.
+   */
+  overrideCopies(): OverrideCopy[];
   /** The rev baseline: the loaded state or the last saved one. */
   base(): EditState;
   /** Number of entries after the starting one. */
@@ -106,7 +113,9 @@ function run(state: EditState, action: Action, base: EditState): RunResult {
 
 export function createHistory(start: EditState, options: HistoryOptions = {}): History {
   const limit = options.limit ?? 200;
-  let stack: HistoryEntry[] = [{ state: start, patches: [], inversePatches: [], annotation: undefined }];
+  let stack: HistoryEntry[] = [{ state: start, patches: [], inversePatches: [], annotation: undefined, overrideCopies: [] }];
+  /** Entries up to this index are already saved (markSaved). */
+  let savedIndex = 0;
   let index = 0;
   let current = start;
   let base = start;
@@ -118,9 +127,11 @@ export function createHistory(start: EditState, options: HistoryOptions = {}): H
     stack = stack.slice(0, index + 1);
     stack.push(entry);
     index++;
+    savedIndex = Math.min(savedIndex, index - 1);
     while (stack.length - 1 > limit) {
       stack.shift();
       index--;
+      savedIndex = Math.max(0, savedIndex - 1);
     }
     current = entry.state;
     return current;
@@ -128,7 +139,7 @@ export function createHistory(start: EditState, options: HistoryOptions = {}): H
 
   const perform = (action: Action, annotation?: AnnotationArg) => {
     const r = run(current, action, base);
-    return push({ ...r, annotation: label(action, current, annotation) });
+    return push({ ...r, annotation: label(action, current, annotation), overrideCopies: action.overrideCopies?.(current) ?? [] });
   };
 
   return {
@@ -136,6 +147,7 @@ export function createHistory(start: EditState, options: HistoryOptions = {}): H
     replace(action, annotation) {
       if (index === 0) return perform(action, annotation);
       const r = run(current, action, base);
+      const copies = action.overrideCopies?.(current) ?? [];
       const top = stack[index]!;
       stack = stack.slice(0, index + 1);
       stack[index] = {
@@ -143,6 +155,7 @@ export function createHistory(start: EditState, options: HistoryOptions = {}): H
         patches: [...top.patches, ...r.patches],
         inversePatches: [...r.inversePatches, ...top.inversePatches],
         annotation: label(action, current, annotation),
+        overrideCopies: [...top.overrideCopies, ...copies],
       };
       current = r.state;
       return current;
@@ -181,7 +194,9 @@ export function createHistory(start: EditState, options: HistoryOptions = {}): H
     canRedo: () => stack.slice(index + 1).some((e) => e.annotation !== undefined),
     markSaved() {
       base = current;
+      savedIndex = index;
     },
+    overrideCopies: () => stack.slice(savedIndex + 1, index + 1).flatMap((e) => e.overrideCopies),
     base: () => base,
     size: () => stack.length - 1,
   };

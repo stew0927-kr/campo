@@ -90,9 +90,10 @@ describe('deleteNodes', () => {
     const s = await fixtureState();
     const action = deleteNodes(['n_A_4_408door'], { heal: true }, ctx(1, { overrideIds: new Set(['e_A_4_north__A_4_408door', 'n_A_4_408door', 'e_A_4_hall__A_4_408door']) }));
     const warnings = action.warnings!(s);
-    expect(warnings).toHaveLength(2);
+    expect(warnings).toHaveLength(3); // two removed Features with an override, plus the dropped edge's override moving to the kept one
     expect(warnings[0]).toBe('"e_A_4_north__A_4_408door"에 override가 있습니다. overrides.json에서 이 항목을 지우세요.');
     expect(warnings[1]).toContain('n_A_4_408door');
+    expect(warnings[2]).toContain('남는 구간 "e_A_4_hall__A_4_408door"');
   });
 
   it('does not touch a frozen input', async () => {

@@ -1,6 +1,6 @@
 // Split rules: SPEC-v0.2 4.1.1. The approach of inserting an existing node follows iD's actionAddMidpoint (no code copied).
 import type { NodeProperties, NodeType, Position } from '../../types.ts';
-import { bumpRev, defineAction, idMemo, observationMessage, type Action, type EditContext } from '../action.ts';
+import { bumpRev, defineAction, idMemo, observationMessage, overrideCopyMessage, type Action, type EditContext, type OverrideCopy } from '../action.ts';
 import { edgeFileScope, edgeIdPrefix, freshId, nodeIdPrefix } from '../ids.ts';
 import { footOnLine, lineLength, metres } from '../geo.ts';
 import { clone, copy, edgeCoords, edgesAt, isPosition, scopeOfNode, type EditState } from '../state.ts';
@@ -88,6 +88,12 @@ export function splitPlan(state: EditState, edgeId: string, coord: Position, nod
   return plan;
 }
 
+function edgeScope(state: EditState, edgeId: string) {
+  const edge = state.edges[edgeId]!;
+  const from = state.nodes[edge.props.from]!;
+  return edgeFileScope(edge.props.edge_type, from.props, from.props);
+}
+
 function newNodeType(buildingId: string | null, highway: string): NodeType {
   if (buildingId === null) return 'outdoor';
   return highway === 'steps' ? 'stair_landing' : 'corridor';
@@ -99,6 +105,12 @@ function newNodeType(buildingId: string | null, highway: string): NodeType {
  */
 export function splitEdgeAt(edgeId: string, coord: Position, options: SplitOptions, ctx: EditContext): Action {
   const memo = idMemo();
+  /** The new piece gets the same override as the edge it was cut from. */
+  const copies = (state: EditState, ids: ReadonlySet<string> | undefined = ctx.overrideIds): OverrideCopy[] => {
+    if (!ids?.has(edgeId) || typeof splitPlan(state, edgeId, coord, options.nodeId) === 'string') return [];
+    const eid = memo(1, state, () => freshId(state, ctx.ids, edgeIdPrefix(state, edgeScope(state, edgeId))));
+    return [{ fromId: edgeId, toId: eid }];
+  };
   return defineAction({
     annotation: '구간 나누기',
     disabled(state) {
@@ -132,8 +144,7 @@ export function splitEdgeAt(edgeId: string, coord: Position, options: SplitOptio
         draft.nodes[nid] = { id: nid, coord: copy(plan.at), props };
       }
 
-      const scope = edgeFileScope(base.edge_type, fromNode.props, fromNode.props);
-      const eid = memo(1, draft, () => freshId(draft, ctx.ids, edgeIdPrefix(draft, scope)));
+      const eid = memo(1, draft, () => freshId(draft, ctx.ids, edgeIdPrefix(draft, edgeScope(draft, edgeId))));
       const inner = (line: Position[]) => line.slice(1, -1).map(copy);
       const [c1, c2] = plan.stepCounts ?? [undefined, undefined];
       const fresh = { ...clone(base), rev: 1 };
@@ -155,7 +166,10 @@ export function splitEdgeAt(edgeId: string, coord: Position, options: SplitOptio
       bumpRev(edge.props);
     },
     warnings(state) {
-      return ctx.observationTargets?.has(`edge:${edgeId}`) && state.edges[edgeId] ? [observationMessage(edgeId)] : [];
+      const out = ctx.observationTargets?.has(`edge:${edgeId}`) && state.edges[edgeId] ? [observationMessage(edgeId)] : [];
+      for (const c of copies(state)) out.push(overrideCopyMessage(c.fromId, c.toId, false));
+      return out;
     },
+    overrideCopies: (state, ids) => copies(state, ids),
   });
 }

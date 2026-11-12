@@ -35,6 +35,15 @@ describe('campus API (dev server)', () => {
     }
   });
 
+  it('PUT may write overrides.json, but no other extra file', async () => {
+    let res = await put('c2', { 'campus.json': '{}\n', 'overrides.json': '[]\n' });
+    expect(res.status).toBe(200);
+    expect(await readFile(join(root, 'c2', 'overrides.json'), 'utf8')).toBe('[]\n');
+    expect(((await (await fetch(`${base}/api/campuses/c2`)).json()) as { files: { path: string }[] }).files.map((f) => f.path)).toEqual(['campus.json', 'overrides.json']);
+    res = await put('c2', { 'calibration.json': '{}' });
+    expect(res.status).toBe(400);
+  });
+
   it('returns no files for a campus folder that does not exist yet', async () => {
     const res = await fetch(`${base}/api/campuses/new-campus`);
     expect(await res.json()).toEqual({ files: [] });
@@ -67,15 +76,15 @@ describe('campus API (dev server)', () => {
   });
 });
 
-describe('campus API: read-only extras', () => {
-  it('sends overrides, calibration and observations on GET but never takes them on PUT', async () => {
+describe('campus API: extras', () => {
+  it('sends overrides, calibration and observations on GET, but PUT refuses calibration and observations', async () => {
     await mkdir(join(root, 'c3', 'observations'), { recursive: true });
     await writeFile(join(root, 'c3', 'overrides.json'), '[]\n');
     await writeFile(join(root, 'c3', 'observations', 'a.jsonl'), '{"target":"edge:x"}\n');
     await writeFile(join(root, 'c3', 'notes.txt'), 'no');
     const read = (await (await fetch(`${base}/api/campuses/c3`)).json()) as { files: { path: string }[] };
     expect(read.files.map((f) => f.path)).toEqual(['observations/a.jsonl', 'overrides.json']);
-    const res = await put('c3', { 'overrides.json': '[1]' });
-    expect(res.status).toBe(400);
+    expect((await put('c3', { 'calibration.json': '{}' })).status).toBe(400);
+    expect((await put('c3', { 'observations/a.jsonl': '{}' })).status).toBe(400);
   });
 });

@@ -10,12 +10,17 @@ import type { Plugin } from 'vite';
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
 /** Every path a campus folder may contain (SPEC §4.3). Anything else is refused. */
 const CAMPUS_PATH = /^(campus\.json|outdoor\.geojson|connections\.geojson|buildings\/[A-Za-z0-9]+\/(building|L-?[1-9][0-9]*)\.geojson)$/;
-/** Read-only files the editor reads for its checks (never written by PUT): overrides, calibration, observations. */
+/** Files the editor reads for its checks: overrides, calibration, observations. PUT writes only overrides.json of them. */
 const EXTRA_PATH = /^(overrides\.json|calibration\.json|observations\/[^/]+\.jsonl)$/;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
 
 export function isCampusPath(path: string): boolean {
   return CAMPUS_PATH.test(path);
+}
+
+/** PUT may write the layout files and overrides.json (the editor adds entries when a split or heal carries one over). */
+function isWritablePath(path: string): boolean {
+  return isCampusPath(path) || path === 'overrides.json';
 }
 
 export async function readCampusFiles(dir: string): Promise<{ path: string; text: string }[]> {
@@ -59,7 +64,7 @@ export async function readExtraFiles(dir: string): Promise<{ path: string; text:
  * files that are no longer in the set (e.g. a floor whose last node was removed).
  */
 export async function writeCampusFiles(dir: string, files: Record<string, string>): Promise<{ written: string[]; removed: string[] }> {
-  const bad = Object.keys(files).filter((p) => !isCampusPath(p));
+  const bad = Object.keys(files).filter((p) => !isWritablePath(p));
   if (bad.length > 0) throw new HttpError(400, `저장할 수 없는 경로입니다: ${bad.join(', ')}`);
 
   const written: string[] = [];

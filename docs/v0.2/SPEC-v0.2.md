@@ -359,6 +359,7 @@ iD 편집기의 구조를 따른다.
 - **`splitEdgeAt` 추가 거부**: `conveying`이 있는 구간(에스컬레이터·무빙워크)과, 양 끝 범위가 다른 구간(층을 잇는 계단·경사로)은 `disabled` 이유를 돌려준다.
 - **경고**(동작은 실행하고 문장을 돌려준다):
   - 측정이 가리키는 구간을 나누거나(`splitEdgeAt`) 합치면(`deleteNodes`의 heal) "이 구간의 측정은 바뀌기 전 길이 기준이라 다시 재야 합니다". 구간을 지우는 것은 막지 않고 검사 W13이 잡는다.
+  - **override 따라가기**: 동작은 `overrideCopies(state)`로 `[{ fromId, toId, move? }]`를 돌려준다(매크로 결과와 History의 `overrideCopies()`에도 모인다). 구간 나누기(`splitEdgeAt`, 매크로 포함)는 override가 걸린 구간의 새 조각에 같은 내용(`status`, `until`, `report_id`)을 복사하라고 알리고, heal은 사라지는 구간의 override를 남는 구간으로 옮기라고(`move`) 알린다. 편집기는 저장할 때 `applyOverrideCopies`로 `overrides.json`에 반영한다(되돌린 편집과 이미 저장한 편집은 빠진다). 경고 문장도 함께 나온다.
   - overrides가 가리키는 Feature를 지우면 "overrides.json에서 이 항목을 지우세요". `mergeNodes`로 사라지는 지점이면 남는 지점 id도 보여 준다. 지우기는 막지 않고 검사 W14가 잡는다.
 
 #### 4.1.1 구간 나누기 규칙

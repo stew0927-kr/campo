@@ -42,3 +42,4 @@ export { setProps, LOCKED_PROPS, type PropsPatch } from './actions/setProps.ts';
 export { addRoom, type NewRoom } from './actions/addRoom.ts';
 export { deleteRooms, doorsOfRoom } from './actions/deleteRooms.ts';
 export * from './macros/index.ts';
+export * from './overrides.ts';

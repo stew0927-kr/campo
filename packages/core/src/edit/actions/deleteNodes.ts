@@ -1,5 +1,5 @@
 import type { EdgeProperties, Position } from '../../types.ts';
-import { bumpRev, defineAction, deletionWarnings, observationMessage, type Action, type EditContext } from '../action.ts';
+import { bumpRev, defineAction, deletionWarnings, observationMessage, overrideCopyMessage, type Action, type EditContext, type OverrideCopy } from '../action.ts';
 import { lineLength } from '../geo.ts';
 import { deepEqual, edgeCoords, edgesAt, type EditEdge, type EditState } from '../state.ts';
 import { missing } from './common.ts';
@@ -79,6 +79,16 @@ export function healPlan(state: EditState, nodeId: string): HealPlan | null {
 /** Delete nodes and their edges. With heal, a node between two matching edges joins them instead (see healPlan). */
 export function deleteNodes(ids: readonly string[], options: DeleteNodesOptions = {}, ctx?: EditContext): Action {
   const list = [...new Set(ids)];
+  /** Healing keeps one edge: the dropped edge's override moves onto it. */
+  const healCopies = (state: EditState, ids: ReadonlySet<string> | undefined = ctx?.overrideIds): OverrideCopy[] => {
+    if (!options.heal || !ids || ids.size === 0) return [];
+    const out: OverrideCopy[] = [];
+    for (const id of list) {
+      const plan = state.nodes[id] ? healPlan(state, id) : null;
+      if (plan && ids.has(plan.drop)) out.push({ fromId: plan.drop, toId: plan.keep, move: true });
+    }
+    return out;
+  };
   const action = defineAction({
     annotation: `지점 ${list.length}개 삭제`,
     disabled: (state) => missing('지점', list, (id) => id in state.nodes),
@@ -100,8 +110,10 @@ export function deleteNodes(ids: readonly string[], options: DeleteNodesOptions 
         delete draft.nodes[id];
       }
     },
+    overrideCopies: (state, ids) => healCopies(state, ids),
     warnings(state) {
       const out = deletionWarnings(action, ctx, state);
+      for (const c of healCopies(state)) out.push(overrideCopyMessage(c.fromId, c.toId, true));
       if (options.heal && ctx?.observationTargets) {
         // A healed edge changes length, so measurements on either of the two joined edges are stale.
         const seen = new Set<string>();

@@ -2,6 +2,7 @@
 // The screen never changes a Feature itself; it asks an action of @campo/core/edit (see plan.ts) and reads the new state.
 import {
   SCHEMA_VERSION,
+  applyOverrideCopies,
   createHistory,
   createIdGen,
   findFeature,
@@ -23,6 +24,7 @@ import {
   type LoadedFeature,
   type LoadedFile,
   type NodeProperties,
+  type Override,
   type RoomProperties,
 } from '@campo/core';
 
@@ -34,8 +36,8 @@ export interface Session {
   /** Features the engine left out on load (schema errors, missing end nodes, repeated ids). Written back untouched on save. */
   passthrough: readonly LoadedFeature[];
   issues: readonly LoadIssue[];
-  /** overrides.json, observations/*.jsonl, calibration.json: never rewritten, but checks and routes read them. */
-  extras: readonly LoadedFile[];
+  /** overrides.json, observations/*.jsonl, calibration.json: checks and routes read them. Only overrides.json is rewritten, by pendingOverrides. */
+  extras: LoadedFile[];
 }
 
 /** Rough centre of Hanyang University Seoul campus, used when campus.json is missing. */
@@ -72,6 +74,39 @@ export function createSession(campusId: string, files: readonly LoadedFile[], se
     issues,
     extras: files.filter((f) => EXTRA_FILE.test(f.path)),
   };
+}
+
+/** overrides.json after the unsaved edits carried their entries over (split: copy to the new piece, heal: move). */
+export interface PendingOverrides {
+  /** New text of overrides.json. */
+  text: string;
+  overrides: Override[];
+}
+
+const OVERRIDES = 'overrides.json';
+
+/** What overrides.json must hold when saving now, or null when no edit since the last save carries an override. */
+export function pendingOverrides(session: Session): PendingOverrides | null {
+  const copies = session.history.overrideCopies();
+  if (copies.length === 0) return null;
+  let list: Override[] = [];
+  const file = session.extras.find((f) => f.path === OVERRIDES);
+  if (file) {
+    try {
+      const parsed: unknown = JSON.parse(file.text);
+      if (Array.isArray(parsed)) list = parsed as Override[];
+    } catch {
+      return null; // an unreadable file is left for the check tab to report, not overwritten
+    }
+  }
+  const overrides = applyOverrideCopies(list, copies);
+  return { text: JSON.stringify(overrides, null, 2) + '\n', overrides };
+}
+
+/** After a save: the new overrides.json is the loaded one, and the ids that have an entry are up to date. */
+export function commitOverrides(session: Session, pending: PendingOverrides): void {
+  session.extras = [...session.extras.filter((f) => f.path !== OVERRIDES), { path: OVERRIDES, text: pending.text }];
+  session.ctx.overrideIds = new Set(pending.overrides.map((o) => o.feature_id));
 }
 
 /** The loaded Features that did not go into the state: schema failures, and the ones the issues name. */

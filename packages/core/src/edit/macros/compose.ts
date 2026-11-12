@@ -2,7 +2,7 @@
 // The plan runs the sub-actions one after another on immutable states; the macro's recipe writes the end state into
 // the draft, so History.perform records one entry and one undo takes all of it back.
 import { current, isDraft, type Draft } from 'immer';
-import type { Action, EditContext } from '../action.ts';
+import type { Action, EditContext, OverrideCopy } from '../action.ts';
 import { defineAction } from '../action.ts';
 import { freshId } from '../ids.ts';
 import { COLLECTIONS, idTaken, type EditState } from '../state.ts';
@@ -32,7 +32,7 @@ export interface Runner {
 
 export type MacroPlan<R> = (r: Runner) => R;
 
-export type MacroSuccess<R> = { ok: true; state: EditState; warnings: string[] } & R;
+export type MacroSuccess<R> = { ok: true; state: EditState; warnings: string[]; overrideCopies: OverrideCopy[] } & R;
 export interface MacroFailure {
   ok: false;
   reason: string;
@@ -46,7 +46,7 @@ export interface MacroAction<R> extends Action {
 
 /** What the macro functions (attachDoor(state, …) etc.) return. On failure the state is the input, unchanged. */
 export type MacroResult<R> =
-  | ({ ok: true; state: EditState; warnings: string[]; action: MacroAction<R> } & R)
+  | ({ ok: true; state: EditState; warnings: string[]; overrideCopies: OverrideCopy[]; action: MacroAction<R> } & R)
   | { ok: false; state: EditState; reason: string };
 
 export function resultOf<R>(state: EditState, action: MacroAction<R>): MacroResult<R> {
@@ -74,6 +74,9 @@ export function defineMacro<R extends object>(
     let steps = 0;
     let draws = 0;
     const warnings: string[] = [];
+    const copies: OverrideCopy[] = [];
+    /** Feature ids that have an overrides.json entry as the steps so far leave them. */
+    const overrideIds = new Set(ctx.overrideIds ?? []);
     const drawn = new Set<string>();
     const runner: Runner = {
       get state() {
@@ -89,6 +92,11 @@ export function defineMacro<R extends object>(
         const reason = action.disabled(state);
         if (reason !== false) throw new MacroStop(reason);
         for (const w of action.warnings?.(state) ?? []) if (!warnings.includes(w)) warnings.push(w);
+        for (const c of action.overrideCopies?.(state, overrideIds) ?? []) {
+          copies.push(c);
+          overrideIds.add(c.toId);
+          if (c.move) overrideIds.delete(c.fromId);
+        }
         state = action.apply(state);
         return state;
       },
@@ -109,7 +117,7 @@ export function defineMacro<R extends object>(
     let out: MacroRun<R>;
     try {
       const result = plan(runner);
-      out = { ...result, ok: true, state, warnings };
+      out = { ...result, ok: true, state, warnings, overrideCopies: copies };
     } catch (e) {
       if (!(e instanceof MacroStop)) throw e;
       out = { ok: false, reason: e.reason };
@@ -139,6 +147,10 @@ export function defineMacro<R extends object>(
     warnings(state) {
       const r = run(state);
       return r.ok ? [...r.warnings] : [];
+    },
+    overrideCopies(state) {
+      const r = run(state);
+      return r.ok ? [...r.overrideCopies] : [];
     },
   });
   return Object.assign(action, { run });

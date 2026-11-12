@@ -55,6 +55,28 @@ export class Editor {
     await this.page.waitForTimeout(60);
   }
 
+  /** One counted right-click on the map (opens the editor's menu). */
+  async rightClickMap(at: Lnglat): Promise<void> {
+    const { x, y } = await this.px(at);
+    await this.page.mouse.move(x, y);
+    await this.page.mouse.click(x, y, { button: 'right' });
+    this.clicks++;
+    await this.page.waitForTimeout(60);
+  }
+
+  /** Shift + drag from corner to corner with the select tool: one box selection (one gesture, not counted as a click). */
+  async boxSelect(a: Lnglat, b: Lnglat): Promise<void> {
+    const [p, q] = [await this.px(a), await this.px(b)];
+    await this.page.mouse.move(p.x, p.y);
+    await this.page.keyboard.down('Shift');
+    await this.page.mouse.down();
+    await this.page.mouse.move((p.x + q.x) / 2, (p.y + q.y) / 2, { steps: 4 });
+    await this.page.mouse.move(q.x, q.y, { steps: 4 });
+    await this.page.mouse.up();
+    await this.page.keyboard.up('Shift');
+    await this.page.waitForTimeout(60);
+  }
+
   /** One counted click on a button or radio. */
   async click(target: Locator): Promise<void> {
     await target.click();

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 export const PORT = 5199;
 export const E2E_DIR = join(tmpdir(), 'campo-e2e');
-export const CAMPUS_IDS = ['e2e-floor', 'e2e-scope', 'e2e-escalator'] as const;
+export const CAMPUS_IDS = ['e2e-floor', 'e2e-scope', 'e2e-escalator', 'e2e-copy'] as const;
 
 /** The map centre and the building outline (lng, lat). */
 export const CENTER: [number, number] = [127.0005, 37.0003];
@@ -69,6 +69,18 @@ function seedEscalatorCampus(dir: string): void {
   writeFileSync(join(dir, 'buildings', 'A', 'L2.geojson'), lines(l2));
 }
 
+/** e2e-copy: A동 1-4층. Only the 1st floor has anything: a straight corridor of 5 points and 4 edges (no entrance, nothing outdoors). */
+const COPY_Y = 37.0003;
+export const COPY_CORRIDOR: [number, number][] = [0, 1, 2, 3, 4].map((i) => [127.0002 + i * 0.00015, COPY_Y]);
+function seedCopyCampus(dir: string): void {
+  const ids = COPY_CORRIDOR.map((_, i) => `n_A_1_c${i + 1}`);
+  const nodes = COPY_CORRIDOR.map((c, i) => node(ids[i]!, c, { node_type: 'corridor', building_id: 'bldg_A', level: 1 }));
+  const edges = COPY_CORRIDOR.slice(1).map((c, i) => corridor(`e_A_1_c${i + 1}__c${i + 2}`, ids[i]!, COPY_CORRIDOR[i]!, ids[i + 1]!, c));
+  writeFileSync(join(dir, 'buildings', 'A', 'L1.geojson'), lines([...nodes, ...edges]));
+  writeFileSync(join(dir, 'outdoor.geojson'), lines([]));
+  writeFileSync(join(dir, 'connections.geojson'), lines([]));
+}
+
 export function seedCampus(id: string): void {
   const dir = join(E2E_DIR, id);
   rmSync(dir, { recursive: true, force: true });
@@ -91,4 +103,5 @@ export function seedCampus(id: string): void {
     },
   ]));
   if (id === 'e2e-escalator') seedEscalatorCampus(dir);
+  if (id === 'e2e-copy') seedCopyCampus(dir);
 }

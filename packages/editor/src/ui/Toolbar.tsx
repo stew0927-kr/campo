@@ -1,23 +1,7 @@
 import type { ReactNode } from 'react';
 import { ELEVATOR_NOT_DRAWN, type OutdoorKind } from '../model/tools.ts';
 import { basemaps, type BasemapId } from '../map/basemaps.ts';
-import { INDOOR_ADD_KINDS, OUTDOOR_ADD_KINDS, TOOL_HINTS, TOOL_KEYS, effectiveAddKind, toolAvailable, type AddKind, type Tool, type UiState } from './ui-state.ts';
-
-const TOOLS: { id: Tool; label: string }[] = [
-  { id: 'select', label: '선택' },
-  { id: 'path', label: '길 그리기' },
-  { id: 'building', label: '건물' },
-  { id: 'select-building', label: '건물 선택' },
-  { id: 'add-node', label: '지점 추가' },
-  { id: 'connect', label: '잇기' },
-  { id: 'portal', label: '포탈' },
-  { id: 'bridge', label: '연결통로' },
-  { id: 'door', label: '문 연속 찍기' },
-  { id: 'strip', label: '강의실 줄' },
-  { id: 'restroom', label: '화장실' },
-  { id: 'elevator', label: '엘리베이터' },
-  { id: 'escalator', label: '에스컬레이터' },
-];
+import { INDOOR_ADD_KINDS, OUTDOOR_ADD_KINDS, TOOL_HINTS, TOOL_KEYS, TOOL_LIST, effectiveAddKind, toolAvailable, type AddKind, type Tool, type UiState } from './ui-state.ts';
 
 const OUTDOOR_KINDS: { id: OutdoorKind; label: string; sample: string }[] = [
   { id: 'flat', label: '평지', sample: 'solid-footway' },
@@ -56,9 +40,10 @@ interface Props {
   onTool: (tool: Tool) => void;
   onChange: (patch: Partial<UiState>) => void;
   onSave: () => void;
+  onHelp: () => void;
 }
 
-export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving, onTool, onChange, onSave }: Props) {
+export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving, onTool, onChange, onSave, onHelp }: Props) {
   return (
     <header className="toolbar">
       <div className="toolbar-main">
@@ -67,7 +52,7 @@ export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving,
         </h1>
 
         <div className="toolbar-group" role="group" aria-label="도구">
-          {TOOLS.map((t) => (
+          {TOOL_LIST.map((t) => (
             <button
               key={t.id}
               type="button"
@@ -108,6 +93,8 @@ export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving,
             ))}
           </select>
         </label>
+
+        <button type="button" className="help-button" onClick={onHelp} title="도구 단축키 목록 (?)">도움말</button>
 
         <button type="button" className="save" onClick={onSave} disabled={!canSave || saving} title="Ctrl+S">
           {saving ? '저장하는 중…' : '저장'}

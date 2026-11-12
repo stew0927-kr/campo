@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { buildGraph, buildingById, findFeature, findNearest, findRoute, validateCampus, type EditNode, type EditState, type NearestResult, type Position, type RouteResult } from '@campo/core';
+import { buildGraph, buildingById, findFeature, findNearest, findRoute, validateCampus, type EditEdge, type EditNode, type EditState, type NearestResult, type Position, type RouteResult } from '@campo/core';
 import { fetchCampusFiles, saveCampus } from './api.ts';
 import type { RouteLine } from './map/layers.ts';
 import { MapView, type FocusRequest, type MapClick } from './map/MapView.tsx';
@@ -10,10 +10,12 @@ import { HandleDrag, NodeDrag, type DragResult } from './model/drag.ts';
 import {
   NEED_FLOOR, doorPreview, nextRefAfter, planDoor, planRestroom, planStrip, stripOptions, stripPreview, type RestroomForm, type StripInput,
 } from './model/doors.ts';
+import { copyBlocked, copySource, copyTargets, planCopyToFloors } from './model/copy.ts';
 import { bridgeTargets, type CrossEnd } from './model/cross.ts';
 import { planElevator, planElevatorEdit, stopsOf } from './model/elevator.ts';
 import { planEscalator } from './model/escalator.ts';
 import { featureCenter, featureScope } from './model/locate.ts';
+import { menuFields, planMenuEdit, selectionSummary, type MenuEdits } from './model/menu.ts';
 import { makeObservation, measureSummary, measureTargetOf, type Direction, type MeasureForm, type MeasureSummary, type MeasureTarget } from './model/measure.ts';
 import {
   buildingsToDelete, nextSelection, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits,
@@ -29,6 +31,9 @@ import {
   planConnect, planIndoorNode, planOutdoorNode, planPortal, planStairs, type PathVertex,
 } from './model/tools.ts';
 import { ChecksPanel } from './ui/ChecksPanel.tsx';
+import { ContextMenu } from './ui/ContextMenu.tsx';
+import { CopyPanel } from './ui/CopyPanel.tsx';
+import { HelpDialog } from './ui/HelpDialog.tsx';
 import { CrossPicker } from './ui/CrossPicker.tsx';
 import {
   AttachReportDialog, BuildingDialog, ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, MeasureDialog, PoiDialog, RestroomDialog, StairsDialog,
@@ -42,7 +47,7 @@ import { SidePanel } from './ui/SidePanel.tsx';
 import { StatusBar } from './ui/StatusBar.tsx';
 import { StripForm } from './ui/StripForm.tsx';
 import { Toolbar, type Operation } from './ui/Toolbar.tsx';
-import { CROSS_TOOLS, TOOL_HINTS, effectiveAddKind, initialStrip, initialUi, stripStage, toolAvailable, type StripState, type Tool, type UiState } from './ui/ui-state.ts';
+import { CROSS_TOOLS, OPERATION_KEYS, TOOL_HINTS, effectiveAddKind, initialStrip, initialUi, stripStage, toolAvailable, type StripState, type Tool, type UiState } from './ui/ui-state.ts';
 
 // ?campus=<id> opens another campus folder (the e2e tests do); otherwise VITE_CAMPUS_ID, else hanyang-seoul.
 const CAMPUS_ID = new URLSearchParams(window.location.search).get('campus')?.trim() || import.meta.env.VITE_CAMPUS_ID?.trim() || 'hanyang-seoul';
@@ -73,6 +78,10 @@ export function App() {
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [saving, setSaving] = useState(false);
+  /** Right-click menu (page coordinates), the 다른 층에 복사 window (the ids it was opened for, and its result), the shortcut list. Screen state. */
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [copyPanel, setCopyPanel] = useState<{ ids: string[]; result: string[] | null } | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
   const [obsRev, setObsRev] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -379,9 +388,7 @@ export function App() {
 
   const onBoxSelect = (ids: string[]) => {
     patchUi({ selection: ids, ...(ids.length > 0 ? { panelTab: 'properties' as const } : {}) });
-    const buildings = state ? ids.filter((id) => buildingById(state, id)).length : 0;
-    const nodes = ids.length - buildings;
-    info(ids.length > 0 ? `지점 ${nodes}개${buildings > 0 ? `, 건물 ${buildings}개` : ''}를 골랐습니다.` : '상자 안에 고를 수 있는 지점이나 건물이 없습니다.');
+    info(ids.length > 0 && state ? `${selectionSummary(state, ids)}를 골랐습니다.` : '상자 안에 고를 수 있는 지점이나 건물이 없습니다.');
   };
 
   const beginDrag = (nodeId: string) => new NodeDrag(session!.history, session!.ctx, nodeId);
@@ -508,14 +515,48 @@ export function App() {
     sync();
     info('다시 했습니다.');
   };
+  // ---- 우클릭 메뉴, 다른 층에 복사 (SPEC-v0.2 5.1 작업) ----
+  /** The target joins the selection when it was not in it (only it is selected then); the menu opens at the pointer. */
+  const onContextMenu = ({ node, edge, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; x: number; y: number }) => {
+    const hit = node?.id ?? edge?.id;
+    if (!hit) return setCtxMenu(null);
+    if (!ui.selection.includes(hit)) patchUi({ selection: [hit], panelTab: 'properties' });
+    setCtxMenu({ x, y });
+  };
+  const menuEdit = (edits: MenuEdits) => {
+    if (!state) return;
+    perform(planMenuEdit(state, ui.selection, edits));
+    setCtxMenu(null);
+  };
+  const openCopy = () => {
+    setCtxMenu(null);
+    setCopyPanel({ ids: [...ui.selection], result: null });
+  };
+  const runCopy = (levels: number[]): string | undefined => {
+    if (!session || !state || !copyPanel) return undefined;
+    const plan = planCopyToFloors(state, session.ctx, copyPanel.ids, levels);
+    const err = perform(plan);
+    if (err === undefined && !isError(plan)) setCopyPanel({ ...copyPanel, result: [`${plan.annotation}: 완료했습니다.`, ...(plan.notices ?? [])] });
+    return err;
+  };
+  // The window closes when what it was opened for is gone (undo, delete) before it ran.
+  useEffect(() => {
+    if (!state || !copyPanel || copyPanel.result !== null) return;
+    const src = copySource(state, copyPanel.ids);
+    if ('error' in src) {
+      setCopyPanel(null);
+      setNotice({ text: src.error, tone: 'error' });
+    }
+  }, [state, copyPanel]);
+
   const blockedOr = (reason: string | false, run: () => void) => () => (reason === false ? run() : fail(reason));
 
   const operations: Operation[] = [
-    { id: 'delete', label: '삭제', shortcut: 'Delete', blocked: deleteBlocked, onClick: blockedOr(deleteBlocked, () => doDelete(false)) },
-    { id: 'delete-heal', label: '이어 붙이며 삭제', shortcut: 'Shift+Delete', blocked: healBlocked, onClick: blockedOr(healBlocked, () => doDelete(true)) },
-    { id: 'merge', label: '합치기', shortcut: 'M', blocked: mergeBlocked, onClick: blockedOr(mergeBlocked, doMerge) },
-    { id: 'flip', label: '뒤집기', shortcut: 'F', blocked: flipBlocked, onClick: blockedOr(flipBlocked, doFlip) },
-    { id: 'split', label: '나누기', shortcut: 'X', blocked: splitBlocked, onClick: blockedOr(splitBlocked, doSplit) },
+    { id: 'delete', label: '삭제', shortcut: OPERATION_KEYS.delete, blocked: deleteBlocked, onClick: blockedOr(deleteBlocked, () => doDelete(false)) },
+    { id: 'delete-heal', label: '이어 붙이며 삭제', shortcut: OPERATION_KEYS['delete-heal'], blocked: healBlocked, onClick: blockedOr(healBlocked, () => doDelete(true)) },
+    { id: 'merge', label: '합치기', shortcut: OPERATION_KEYS.merge, blocked: mergeBlocked, onClick: blockedOr(mergeBlocked, doMerge) },
+    { id: 'flip', label: '뒤집기', shortcut: OPERATION_KEYS.flip, blocked: flipBlocked, onClick: blockedOr(flipBlocked, doFlip) },
+    { id: 'split', label: '나누기', shortcut: OPERATION_KEYS.split, blocked: splitBlocked, onClick: blockedOr(splitBlocked, doSplit) },
     {
       id: 'attach-unattached',
       label: waiting.length > 0 ? `연결 안 된 지점 잇기 (${waiting.length})` : '연결 안 된 지점 잇기',
@@ -523,8 +564,8 @@ export function App() {
       blocked: ui.scope.kind !== 'building' ? '층을 먼저 보여 주세요(건물 선택). 이 층의 연결 안 된 지점을 한 번에 잇습니다.' : waiting.length === 0 ? '이 층에는 연결 안 된 지점이 없습니다.' : false,
       onClick: doAttachAll,
     },
-    { id: 'undo', label: '되돌리기', shortcut: 'Ctrl+Z', blocked: session?.history.canUndo() ? false : '되돌릴 변경이 없습니다.', onClick: doUndo },
-    { id: 'redo', label: '다시 하기', shortcut: 'Ctrl+Shift+Z', blocked: session?.history.canRedo() ? false : '다시 할 변경이 없습니다.', onClick: doRedo },
+    { id: 'undo', label: '되돌리기', shortcut: OPERATION_KEYS.undo, blocked: session?.history.canUndo() ? false : '되돌릴 변경이 없습니다.', onClick: doUndo },
+    { id: 'redo', label: '다시 하기', shortcut: OPERATION_KEYS.redo, blocked: session?.history.canRedo() ? false : '다시 할 변경이 없습니다.', onClick: doRedo },
   ];
 
   const onSave = useCallback(async () => {
@@ -586,6 +627,9 @@ export function App() {
     } else if (!mod && !e.altKey && !e.shiftKey && ui.tool === 'select' && k === 'x') {
       e.preventDefault();
       blockedOr(splitBlocked, doSplit)();
+    } else if (!mod && !e.altKey && e.key === '?') {
+      e.preventDefault();
+      setHelpOpen(true);
     } else if (!mod && !e.altKey && !e.shiftKey && (k === '[' || k === ']')) {
       e.preventDefault();
       stepFloor(k === '[' ? -1 : 1);
@@ -622,7 +666,9 @@ export function App() {
       e.preventDefault();
       runStrip();
     } else if (e.key === 'Escape') {
-      if (ui.tool === 'strip' && strip.edgeIds.length > 0) {
+      if (copyPanel) {
+        setCopyPanel(null);
+      } else if (ui.tool === 'strip' && strip.edgeIds.length > 0) {
         setStrip(initialStrip);
       } else if (ui.pickFrom) {
         patchUi({ pickFrom: null });
@@ -709,6 +755,7 @@ export function App() {
         onTool={setTool}
         onChange={patchUi}
         onSave={() => void onSave()}
+        onHelp={() => setHelpOpen(true)}
       />
       <div className="map-area">
         <MapView
@@ -727,6 +774,7 @@ export function App() {
           onPathDrawn={onPathDrawn}
           onPolygonDrawn={(ring) => setDialog({ kind: 'building', ring })}
           onMapClick={onMapClick}
+          onContextMenu={onContextMenu}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
           beginHandleDrag={beginHandleDrag}
@@ -745,6 +793,22 @@ export function App() {
             onCancel={() => patchUi({ pickFrom: null })}
           />
         )}
+        {copyPanel && (() => {
+          const src = copySource(state, copyPanel.ids);
+          if ('error' in src) return copyPanel.result ? <CopyPanel buildingName="" fromLevel={0} levels={[]} summary="" result={copyPanel.result} onRun={() => undefined} onClose={() => setCopyPanel(null)} /> : null;
+          return (
+            <CopyPanel
+              key={copyPanel.ids.join(',')}
+              buildingName={buildingById(state, src.buildingId)?.props.name ?? ''}
+              fromLevel={src.level}
+              levels={copyTargets(state, src.buildingId, src.level)}
+              summary={selectionSummary(state, copyPanel.ids)}
+              result={copyPanel.result}
+              onRun={runCopy}
+              onClose={() => setCopyPanel(null)}
+            />
+          );
+        })()}
         {selected && !crossFrom && (
           <FloorPicker
             building={selected}
@@ -791,6 +855,24 @@ export function App() {
         hint={ui.tool === 'path' || ui.tool === 'add-node' || ui.tool === 'door' ? TOOL_HINTS[ui.tool] : null}
       />
 
+      {ctxMenu && ui.selection.length > 0 && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          summary={selectionSummary(state, ui.selection)}
+          fields={menuFields(state, ui.selection)}
+          copyBlocked={copyBlocked(state, ui.selection)}
+          deleteBlocked={deleteBlocked}
+          onEdit={menuEdit}
+          onCopy={openCopy}
+          onDelete={() => {
+            setCtxMenu(null);
+            doDelete(false);
+          }}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {dialog?.kind === 'building' && (
         <BuildingDialog
           onCancel={closeDialog}

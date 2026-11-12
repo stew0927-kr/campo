@@ -17,6 +17,62 @@ export const CROSS_TOOLS: readonly Tool[] = ['bridge', 'escalator'];
 
 /** One key per tool (SPEC-v0.2 5.3 and 6.5). */
 export const TOOL_KEYS: Partial<Record<Tool, string>> = { door: 'D', strip: 'R', elevator: 'V', restroom: 'T', path: 'P', escalator: 'E' };
+
+/** The tools in toolbar order with their Korean names. The toolbar and the shortcut list (?) are both made from this and TOOL_KEYS. */
+export const TOOL_LIST: readonly { id: Tool; label: string }[] = [
+  { id: 'select', label: '선택' },
+  { id: 'path', label: '길 그리기' },
+  { id: 'building', label: '건물' },
+  { id: 'select-building', label: '건물 선택' },
+  { id: 'add-node', label: '지점 추가' },
+  { id: 'connect', label: '잇기' },
+  { id: 'portal', label: '포탈' },
+  { id: 'bridge', label: '연결통로' },
+  { id: 'door', label: '문 연속 찍기' },
+  { id: 'strip', label: '강의실 줄' },
+  { id: 'restroom', label: '화장실' },
+  { id: 'elevator', label: '엘리베이터' },
+  { id: 'escalator', label: '에스컬레이터' },
+];
+
+/** Keys of the operations (SPEC-v0.2 5.3). The toolbar buttons, their tooltips and the shortcut list read them from here. */
+export const OPERATION_KEYS = {
+  delete: 'Delete',
+  'delete-heal': 'Shift+Delete',
+  merge: 'M',
+  flip: 'F',
+  split: 'X',
+  undo: 'Ctrl+Z',
+  redo: 'Ctrl+Shift+Z',
+} as const;
+
+export interface ShortcutRow {
+  keys: string;
+  label: string;
+}
+
+/** The 도구 단축키 list: tools from TOOL_LIST / TOOL_KEYS ("-" when a tool has no key), then the other keys of SPEC-v0.2 5.3. */
+export function shortcutSections(): { title: string; rows: ShortcutRow[] }[] {
+  return [
+    { title: '도구', rows: TOOL_LIST.map((t) => ({ keys: TOOL_KEYS[t.id] ?? '-', label: t.label })) },
+    {
+      title: '작업',
+      rows: [
+        { keys: `${OPERATION_KEYS.delete} / Backspace`, label: '삭제' },
+        { keys: OPERATION_KEYS['delete-heal'], label: '이어 붙이며 삭제' },
+        { keys: OPERATION_KEYS.merge, label: '합치기' },
+        { keys: OPERATION_KEYS.split, label: '나누기' },
+        { keys: OPERATION_KEYS.flip, label: '뒤집기 (구간 방향, 문의 앞·뒤)' },
+        { keys: 'O (누르고 있기)', label: '바깥 범위로 찍기' },
+        { keys: `${OPERATION_KEYS.undo} / ${OPERATION_KEYS.redo}`, label: '되돌리기 / 다시 하기' },
+        { keys: 'Esc', label: '모드 끝내기, 선택 풀기' },
+        { keys: '[ / ]', label: '층 내리기 / 올리기' },
+        { keys: '지도에서 우클릭', label: '선택한 것의 메뉴 (속성, 다른 층에 복사, 삭제)' },
+        { keys: '?', label: '이 목록 열기' },
+      ],
+    },
+  ];
+}
 /** What "지점 추가" places: indoors a node or a staircase; outdoors a point or a poi (SPEC §8). Elevators have their own tool. */
 export type AddKind = IndoorNodeKind | 'stairs' | 'outdoor' | 'poi';
 export type PanelTab = 'properties' | 'checks' | 'routes';

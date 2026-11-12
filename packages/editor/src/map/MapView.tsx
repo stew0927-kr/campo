@@ -11,7 +11,7 @@ import type { Preview } from '../model/doors.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import type { OutdoorKind, PathVertex } from '../model/tools.ts';
-import { buildingInScope, edgeStrong, scopeAt, scopeLabel, snappable, type Scope } from '../model/scope.ts';
+import { buildingInScope, edgeStrong, nodeStrong, scopeAt, scopeLabel, snappable, type Scope } from '../model/scope.ts';
 import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } from '../model/snap.ts';
 import { PLACING_TOOLS, type Tool } from '../ui/ui-state.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
@@ -68,8 +68,10 @@ interface Props {
   previewShapes: FeatureCollection | null;
   onPolygonDrawn: (ring: Position[]) => void;
   onMapClick: (click: MapClick) => void;
+  /** Right-click: the node or edge under the pointer (if any) and where the menu goes (page coordinates). */
+  onContextMenu: (hit: { node: EditNode | undefined; edge: EditEdge | undefined; x: number; y: number }) => void;
   /** Shift + drag on the map: the nodes inside the box. */
-  onBoxSelect: (nodeIds: string[]) => void;
+  onBoxSelect: (ids: string[]) => void;
   /** A node drag begins: the history side of it (SPEC-v0.2 5.1). */
   beginDrag: (nodeId: string) => NodeDrag;
   /** A handle in the middle of a selected edge is pulled: the drag, or why the edge cannot be split. */
@@ -146,12 +148,10 @@ export function MapView(props: Props) {
     };
 
     // ---- click: pick a node, an edge or a building outline ----
-    map.on('click', (e) => {
-      const at: Position = [e.lngLat.lng, e.lngLat.lat];
-      if (latest.current.tool === 'path' && !pathScope.current) pathScope.current = autoScope(at);
-      if (DRAW_MODE[latest.current.tool]) return; // Terra Draw owns clicks while drawing
-      const { state: st, scope: sc, canPick } = latest.current;
-      const node = nearestNode(e.point, canPick, PICK_PX);
+    /** The node (within PICK_PX), else the nearest strongly drawn edge, else a building outline, under a screen point. */
+    const pickAt = (point: ScreenPoint, canPick: (n: EditNode) => boolean, withBuildings: boolean) => {
+      const { state: st, scope: sc } = latest.current;
+      const node = nearestNode(point, canPick, PICK_PX);
       let edge: EditEdge | undefined;
       let building: EditBuilding | undefined;
       if (!node) {
@@ -168,19 +168,19 @@ export function MapView(props: Props) {
               const [ox, oy] = [(-(p1.y - p0.y) / len) * shift, ((p1.x - p0.x) / len) * shift];
               [p0, p1] = [{ x: p0.x + ox, y: p0.y + oy }, { x: p1.x + ox, y: p1.y + oy }];
             }
-            const dist = distanceToSegment(e.point, p0, p1);
+            const dist = distanceToSegment(point, p0, p1);
             if (dist <= best) {
               best = dist;
               edge = f;
             }
           }
         }
-        if (!edge) {
+        if (!edge && withBuildings) {
           for (const b of Object.values(st.buildings)) {
             if (!buildingInScope(b, sc)) continue;
             const pts = (b.polygon[0] ?? []).map((c) => map.project(c));
             for (let i = 0; i + 1 < pts.length; i++) {
-              const dist = distanceToSegment(e.point, pts[i]!, pts[i + 1]!);
+              const dist = distanceToSegment(point, pts[i]!, pts[i + 1]!);
               if (dist <= best) {
                 best = dist;
                 building = b;
@@ -189,7 +189,21 @@ export function MapView(props: Props) {
           }
         }
       }
+      return { node, edge, building };
+    };
+    map.on('click', (e) => {
+      const at: Position = [e.lngLat.lng, e.lngLat.lat];
+      if (latest.current.tool === 'path' && !pathScope.current) pathScope.current = autoScope(at);
+      if (DRAW_MODE[latest.current.tool]) return; // Terra Draw owns clicks while drawing
+      const { node, edge, building } = pickAt(e.point, latest.current.canPick, true);
       latest.current.onMapClick({ position: at, node, edge, building, shift: e.originalEvent.shiftKey, scope: autoScope(at) });
+    });
+    // Right-click: the browser's own menu is blocked on the map only (this listener sits on MapLibre's container), and the editor's menu opens.
+    map.on('contextmenu', (e) => {
+      e.originalEvent.preventDefault();
+      if (DRAW_MODE[latest.current.tool]) return;
+      const { node, edge } = pickAt(e.point, (n) => nodeStrong(n, latest.current.scope), false);
+      latest.current.onContextMenu({ node, edge, x: e.originalEvent.clientX, y: e.originalEvent.clientY });
     });
 
     // ---- node drag and box select (선택 tool) ----
@@ -278,6 +292,9 @@ export function MapView(props: Props) {
         return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
       };
       const ids = Object.values(latest.current.state.nodes).filter((n) => latest.current.canPick(n) && inBox(n.coord)).map((n) => n.id);
+      // An edge is in the box when both its ends are (so a box around a corridor takes its edges along).
+      const picked = new Set(ids);
+      for (const e of Object.values(latest.current.state.edges)) if (picked.has(e.props.from) && picked.has(e.props.to)) ids.push(e.id);
       // A building is in the box when its whole outline is (a box drawn inside a building picks only what is in it).
       for (const b of Object.values(latest.current.state.buildings)) {
         const ring = b.polygon[0] ?? [];

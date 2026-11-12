@@ -329,3 +329,42 @@ button.check-item:hover { background: var(--chrome); }
 .measure-add, .measure-clear { padding: 5px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
 .measure-add { border-color: var(--footway); background: var(--footway); color: #fff; font-weight: 600; }
 .measure-add[aria-disabled="true"] { border-color: var(--rule); background: var(--chrome); color: var(--muted); cursor: not-allowed; }
+
+/* ---- 도움말, 우클릭 메뉴, 다른 층에 복사 ---- */
+.help-button { margin-left: auto; padding: 5px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.help-button + .save { margin-left: 0; }
+.dialog-help { width: min(460px, calc(100vw - 32px)); }
+.help-section { margin: 0 0 6px; font-size: var(--text-m); color: var(--muted); }
+.help-list { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0 0 8px; }
+.help-list dt { font-weight: 600; font-variant-numeric: tabular-nums; }
+.help-list dd { margin: 0; }
+.help-list kbd { padding: 0 5px; border: 1px solid var(--rule); border-radius: 4px; background: var(--chrome); font: inherit; }
+
+.ctx-menu {
+  position: fixed; z-index: 20; min-width: 190px; max-width: 260px; padding: 4px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; box-shadow: 0 4px 16px rgb(30 41 51 / 0.2);
+  display: flex; flex-direction: column;
+}
+.ctx-head { margin: 2px 8px 4px; color: var(--muted); font-size: var(--text-s); }
+.ctx-item { padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.ctx-item:hover:not([aria-disabled="true"]), .ctx-item:focus-visible { background: var(--chrome); }
+.ctx-item[aria-disabled="true"] { color: var(--muted); opacity: 0.6; cursor: not-allowed; }
+.ctx-reason { margin: 0 8px 4px; color: var(--muted); font-size: var(--text-s); }
+.ctx-props { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 8px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); margin: 2px 0; }
+.ctx-props label { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-s); color: var(--muted); }
+.ctx-props select, .ctx-props input { padding: 4px 6px; border: 1px solid var(--rule); border-radius: 5px; font: inherit; color: var(--ink); background: var(--surface); }
+
+.copy-panel {
+  position: absolute; top: 12px; right: 84px; z-index: 2; width: 250px;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; box-shadow: 0 2px 10px rgb(30 41 51 / 0.12);
+}
+.copy-title { margin: 0; font-size: var(--text-m); }
+.copy-floors { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; border: 0; }
+.copy-floors label { display: flex; align-items: center; gap: 6px; }
+.copy-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.copy-actions button { padding: 5px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.copy-actions .primary { border-color: var(--footway); background: var(--footway); color: #fff; font-weight: 600; }
+.copy-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.copy-result { margin: 0; padding-left: 16px; }
+.copy-panel .field-help { margin: 0; }

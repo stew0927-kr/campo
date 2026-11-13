@@ -1,7 +1,6 @@
-// Turf helpers of the macros. Every call passes { units: 'meters' } (Turf's default is kilometres, SPEC-v0.2 §6),
-// and nearestPointOnLine is read through its 7.4 property names (segmentIndex, totalDistance, pointDistance).
+// Turf helpers of the macros. Every call passes { units: 'meters' } (Turf's default is kilometres, SPEC-v0.2 §6).
+// The foot of a perpendicular is footOnLine in ../geo.ts, shared with the actions.
 import along from '@turf/along';
-import nearestPointOnLine from '@turf/nearest-point-on-line';
 import type { Position } from '../../types.ts';
 import { lineLength, metres } from '../geo.ts';
 
@@ -11,23 +10,6 @@ const line = (coords: readonly Position[]) => ({ type: 'LineString' as const, co
 export function pointAlong(coords: readonly Position[], d: number): Position {
   const [lng, lat] = along(line(coords), Math.max(0, d), { units: 'meters' }).geometry.coordinates;
   return [lng!, lat!];
-}
-
-export interface Projection {
-  coord: Position;
-  /** Metres from the start of the polyline to the foot. */
-  totalDistance: number;
-  /** Metres from the point to the foot. */
-  pointDistance: number;
-  segmentIndex: number;
-}
-
-/** Foot of the perpendicular from `p` onto the polyline, with the distance along it. */
-export function project(coords: readonly Position[], p: Position): Projection {
-  const snapped = nearestPointOnLine(line(coords), [p[0], p[1]], { units: 'meters' });
-  const [lng, lat] = snapped.geometry.coordinates;
-  const { totalDistance, pointDistance, segmentIndex } = snapped.properties;
-  return { coord: [lng!, lat!], totalDistance, pointDistance, segmentIndex: Math.min(segmentIndex, coords.length - 2) };
 }
 
 /** Metres per degree of longitude and of latitude around `p` (Turf distance, metres). */

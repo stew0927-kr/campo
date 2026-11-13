@@ -103,7 +103,7 @@ describe('지점 추가, 엘리베이터, 계단', () => {
   });
 });
 
-describe('잇기, 포탈, 연결통로', () => {
+describe('잇기, 출입구 연결, 연결통로', () => {
   it('connect: corridor on one floor, footway outdoors, and refuses jumps and duplicates', () => {
     const s = fixtureSession();
     const st = s.history.current();

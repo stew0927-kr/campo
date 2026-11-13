@@ -43,7 +43,7 @@ export function planEscalator(state: EditState, ctx: EditContext, lowerId: strin
   }
   if (endId === lowerId) return { error: '같은 지점입니다. 다른 지점을 골라 주세요.' };
   if ((startBuilding === null) !== (endBuilding === null)) {
-    return { error: '바깥과 건물 안은 에스컬레이터로 바로 잇지 않습니다. 출입구는 포탈로 이어 주세요.' };
+    return { error: '바깥과 건물 안은 에스컬레이터로 바로 잇지 않습니다. 출입구는 출입구 연결 도구로 이어 주세요.' };
   }
   const indoor = startBuilding !== null;
   if (indoor && startBuilding !== endBuilding) return { error: '다른 건물끼리는 연결통로로 이어 주세요. 에스컬레이터는 한 건물 안에서만 만듭니다.' };

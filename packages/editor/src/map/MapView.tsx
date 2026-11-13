@@ -13,7 +13,7 @@ import { edgeMidpoint } from '../model/split.ts';
 import type { OutdoorKind, PathVertex } from '../model/tools.ts';
 import { buildingInScope, edgeStrong, nodeStrong, scopeAt, scopeLabel, snappable, type Scope } from '../model/scope.ts';
 import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } from '../model/snap.ts';
-import { PLACING_TOOLS, type Tool } from '../ui/ui-state.ts';
+import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
   DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, WAY_COLORS,
@@ -56,7 +56,7 @@ interface Props {
   basemap: BasemapId;
   scope: Scope;
   highlight: ReadonlySet<string>;
-  /** Which nodes a click may pick right now (e.g. outdoor points for the second click of 포탈). */
+  /** Which nodes a click may pick right now (e.g. outdoor points for the second click of 출입구 연결). */
   canPick: (node: EditNode) => boolean;
   routes: RouteLine[];
   focus: FocusRequest | null;
@@ -64,7 +64,7 @@ interface Props {
   onPathDrawn: (vertices: PathVertex[], scope: Scope) => void;
   /** Preview under the pointer while a placing tool is active (null: none). */
   hover: ((position: Position, scope: Scope) => Preview) | null;
-  /** Preview that stays (the doors of a 강의실 줄). */
+  /** Preview that stays (the doors of a 강의실 자동 연결). */
   previewShapes: FeatureCollection | null;
   onPolygonDrawn: (ring: Position[]) => void;
   onMapClick: (click: MapClick) => void;
@@ -393,7 +393,7 @@ export function MapView(props: Props) {
     const refreshHover = () => {
       moveRaf = null;
       const { tool, state: st, hover } = latest.current;
-      if (!lastMove || !PLACING_TOOLS.includes(tool)) {
+      if (!lastMove || !toolDef(tool).placing) {
         badge.hidden = true;
         return;
       }

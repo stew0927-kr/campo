@@ -4,6 +4,7 @@ import type { EditBuilding, RestroomGender, Wheelchair } from '@campo/core';
 import { GENDERS, WHEELCHAIRS, type RestroomForm } from '../model/doors.ts';
 import { parseLevels } from '../model/building.ts';
 import { floorLabel } from '../model/scope.ts';
+import { tabLabel } from './registry.ts';
 import { directionLabel, type Direction, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 
 type Submit<T> = (value: T) => string | undefined;
@@ -167,7 +168,7 @@ export function PoiDialog({ onSubmit, onCancel }: { onSubmit: Submit<string>; on
   return (
     <Modal title="출발·도착 후보" submitLabel="후보 만들기" error={error} onSubmit={() => setError(onSubmit(name))} onCancel={onCancel}>
       <label className="field">이름<input value={name} onChange={(e) => setName(e.target.value)} placeholder="한양대역 2번 출구" autoFocus /></label>
-      <p className="field-help">길찾기 탭에서 이 이름으로 검색합니다. 바깥 길과 잇기 도구로 이어 주세요.</p>
+      <p className="field-help">{tabLabel('routes')} 탭에서 이 이름으로 검색합니다. 바깥 길과 잇기 도구로 이어 주세요.</p>
     </Modal>
   );
 }
@@ -215,7 +216,7 @@ export function DeleteBuildingDialog({ items, onConfirm, onCancel }: { items: De
           <strong>{b.name}({b.code})</strong>를 지우면 안에 있는 지점 {b.nodes}개, 구간 {b.edges}개, 강의실 영역 {b.rooms}개도 함께 지워집니다.
         </p>
       ))}
-      <p className="field-help">구간 개수에는 포탈과 연결통로가 들어 있습니다. 지운 뒤에도 Ctrl+Z로 되돌릴 수 있습니다.</p>
+      <p className="field-help">구간 개수에는 출입구 연결과 연결통로가 들어 있습니다. 지운 뒤에도 Ctrl+Z로 되돌릴 수 있습니다.</p>
     </Modal>
   );
 }

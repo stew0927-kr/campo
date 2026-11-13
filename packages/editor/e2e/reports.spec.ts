@@ -26,7 +26,7 @@ test('8개 샘플 제보를 처리하고 저장하면 changeset 1개와 override
   await ed.open(REPORTS_CAMPUS);
   const pristineBefore = readFileSync(join(PRISTINE_DIR, REPORTS_CAMPUS, 'buildings', 'A', 'L1.geojson'), 'utf8');
 
-  const undo = page.getByRole('group', { name: '작업' }).getByRole('button', { name: /^되돌리기/ });
+  const undo = page.getByRole('group', { name: '편집 작업' }).getByRole('button', { name: /^되돌리기/ });
 
   // ---- the tab: badge, queue, the bundle ----
   const tab = page.getByRole('tab', { name: /^제보/ });

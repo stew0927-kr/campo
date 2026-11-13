@@ -1,4 +1,4 @@
-// The drawing tools (SPEC §8) as Plans of core actions: 길 그리기, 지점 추가, 계단, 잇기, 포탈. (엘리베이터: elevator.ts, 연결통로: bridge.ts, 에스컬레이터: escalator.ts)
+// The drawing tools (SPEC §8) as Plans of core actions: 길 그리기, 지점 추가, 계단, 잇기, 출입구 연결. (엘리베이터: elevator.ts, 연결통로: bridge.ts, 에스컬레이터: escalator.ts)
 // New ids come from core (freshId with the session's generator), new Features start at rev 1 inside addNode / addEdge.
 // step_free defaults follow SPEC-v0.2 §2.1: steps false, elevator true, everything else null (not known).
 import {
@@ -13,7 +13,7 @@ import {
   type NodeProperties,
   type Position,
 } from '@campo/core';
-import type { Plan, PlanResult, Step } from './plan.ts';
+import type { PlanResult, Step } from './plan.ts';
 import { OUTDOOR, floorLabel, snappable, type Scope } from './scope.ts';
 
 /** Default source for data drawn in the editor until someone checks it on site (SPEC §4.1). */
@@ -180,7 +180,7 @@ export function planStairs(state: EditState, ctx: EditContext, s: { buildingId: 
   return { annotation: `계단 추가(${flights.length}개 층)`, steps };
 }
 
-// ---- 잇기, 포탈 ----
+// ---- 잇기, 출입구 연결 (portal) ----
 
 const joined = (state: EditState, a: string, b: string, match?: (e: EditState['edges'][string]) => boolean) =>
   Object.values(state.edges).some((e) => ((e.props.from === a && e.props.to === b) || (e.props.from === b && e.props.to === a)) && (!match || match(e)));
@@ -197,7 +197,7 @@ export function planConnect(state: EditState, ctx: EditContext, fromId: string, 
   const [a, b] = [from.props, to.props];
   let props: Pick<EdgeProps, 'highway' | 'edge_type' | 'step_free'>;
   if (a.building_id === null && b.building_id === null) props = { highway: 'footway', edge_type: 'outdoor', step_free: null };
-  else if (a.building_id === null || b.building_id === null) return { error: '건물 안과 바깥은 포탈 도구로 이어 주세요.' };
+  else if (a.building_id === null || b.building_id === null) return { error: '건물 안과 바깥은 출입구 연결 도구로 이어 주세요.' };
   else if (a.building_id !== b.building_id) return { error: '다른 건물끼리는 연결통로 도구로 이어 주세요.' };
   else if (a.level !== b.level) return { error: '다른 층끼리는 계단이나 엘리베이터 도구로 이어 주세요.' };
   else props = { highway: 'corridor', edge_type: 'indoor', step_free: null };
@@ -212,11 +212,11 @@ export function planConnect(state: EditState, ctx: EditContext, fromId: string, 
 export function planPortal(state: EditState, ctx: EditContext, entranceId: string, outdoorId: string): PlanResult {
   const entrance = state.nodes[entranceId];
   const outside = state.nodes[outdoorId];
-  if (!entrance || entrance.props.node_type !== 'entrance') return { error: '포탈은 건물 출입구에서 시작합니다. 출입구 지점을 먼저 골라 주세요.' };
+  if (!entrance || entrance.props.node_type !== 'entrance') return { error: '출입구 연결은 건물 출입구에서 시작합니다. 출입구 지점을 먼저 골라 주세요.' };
   if (!outside || outside.props.building_id !== null) return { error: '이어질 바깥 지점을 골라 주세요.' };
-  if (joined(state, entranceId, outdoorId, (e) => e.props.edge_type === 'portal')) return { error: '이 출입구와 바깥 지점은 이미 포탈로 이어져 있습니다.' };
+  if (joined(state, entranceId, outdoorId, (e) => e.props.edge_type === 'portal')) return { error: '이 출입구와 바깥 지점은 이미 이어져 있습니다.' };
   return {
-    annotation: '포탈 추가',
+    annotation: '출입구 연결 추가',
     steps: [edgeStep({
       kind: 'edge', highway: 'footway', edge_type: 'portal', step_free: null, from: entranceId, to: outdoorId, bidirectional: true, source: DRAWN_SOURCE,
     }, ctx)],

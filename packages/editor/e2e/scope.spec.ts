@@ -4,7 +4,7 @@ import { expect, test } from '@playwright/test';
 import { Editor, checkSaved } from './support.ts';
 import { ENTRANCE } from './seed.ts';
 
-test('3층을 보는 채로 바깥 길 2구간을 그리고 출입구에 붙이면 포탈 구간이 생깁니다', async ({ page }) => {
+test('3층을 보는 채로 바깥 길 2구간을 그리고 출입구에 붙이면 출입구 연결(portal) 구간이 생깁니다', async ({ page }) => {
   const ed = new Editor(page);
   await ed.open('e2e-scope');
 

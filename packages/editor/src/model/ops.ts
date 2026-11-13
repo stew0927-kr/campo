@@ -61,7 +61,7 @@ export function planDelete(state: EditState, ctx: EditContext, ids: readonly str
     return { error: '먼저 지울 지점이나 구간을 골라 주세요.' };
   }
   const parts: string[] = [];
-  if (sel.nodes.length > 0) parts.push(`지점 ${sel.nodes.length}개 ${heal ? '이어 붙이며 삭제' : '삭제'}`);
+  if (sel.nodes.length > 0) parts.push(`지점 ${sel.nodes.length}개 ${heal ? '삭제 후 연결' : '삭제'}`);
   if (sel.edges.length > 0) parts.push(`구간 ${sel.edges.length}개 삭제`);
   if (sel.rooms.length > 0) parts.push(`강의실 영역 ${sel.rooms.length}개 삭제`);
   for (const code of sel.buildings) parts.push(`건물 ${code} 삭제`);

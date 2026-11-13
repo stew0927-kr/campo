@@ -8,7 +8,7 @@ const CODE_LABELS: Record<string, string> = {
   'level-not-in-building': '층 목록 밖',
   'vertical-level-mismatch': '층 불일치',
   'ground-level-without-entrance': '출입구 없음',
-  'entrance-without-portal': '포탈 없음',
+  'entrance-without-portal': '출입구 연결 없음',
   'isolated-node': '외톨이 지점',
   'disconnected-component': '끊긴 길',
   'needs-check': '현장 확인',

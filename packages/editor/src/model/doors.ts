@@ -1,4 +1,4 @@
-// 문 연속 찍기 (D), 강의실 줄 (R) and 화장실 (SPEC-v0.2 6.5, 2.3): plans of core macros plus the previews the map draws.
+// 호실 연속 입력 (D), 강의실 자동 연결 (R) and 화장실 (SPEC-v0.2 6.5, 2.3): plans of core macros plus the previews the map draws.
 // The perpendicular foot, the corridor split and the door layout all come from core (previewAttachDoor, stripDoors, roomStripAction).
 import {
   chainOf,
@@ -22,9 +22,9 @@ import { floorLabel, type Scope } from './scope.ts';
 export const NEED_FLOOR = '건물 안을 눌러 주세요. (O 키를 누르고 있으면 건물 위라도 바깥으로 찍힙니다.)';
 const ROOM_REF = /^[A-Za-z0-9-]+$/;
 
-// ---- 문 연속 찍기 ----
+// ---- 호실 연속 입력 ----
 
-/** What the 문 연속 찍기 tool remembers between clicks: the number the next room gets, the step, and the last room. */
+/** What the 호실 연속 입력 tool remembers between clicks: the number the next room gets, the step, and the last room. */
 export interface DoorRun {
   /** Number of the next front door ("301"). Typed once; counts up by itself. */
   nextRef: string;
@@ -43,7 +43,7 @@ export function nextRefAfter(ref: string, step: number): string {
   return refAfter(ref, step) ?? ref;
 }
 
-/** One click of 문 연속 찍기: a door (front, or back with `back`) joined to the nearest corridor, in one plan. */
+/** One click of 호실 연속 입력: a door (front, or back with `back`) joined to the nearest corridor, in one plan. */
 export function planDoor(state: EditState, ctx: EditContext, p: { position: Position; scope: Scope; ref: string; back: boolean }): PlanResult {
   if (p.scope.kind !== 'building') return { error: NEED_FLOOR };
   const ref = p.ref.trim();
@@ -83,7 +83,7 @@ export function doorPreview(state: EditState, position: Position, scope: Scope):
   };
 }
 
-// ---- 강의실 줄 ----
+// ---- 강의실 자동 연결 ----
 
 export interface StripInput {
   corridorEdgeIds: string[];

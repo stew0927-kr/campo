@@ -20,15 +20,14 @@ export interface Foot {
   segmentIndex: number;
   /** Distance from the point to the line, metres. */
   pointDistance: number;
+  /** Metres from the start of the polyline to the foot. */
+  totalDistance: number;
 }
 
 /** Foot of the perpendicular from `point` onto the polyline (Turf 7.4 property names). */
 export function footOnLine(coords: readonly Position[], point: Position): Foot {
-  const snapped = nearestPointOnLine({ type: 'LineString', coordinates: coords.map((p) => [p[0], p[1]]) }, point, { units: 'meters' });
+  const snapped = nearestPointOnLine({ type: 'LineString', coordinates: coords.map((p) => [p[0], p[1]]) }, [point[0], point[1]], { units: 'meters' });
   const [lng, lat] = snapped.geometry.coordinates;
-  return {
-    coord: [lng!, lat!],
-    segmentIndex: Math.min(snapped.properties.segmentIndex, coords.length - 2),
-    pointDistance: snapped.properties.pointDistance,
-  };
+  const { segmentIndex, pointDistance, totalDistance } = snapped.properties;
+  return { coord: [lng!, lat!], segmentIndex: Math.min(segmentIndex, coords.length - 2), pointDistance, totalDistance };
 }

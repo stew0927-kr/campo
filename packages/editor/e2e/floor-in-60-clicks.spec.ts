@@ -25,8 +25,8 @@ test('빈 2층에 복도, 강의실 20개, 문 30개, 계단, 엘리베이터를
   await page.keyboard.press('Enter');
   await expect(page.locator('.status-message')).toContainText('복도 1구간 그리기: 완료했습니다');
 
-  // Classrooms on the south side: 강의실 줄 = corridor, first door, last door (3 clicks), then the numbers and Enter.
-  await ed.click(ed.tool('강의실 줄'));
+  // Classrooms on the south side: 강의실 자동 연결 = corridor, first door, last door (3 clicks), then the numbers and Enter.
+  await ed.click(ed.tool('강의실 자동 연결'));
   await ed.clickMap([127.0005, Y]);
   await ed.clickMap([127.00025, Y - M3]);
   await ed.clickMap([127.00075, Y - M3]);
@@ -35,8 +35,8 @@ test('빈 2층에 복도, 강의실 20개, 문 30개, 계단, 엘리베이터를
   await page.keyboard.press('Enter'); // focus is in the field: its own Enter handler runs the row
   await expect(page.locator('.status-message')).toContainText('강의실 10개 문 놓기: 완료했습니다');
 
-  // The other side: 문 연속 찍기. A front door per click, Shift+click for the back door of the same room. The number counts up by itself.
-  await ed.click(ed.tool('문 연속 찍기'));
+  // The other side: 호실 연속 입력. A front door per click, Shift+click for the back door of the same room. The number counts up by itself.
+  await ed.click(ed.tool('호실 연속 입력'));
   await page.locator('.door-ref').fill('301');
   await page.locator('.toolbar-main').click({ position: { x: 5, y: 5 } }); // leave the field so keys reach the map (not counted: not a map click)
   for (let i = 0; i < 10; i++) {

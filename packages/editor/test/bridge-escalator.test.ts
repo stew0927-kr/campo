@@ -194,8 +194,8 @@ describe('에스컬레이터 (planEscalator)', () => {
     expect(errorOf(planEscalator(st, s.ctx, 'n_A_1_hall', 'n_A_1_main', 'up'))).toMatch(/같은 층/);
     expect(errorOf(planEscalator(st, s.ctx, 'n_A_1_hall', { position: [127.0005, 37.0006], buildingId: 'bldg_A', level: 1 }, 'up'))).toMatch(/같은 층/);
     expect(errorOf(planEscalator(st, s.ctx, 'n_A_1_hall', 'n_B_2_hall', 'up'))).toMatch(/연결통로/);
-    expect(errorOf(planEscalator(st, s.ctx, 'n_A_1_hall', 'n_out_0001', 'up'))).toMatch(/포탈/);
-    expect(errorOf(planEscalator(st, s.ctx, 'n_out_0001', 'n_A_1_hall', 'up'))).toMatch(/포탈/);
+    expect(errorOf(planEscalator(st, s.ctx, 'n_A_1_hall', 'n_out_0001', 'up'))).toMatch(/출입구 연결/);
+    expect(errorOf(planEscalator(st, s.ctx, 'n_out_0001', 'n_A_1_hall', 'up'))).toMatch(/출입구 연결/);
     expect(errorOf(planEscalator(st, s.ctx, 'n_A_1_hall', 'n_A_1_hall', 'up'))).toMatch(/같은 지점/);
     expect(errorOf(planEscalator(st, s.ctx, 'n_A_1_hall', { position: [127.0005, 37.0006], buildingId: 'bldg_A', level: 9 }, 'up'))).toMatch(/층 목록/);
   });

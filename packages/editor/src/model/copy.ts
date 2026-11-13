@@ -43,7 +43,7 @@ function linkKind(e: EditEdge): string | undefined {
   if (p.highway === 'steps') return '계단 구간';
   if (p.highway === 'elevator') return '엘리베이터 구간';
   if (p.edge_type === 'bridge') return '연결통로 구간';
-  if (p.edge_type === 'portal') return '포탈 구간';
+  if (p.edge_type === 'portal') return '출입구 연결 구간';
   if (p.level_from !== undefined && p.level_to !== undefined && p.level_from !== p.level_to) return '층 사이 구간';
   return undefined;
 }

@@ -35,7 +35,7 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
   const p = feature.props;
   const kind = p.kind === 'node' ? KIND_LABELS[p.node_type] : p.kind === 'edge'
     ? (p.conveying !== undefined && p.highway === 'steps' ? '에스컬레이터' : p.conveying !== undefined ? '무빙워크'
-      : p.edge_type === 'portal' ? '포탈' : p.edge_type === 'bridge' ? '연결통로' : KIND_LABELS[p.highway === 'corridor' ? 'corridor_edge' : p.highway])
+      : p.edge_type === 'portal' ? '출입구 연결' : p.edge_type === 'bridge' ? '연결통로' : KIND_LABELS[p.highway === 'corridor' ? 'corridor_edge' : p.highway])
     : p.kind === 'room' ? '강의실 영역' : KIND_LABELS.building;
   const sources = SOURCES.some((s) => s.value === p.source) ? SOURCES : [...SOURCES, { value: p.source, label: p.source }];
   return (

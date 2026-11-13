@@ -6,7 +6,8 @@ import { edgeCoords, scopeOf, type EditState } from '../state.ts';
 import { attachDoorSteps } from './attachDoor.ts';
 import { defineMacro, resultOf, type MacroAction, type MacroResult, type Runner } from './compose.ts';
 import { corridorCandidates, nearestOf } from './corridor.ts';
-import { lineLength, pointAlong, pointInRing, project, sideways } from './geo.ts';
+import { footOnLine } from '../geo.ts';
+import { lineLength, pointAlong, pointInRing, sideways } from './geo.ts';
 import { ATTACH_MAX_DIST_M, DOOR_INSET_M, DOOR_SIDE_FRACTIONS } from '../tolerances.ts';
 
 export type RoomDoors = 'front' | 'back' | 'both';
@@ -64,7 +65,7 @@ export function roomDoorSpots(
   };
   const [p, q] = DOOR_SIDE_FRACTIONS.map((f) => inside(pointAlong([a, b], len * f))) as [Position, Position];
   const corridor = edgeCoords(state, state.edges[best.edgeId]!);
-  const pFront = project(corridor, p).totalDistance > project(corridor, q).totalDistance;
+  const pFront = footOnLine(corridor, p).totalDistance > footOnLine(corridor, q).totalDistance;
   return {
     side: [[a[0], a[1]], [b[0], b[1]]],
     spots: pFront ? [{ coord: p, door_role: 'front' }, { coord: q, door_role: 'back' }] : [{ coord: q, door_role: 'front' }, { coord: p, door_role: 'back' }],

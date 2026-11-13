@@ -1,4 +1,4 @@
-// "건물" and "건물 선택" tools (SPEC §8).
+// "건물 외곽선 그리기" and "건물 선택" tools (SPEC §8).
 import { addBuilding, type EditBuilding, type EditState, type Position } from '@campo/core';
 import type { PlanResult } from './plan.ts';
 

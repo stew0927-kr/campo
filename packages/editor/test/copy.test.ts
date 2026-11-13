@@ -1,11 +1,12 @@
-// 다른 층에 복사 (copy.ts), the right-click menu's property edits (menu.ts) and the shortcut list (ui-state.ts).
+// 다른 층에 복사 (copy.ts), the right-click menu's property edits (menu.ts) and the tool registry with its shortcut list (registry.ts).
 import { describe, expect, it } from 'vitest';
 import { checkInvariants, type EditState } from '@campo/core';
 import { fixtureSession } from './fixture.ts';
 import { NOT_IN_BUILDING, copyBlocked, copySource, copyTargets, planCopyToFloors } from '../src/model/copy.ts';
 import { menuFields, planMenuEdit, selectionSummary } from '../src/model/menu.ts';
 import { isError, runPlan } from '../src/model/plan.ts';
-import { OPERATION_KEYS, TOOL_KEYS, TOOL_LIST, shortcutSections } from '../src/ui/ui-state.ts';
+import { OUTDOOR } from '../src/model/scope.ts';
+import { OPERATIONS, TOOLBAR_GROUPS, TOOLS, parseKey, shortcutSections, toolBlocked, tooltip } from '../src/ui/registry.ts';
 
 /** campus-basic A/3: corridor points hall, bridge, north (+ a stair landing, an elevator stop and the edges to them). */
 const L3_NODES = ['n_A_3_hall', 'n_A_3_bridge', 'n_A_3_north', 'n_A_3_stair', 'n_A_elevA_L3'];
@@ -198,14 +199,45 @@ describe('우클릭 메뉴 속성 편집 (menu.ts)', () => {
   });
 });
 
-describe('도구 단축키 목록 (ui-state.ts)', () => {
-  it('the tool rows are exactly TOOL_LIST with the keys of TOOL_KEYS ("-" without a key)', () => {
-    const tools = shortcutSections().find((s) => s.title === '도구')!.rows;
-    expect(tools).toEqual(TOOL_LIST.map((t) => ({ keys: TOOL_KEYS[t.id] ?? '-', label: t.label })));
-    expect(tools.find((r) => r.label === '문 연속 찍기')!.keys).toBe(TOOL_KEYS.door);
-    const ops = shortcutSections().find((s) => s.title === '작업')!.rows.map((r) => r.keys).join(' | ');
-    for (const k of Object.values(OPERATION_KEYS)) expect(ops).toContain(k);
-    expect(ops).toContain('Esc');
-    expect(ops).toContain('[ / ]');
+describe('도구·작업 레지스트리와 단축키 목록 (registry.ts)', () => {
+  it('every tool and operation is listed once under its toolbar group, with the key of its button ("-" without a key)', () => {
+    const sections = shortcutSections();
+    expect(sections.map((s) => s.title)).toEqual([...TOOLBAR_GROUPS.map((g) => g.label), '그 밖의 키']);
+    for (const d of [...TOOLS, ...OPERATIONS]) {
+      const group = TOOLBAR_GROUPS.find((g) => g.id === d.group)!;
+      const rows = sections.find((s) => s.title === group.label)!.rows.filter((r) => r.label === d.label);
+      expect(rows, d.label).toHaveLength(1);
+      expect(rows[0]!.keys.split(' / ')[0], d.label).toBe(d.key ?? '-');
+    }
+    const macros = sections.find((s) => s.title === '자동화 매크로')!.rows;
+    expect(macros.find((r) => r.label === '호실 연속 입력')!.keys).toBe('D');
+    const other = sections.at(-1)!.rows.map((r) => r.keys).join(' | ');
+    expect(other).toContain('Esc');
+    expect(other).toContain('[ / ]');
+  });
+
+  it('no two tools or operations share a key or a name, and every one has a tooltip', () => {
+    const all = [...TOOLS, ...OPERATIONS];
+    const keys = all.flatMap((d) => (d.key ? [d.key] : []));
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(new Set(all.map((d) => d.label)).size).toBe(all.length);
+    for (const d of all) expect(tooltip(d), d.id).toContain(d.description);
+    expect(tooltip(TOOLS.find((t) => t.id === 'door')!)).toMatch(/^호실 연속 입력 \(D\)\n/);
+  });
+
+  it('tools that need a floor or the outdoors say so, and are available everywhere else', () => {
+    const floor = { kind: 'building', buildingId: 'bldg_A', level: 1 } as const;
+    expect(toolBlocked('portal', OUTDOOR)).toMatch(/건물 선택/);
+    expect(toolBlocked('portal', floor)).toBe(false);
+    expect(toolBlocked('building', floor)).toMatch(/바깥/);
+    expect(toolBlocked('building', OUTDOOR)).toBe(false);
+    expect(toolBlocked('select', floor)).toBe(false);
+    expect(tooltip(TOOLS.find((t) => t.id === 'building')!, toolBlocked('building', floor))).toMatch(/지금은 쓸 수 없습니다/);
+  });
+
+  it('keys written the way the tooltips show them are parsed for the keyboard handler', () => {
+    expect(parseKey('Ctrl+Shift+Z')).toEqual({ key: 'z', mod: true, shift: true });
+    expect(parseKey('Shift+Delete')).toEqual({ key: 'delete', mod: false, shift: true });
+    expect(parseKey('M')).toEqual({ key: 'm', mod: false, shift: false });
   });
 });

@@ -165,16 +165,21 @@ test('? 키와 도움말 버튼이 도구 단축키 목록을 엽니다. 목록�
   await expect(help).toBeVisible();
   await shot(page, 'help-shortcuts.png');
 
-  // Each tool button's tooltip says its key ("문 연속 찍기 (D)"); the list shows the same pair.
-  const tools = await page.getByRole('group', { name: '도구' }).getByRole('button').evaluateAll((buttons) =>
-    buttons.map((b) => ({ label: (b.textContent ?? '').trim(), title: b.getAttribute('title') ?? '' })));
+  // Each tool button's tooltip starts with its name and key ("호실 연속 입력 (D)"), then says what the tool does;
+  // the list shows the same name and key under the same group name.
+  const tools = await page.locator('.toolbar-section').evaluateAll((sections) => sections.flatMap((s) => {
+    const group = (s.querySelector('.toolbar-caption')?.textContent ?? '').trim();
+    return [...s.querySelectorAll('button.tool:not(.op)')].map((b) => ({ group, label: (b.textContent ?? '').trim(), title: b.getAttribute('title') ?? '' }));
+  }));
   expect(tools.length).toBeGreaterThan(10);
-  const section = help.getByRole('region', { name: '도구' });
+  expect([...new Set(tools.map((t) => t.group))]).toEqual(['그리기 도구', '자동화 매크로']);
   for (const t of tools) {
-    const m = /\((.+)\)$/.exec(t.title);
-    const row = section.locator('dl > div').filter({ has: page.locator('dd').filter({ hasText: new RegExp('^' + t.label + '$') }) });
+    const lines = t.title.split('\n');
+    const m = /^.+ \((.+)\)$/.exec(lines[0]!);
+    const row = help.getByRole('region', { name: t.group }).locator('dl > div').filter({ has: page.locator('dd').filter({ hasText: new RegExp('^' + t.label + '$') }) });
     await expect(row, t.label).toHaveCount(1);
     await expect(row.locator('dt'), t.label).toHaveText(m ? m[1]! : '-');
+    expect(lines.length, t.label).toBeGreaterThan(1);
   }
   await expect(help).toContainText('Delete');
   await expect(help).toContainText('Ctrl+Z');

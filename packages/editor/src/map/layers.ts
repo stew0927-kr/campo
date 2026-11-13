@@ -365,7 +365,7 @@ export const ROUTE_LAYERS: LayerSpecification[] = [
   },
 ];
 
-// ---- Preview (문 연속 찍기, 강의실 줄): the foot of the perpendicular, its link, the doors a row would place ----
+// ---- Preview (호실 연속 입력, 강의실 자동 연결): the foot of the perpendicular, its link, the doors a row would place ----
 
 export const PREVIEW_SOURCE = 'campo-preview';
 

@@ -84,7 +84,7 @@ export class Editor {
   }
 
   tool(label: string): Locator {
-    return this.page.getByRole('group', { name: '도구' }).getByRole('button', { name: label, exact: true });
+    return this.page.locator('.toolbar-main').getByRole('button', { name: label, exact: true });
   }
 
   async save(): Promise<void> {

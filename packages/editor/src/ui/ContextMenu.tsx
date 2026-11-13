@@ -2,6 +2,7 @@
 // It is not modal: Esc, a click anywhere outside, or choosing an item closes it. Every item only asks App for a Plan.
 import { useEffect, useRef, useState } from 'react';
 import type { MenuEdits, MenuFields } from '../model/menu.ts';
+import { tabLabel } from './registry.ts';
 
 interface Props {
   /** Page coordinates of the right-click. */
@@ -78,8 +79,8 @@ export function ContextMenu({ x, y, summary, fields, copyBlocked, deleteBlocked,
       <p className="ctx-head">{summary}</p>
       {editable
         ? <button type="button" role="menuitem" className="ctx-item" data-item="props" aria-expanded={editing} onClick={() => setEditing((v) => !v)}>속성 바로 편집 {editing ? '▴' : '▾'}</button>
-        : <button type="button" role="menuitem" className="ctx-item" data-item="props" aria-disabled="true" title="이 선택은 속성 탭에서 하나씩 고쳐 주세요.">속성 바로 편집</button>}
-      {!editable && <p className="ctx-reason">지점과 구간이 섞여 있거나 종류가 달라 한꺼번에 고칠 수 없습니다. 하나씩 골라 속성 탭에서 고쳐 주세요.</p>}
+        : <button type="button" role="menuitem" className="ctx-item" data-item="props" aria-disabled="true" title={`이 선택은 ${tabLabel('properties')} 탭에서 하나씩 고쳐 주세요.`}>속성 바로 편집</button>}
+      {!editable && <p className="ctx-reason">지점과 구간이 섞여 있거나 종류가 달라 한꺼번에 고칠 수 없습니다. 하나씩 골라 {tabLabel('properties')} 탭에서 고쳐 주세요.</p>}
       {editable && editing && (
         <div className="ctx-props">
           {fields.kinds && (

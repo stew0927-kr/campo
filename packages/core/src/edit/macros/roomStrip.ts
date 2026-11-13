@@ -5,7 +5,8 @@ import { isPosition, type EditState } from '../state.ts';
 import { attachDoorSteps } from './attachDoor.ts';
 import { defineMacro, resultOf, type MacroAction, type MacroResult, type Runner } from './compose.ts';
 import { chainOf, type Chain } from './corridor.ts';
-import { pointAlong, project, segmentAt, sideways } from './geo.ts';
+import { footOnLine } from '../geo.ts';
+import { pointAlong, segmentAt, sideways } from './geo.ts';
 import { ATTACH_MAX_DIST_M, DOOR_SIDE_FRACTIONS, SNAP_VERTEX_M } from '../tolerances.ts';
 
 export interface RoomStripOptions {
@@ -68,8 +69,8 @@ export function stripDoors(state: EditState, opts: RoomStripOptions): { chain: C
   const chain = chainOf(state, opts.corridorEdgeIds);
   if (typeof chain === 'string') return chain;
 
-  const a = project(chain.coords, opts.firstDoor);
-  const b = project(chain.coords, opts.lastDoor);
+  const a = footOnLine(chain.coords, opts.firstDoor);
+  const b = footOnLine(chain.coords, opts.lastDoor);
   const offset = (a.pointDistance + b.pointDistance) / 2;
   if (offset <= SNAP_VERTEX_M) return `문 자리를 복도에서 ${SNAP_VERTEX_M}m 넘게 떨어진 곳에 찍어 주세요.`;
   const span = b.totalDistance - a.totalDistance;

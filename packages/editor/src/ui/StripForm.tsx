@@ -9,7 +9,7 @@ interface Props {
   onReset: () => void;
 }
 
-/** The numbers of 강의실 줄 (SPEC-v0.2 6.5): shown after both doors are clicked, the preview updates while typing. */
+/** The numbers of 강의실 자동 연결 (SPEC-v0.2 6.5): shown after both doors are clicked, the preview updates while typing. */
 export function StripForm({ strip, status, onChange, onRun, onReset }: Props) {
   const stage = stripStage(strip);
   const enter = (e: React.KeyboardEvent) => {

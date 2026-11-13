@@ -1,6 +1,6 @@
-// The shortcut list, opened by ? or the 도움말 button. Names and keys of the tools come from ui-state.ts (TOOL_LIST, TOOL_KEYS).
+// The shortcut list, opened by ? or the 도움말 button. Names and keys come from the same registry the toolbar is made from.
 import { useEffect, useRef } from 'react';
-import { shortcutSections } from './ui-state.ts';
+import { shortcutSections } from './registry.ts';
 
 export function HelpDialog({ onClose }: { onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);

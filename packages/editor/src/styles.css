@@ -53,10 +53,21 @@ button, select, input { font: inherit; color: inherit; }
 .toolbar-main {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: calc(var(--gap) * 2);
+  align-items: flex-end;
+  gap: 10px 14px;
   padding: var(--gap) calc(var(--gap) * 2);
 }
+/* One section per toolbar group (registry.ts TOOLBAR_GROUPS): a caption, then its buttons. Each group has its own accent. */
+.toolbar-section { display: flex; flex-direction: column; gap: 3px; min-width: 0; --group: var(--ink); }
+.toolbar-section[data-group="draw"] { --group: var(--footway); }
+.toolbar-section[data-group="macro"] { --group: var(--elevator); }
+.toolbar-caption { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; }
+.toolbar-caption::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--group); }
+.toolbar-section .toolbar-group { flex-wrap: wrap; border-color: color-mix(in srgb, var(--group) 40%, var(--rule)); }
+.toolbar-section[data-group="macro"] .toolbar-group { background: color-mix(in srgb, var(--group) 7%, var(--surface)); }
+.toolbar-section .tool[aria-pressed="true"] { background: var(--group); }
+.toolbar-end { display: flex; align-items: center; gap: var(--gap); margin-left: auto; }
+.toolbar-active { padding-right: calc(var(--gap) * 2); border-right: 1px solid var(--rule); font-weight: 600; }
 .toolbar-options {
   display: flex;
   align-items: center;
@@ -69,14 +80,15 @@ button, select, input { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 .tool-hint { margin: 0; color: var(--muted); }
-.brand { margin: 0 var(--gap) 0 0; font-size: var(--text-l); font-weight: 700; letter-spacing: -0.01em; }
+.brand { align-self: center; margin: 0 var(--gap) 0 0; font-size: var(--text-l); font-weight: 700; letter-spacing: -0.01em; }
 .brand-campus { margin-left: 6px; font-weight: 400; color: var(--muted); }
 
 .toolbar-group { display: flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
 .tool { padding: 5px 12px; border: 0; background: transparent; cursor: pointer; }
 .tool + .tool { border-left: 1px solid var(--rule); }
 .tool[aria-pressed="true"] { background: var(--ink); color: #fff; }
-.tool:disabled { color: var(--rule); cursor: default; }
+.tool:disabled { color: var(--muted); opacity: 0.5; cursor: not-allowed; }
+.tool:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .op[aria-disabled="true"] { color: var(--muted); opacity: 0.55; cursor: default; }
 .box-select { position: absolute; z-index: 2; border: 1.5px solid #f2b705; background: rgb(242 183 5 / 0.15); pointer-events: none; }
 .map[data-dragging="true"] canvas { cursor: grabbing; }
@@ -99,7 +111,6 @@ button, select, input { font: inherit; color: inherit; }
 .basemap select { padding: 4px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); }
 
 .save {
-  margin-left: auto;
   padding: 6px 18px;
   border: 0;
   border-radius: 6px;
@@ -262,7 +273,7 @@ button.check-item:hover { background: var(--chrome); }
   }
   .floors { top: auto; bottom: 36px; }
   .panel { border-left: 0; border-top: 1px solid var(--rule); max-height: 40vh; }
-  .save { margin-left: 0; }
+  .toolbar-end { margin-left: 0; }
 }
 
 /* ---- Scope next to the cursor, tool forms, 연결 안 된 지점 ---- */
@@ -331,8 +342,7 @@ button.check-item:hover { background: var(--chrome); }
 .measure-add[aria-disabled="true"] { border-color: var(--rule); background: var(--chrome); color: var(--muted); cursor: not-allowed; }
 
 /* ---- 도움말, 우클릭 메뉴, 다른 층에 복사 ---- */
-.help-button { margin-left: auto; padding: 5px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
-.help-button + .save { margin-left: 0; }
+.help-button { padding: 5px 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
 .dialog-help { width: min(460px, calc(100vw - 32px)); }
 .help-section { margin: 0 0 6px; font-size: var(--text-m); color: var(--muted); }
 .help-list { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0 0 8px; }

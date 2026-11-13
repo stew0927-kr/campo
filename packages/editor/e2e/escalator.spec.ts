@@ -17,7 +17,7 @@ const shot = (page: Page, name: string) => (process.env['CAMPO_E2E_SHOT'] ? page
 
 /** The tab 길찾기: the two cards for 101호 -> 201호. Returns the cards and the minutes of the shortest one. */
 async function route(page: Page, ed: Editor): Promise<{ shortest: Locator; stepFree: Locator; minutes: number }> {
-  await ed.click(page.getByRole('tab', { name: '길찾기' }));
+  await ed.click(page.getByRole('tab', { name: '경로 테스트' }));
   await page.getByLabel('출발', { exact: true }).fill(ESCALATOR.from);
   await page.getByLabel('도착', { exact: true }).fill(ESCALATOR.to);
   const shortest = page.getByRole('region', { name: '계단 포함 최단 경로' });
@@ -116,7 +116,7 @@ test('에스컬레이터 한 쌍을 그리고, 측정 두 개를 넣고, 보정�
   const mid2 = await ed.px([(ESCALATOR.lowerStart[0] + ESCALATOR.upperStart[0]) / 2, ESCALATOR.lowerStart[1]]);
   await page.mouse.click(mid2.x, mid2.y - 5);
   ed.clicks++;
-  await ed.click(page.getByRole('tab', { name: '속성' }));
+  await ed.click(page.getByRole('tab', { name: '상세 정보' }));
   const measure2 = page.getByRole('region', { name: '측정' });
   await expect(measure2).toContainText('측정2개');
   await expect(measure2).toContainText(`현재 추정값${entry.estimate_sec.toFixed(1)}초`);

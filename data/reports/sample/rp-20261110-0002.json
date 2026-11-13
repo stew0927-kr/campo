@@ -1,0 +1,25 @@
+{
+  "id": "rp-20261110-0002",
+  "campus": "fixture-basic",
+  "kind": "door_locked",
+  "status": "new",
+  "created_at": "2026-11-10T19:05:00+09:00",
+  "location": {
+    "coord": [
+      127.0011,
+      37.0004
+    ],
+    "building_id": "bldg_B",
+    "level": 1
+  },
+  "feature_id": "n_B_1_main",
+  "description": "B동 1층 출입구가 저녁에 잠겨 있어요.",
+  "status_log": [
+    {
+      "from": null,
+      "to": "new",
+      "by": "app",
+      "at": "2026-11-10T19:05:00+09:00"
+    }
+  ]
+}

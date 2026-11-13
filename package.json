@@ -14,6 +14,7 @@
     "validate": "npm run validate -w @campo/tools",
     "migrate": "npm run migrate -w @campo/tools --",
     "calibrate": "npm run calibrate -w @campo/tools --",
+    "apply": "npm run apply -w @campo/tools --",
     "editor": "npm run dev -w @campo/editor"
   },
   "devDependencies": {

@@ -1,0 +1,25 @@
+{
+  "id": "rp-20261112-0007",
+  "campus": "fixture-basic",
+  "kind": "step_free_confirmed",
+  "status": "new",
+  "created_at": "2026-11-12T09:10:00+09:00",
+  "location": {
+    "coord": [
+      127.0003,
+      37.0004
+    ],
+    "building_id": null,
+    "level": null
+  },
+  "feature_id": "e_portal_A_1_main",
+  "description": "A동 1층 출입구에 턱이 없어요. 휠체어로 들어갔습니다.",
+  "status_log": [
+    {
+      "from": null,
+      "to": "new",
+      "by": "app",
+      "at": "2026-11-12T09:10:00+09:00"
+    }
+  ]
+}

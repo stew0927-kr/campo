@@ -6,8 +6,12 @@ import { campusApiPlugin } from './server/campus-api.ts';
 // CAMPO_CAMPUSES_DIR points the save API at another folder (the e2e tests use a temporary one; data/ is never touched by them).
 const campusesDir = process.env['CAMPO_CAMPUSES_DIR'] ?? fileURLToPath(new URL('../../data/campuses', import.meta.url));
 
+// Reports and changesets likewise: CAMPO_REPORTS_DIR (default data/reports, read recursively) and CAMPO_CHANGESETS_DIR (default changesets/ at the repository root).
+const reportsDir = process.env['CAMPO_REPORTS_DIR'] ?? fileURLToPath(new URL('../../data/reports', import.meta.url));
+const changesetsDir = process.env['CAMPO_CHANGESETS_DIR'] ?? fileURLToPath(new URL('../../changesets', import.meta.url));
+
 export default defineConfig({
-  plugins: [react(), campusApiPlugin(campusesDir)],
+  plugins: [react(), campusApiPlugin({ campusesDir, reportsDir, changesetsDir })],
   server: { host: '127.0.0.1' }, // the save API writes to disk: keep it on this machine only
   test: {
     name: 'editor',

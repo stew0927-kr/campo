@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campo.local/schema/changeset.schema.json",
+  "title": "캠포 changeset (changesets/{yyyymmdd}-{slug}.json)",
+  "description": "Feature-level changes, osmChange style (docs/v0.2/SPEC-v0.2.md 7.1). Features use campo.schema.json.",
+  "type": "object",
+  "required": ["id", "campus", "source", "report_ids", "changes", "summary"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "description": "cs-{yyyymmdd}-{slug}",
+      "type": "string",
+      "pattern": "^cs-\\d{8}-[a-z0-9][a-z0-9-]*$"
+    },
+    "campus": {
+      "description": "Campus id (campus.json id); applied to data/campuses/{campus}.",
+      "type": "string",
+      "minLength": 1
+    },
+    "source": { "enum": ["editor", "macro", "report"] },
+    "report_ids": {
+      "description": "Reports this changeset handles; the bundle's primary first. At least one when source is report, otherwise empty.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^rp-\\d{8}-[0-9a-z]+$" }
+    },
+    "changes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/change" }
+    },
+    "summary": { "type": "string" }
+  },
+  "if": { "properties": { "source": { "const": "report" } } },
+  "then": { "properties": { "report_ids": { "minItems": 1 } } },
+  "else": { "properties": { "report_ids": { "maxItems": 0 } } },
+  "$defs": {
+    "baseRev": { "type": "integer", "minimum": 1 },
+    "change": {
+      "oneOf": [
+        { "$ref": "#/$defs/create" },
+        { "$ref": "#/$defs/modify" },
+        { "$ref": "#/$defs/delete" }
+      ]
+    },
+    "create": {
+      "description": "A new Feature, rev 1.",
+      "type": "object",
+      "required": ["op", "feature"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "const": "create" },
+        "feature": { "$ref": "campo.schema.json#/$defs/feature" }
+      }
+    },
+    "modify": {
+      "description": "The whole changed Feature (edges with their end coordinates), rev = base_rev + 1.",
+      "type": "object",
+      "required": ["op", "base_rev", "feature"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "const": "modify" },
+        "base_rev": { "$ref": "#/$defs/baseRev" },
+        "feature": { "$ref": "campo.schema.json#/$defs/feature" }
+      }
+    },
+    "delete": {
+      "type": "object",
+      "required": ["op", "base_rev", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "op": { "const": "delete" },
+        "base_rev": { "$ref": "#/$defs/baseRev" },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

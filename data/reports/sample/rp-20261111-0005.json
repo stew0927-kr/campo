@@ -1,0 +1,28 @@
+{
+  "id": "rp-20261111-0005",
+  "campus": "fixture-basic",
+  "kind": "wrong_room_location",
+  "status": "new",
+  "created_at": "2026-11-11T11:30:00+09:00",
+  "location": {
+    "coord": [
+      127.00052,
+      37.0006
+    ],
+    "building_id": "bldg_A",
+    "level": 4
+  },
+  "feature_id": "n_A_4_408door",
+  "description": "408호 문은 지도보다 조금 남쪽에 있어요.",
+  "details": {
+    "room_ref": "408"
+  },
+  "status_log": [
+    {
+      "from": null,
+      "to": "new",
+      "by": "app",
+      "at": "2026-11-11T11:30:00+09:00"
+    }
+  ]
+}

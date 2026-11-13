@@ -5,6 +5,7 @@ const TABS: { id: PanelTab; label: string }[] = [
   { id: 'properties', label: '속성' },
   { id: 'checks', label: '검사' },
   { id: 'routes', label: '길찾기' },
+  { id: 'reports', label: '제보' },
 ];
 
 export function SidePanel({ tab, onTab, badges, children }: {
@@ -27,7 +28,7 @@ export function SidePanel({ tab, onTab, badges, children }: {
             onClick={() => onTab(t.id)}
           >
             {t.label}
-            {badges?.[t.id] ? <span className="tab-badge" aria-label={`오류 ${badges[t.id]}개`}>{badges[t.id]}</span> : null}
+            {badges?.[t.id] ? <span className="tab-badge" aria-label={t.id === 'reports' ? `대기 중인 제보 ${badges[t.id]}건` : `오류 ${badges[t.id]}개`}>{badges[t.id]}</span> : null}
           </button>
         ))}
       </div>

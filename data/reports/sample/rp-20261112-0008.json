@@ -1,0 +1,25 @@
+{
+  "id": "rp-20261112-0008",
+  "campus": "fixture-basic",
+  "kind": "step_free_confirmed",
+  "status": "new",
+  "created_at": "2026-11-12T14:45:00+09:00",
+  "location": {
+    "coord": [
+      127.0003,
+      37.0004
+    ],
+    "building_id": null,
+    "level": null
+  },
+  "feature_id": "e_portal_A_1_main",
+  "description": "A동 정문 문턱이 없어졌어요.",
+  "status_log": [
+    {
+      "from": null,
+      "to": "new",
+      "by": "app",
+      "at": "2026-11-12T14:45:00+09:00"
+    }
+  ]
+}

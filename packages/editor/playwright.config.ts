@@ -1,7 +1,7 @@
 // e2e of the editor. The dev server runs on its own port and saves into a temporary folder, never into data/.
 // Run from the repository root:  npx playwright test -c packages/editor
 import { defineConfig } from '@playwright/test';
-import { E2E_DIR, PORT } from './e2e/seed.ts';
+import { CHANGESETS_DIR, E2E_DIR, PORT, REPORTS_DIR } from './e2e/seed.ts';
 
 export default defineConfig({
   testDir: './e2e',
@@ -17,6 +17,6 @@ export default defineConfig({
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { CAMPO_CAMPUSES_DIR: E2E_DIR },
+    env: { CAMPO_CAMPUSES_DIR: E2E_DIR, CAMPO_REPORTS_DIR: REPORTS_DIR, CAMPO_CHANGESETS_DIR: CHANGESETS_DIR },
   },
 });

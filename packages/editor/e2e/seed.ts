@@ -1,8 +1,9 @@
 // The campus the e2e tests start from: one building "A동" (floors 1-4, ground floor 1) with an entrance joined to an outdoor point.
 // Written to a temporary folder before each run; the tests save into it.
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const PORT = 5199;
 export const E2E_DIR = join(tmpdir(), 'campo-e2e');
@@ -104,4 +105,26 @@ export function seedCampus(id: string): void {
   ]));
   if (id === 'e2e-escalator') seedEscalatorCampus(dir);
   if (id === 'e2e-copy') seedCopyCampus(dir);
+}
+
+// ---- 제보 e2e: the fixture campus under its own id, and the 8 sample reports, all in temporary folders ----
+/** Folder the reports tab reads (CAMPO_REPORTS_DIR) and the one changesets are written to (CAMPO_CHANGESETS_DIR). */
+export const REPORTS_DIR = join(E2E_DIR, 'reports');
+export const CHANGESETS_DIR = join(E2E_DIR, 'changesets');
+/** Untouched copy of the seeded fixture campus: `npm run apply -- <changeset> --campuses-dir=<E2E_DIR>/pristine --dry-run` works on it, because the editor's save rewrites the copy in E2E_DIR. */
+export const PRISTINE_DIR = join(E2E_DIR, 'pristine');
+/** The sample reports name this campus id. */
+export const REPORTS_CAMPUS = 'fixture-basic';
+const REPO = fileURLToPath(new URL('../../../', import.meta.url));
+export const FIXTURE_CAMPUS = join(REPO, 'packages', 'core', 'test', 'fixtures', 'campus-basic');
+export const SAMPLE_REPORTS = join(REPO, 'data', 'reports', 'sample');
+
+/** A copy of core's campus-basic fixture as campus "fixture-basic" (twice: the one the tests edit and the pristine one), and the sample reports. data/ is only read. */
+export function seedReports(): void {
+  for (const dir of [REPORTS_DIR, CHANGESETS_DIR, PRISTINE_DIR]) rmSync(dir, { recursive: true, force: true });
+  rmSync(join(E2E_DIR, REPORTS_CAMPUS), { recursive: true, force: true });
+  cpSync(FIXTURE_CAMPUS, join(E2E_DIR, REPORTS_CAMPUS), { recursive: true });
+  cpSync(FIXTURE_CAMPUS, join(PRISTINE_DIR, REPORTS_CAMPUS), { recursive: true });
+  cpSync(SAMPLE_REPORTS, REPORTS_DIR, { recursive: true });
+  mkdirSync(CHANGESETS_DIR, { recursive: true });
 }

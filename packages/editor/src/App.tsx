@@ -1,6 +1,9 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { buildGraph, buildingById, findFeature, findNearest, findRoute, validateCampus, type EditEdge, type EditNode, type EditState, type NearestResult, type Position, type RouteResult } from '@campo/core';
-import { fetchCampusFiles, saveCampus } from './api.ts';
+import {
+  STATUS_LABELS, buildGraph, buildingById, findFeature, findNearest, findRoute, planBundle, planReport, removeFromBundle, reopenReport, validateCampus,
+  type EditEdge, type EditNode, type EditState, type NearestResult, type Override, type Position, type Report, type ReportStatus, type RouteResult,
+} from '@campo/core';
+import { fetchCampusFiles, fetchReportFiles, saveCampus, saveChangeset, saveReportFiles } from './api.ts';
 import type { RouteLine } from './map/layers.ts';
 import { MapView, type FocusRequest, type MapClick } from './map/MapView.tsx';
 import { planBridge } from './model/bridge.ts';
@@ -22,6 +25,10 @@ import {
 } from './model/ops.ts';
 import { isError, planReason, runPlan, type Plan, type PlanResult } from './model/plan.ts';
 import { routeLine, routePlaces } from './model/places.ts';
+import {
+  REPORT_ACTOR, bundled, buildReportChangeset, changedReportFiles, loadReports, markApplied, overridesOf, overridesWithQueued, planStatusSuggestion, queueCount, queueGroups, setGroupStatus,
+  type PendingEdit, type QueueGroup,
+} from './model/reports.ts';
 import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong, sameScope, scopeLabel, type Scope } from './model/scope.ts';
 import {
   OBSERVATION_FILE, commitObservations, commitOverrides, createSession, extrasWithPending, pendingObservationsText, pendingOverrides, propsOf, stateToCampus, stateToFiles, type Session,
@@ -42,6 +49,7 @@ import {
 import { FloorPicker } from './ui/FloorPicker.tsx';
 import { MeasurePanel } from './ui/MeasurePanel.tsx';
 import { PropertiesPanel } from './ui/PropertiesPanel.tsx';
+import { ReportsPanel, type RowNote } from './ui/ReportsPanel.tsx';
 import { RoutePanel } from './ui/RoutePanel.tsx';
 import { SidePanel } from './ui/SidePanel.tsx';
 import { StatusBar } from './ui/StatusBar.tsx';
@@ -88,6 +96,38 @@ export function App() {
   /** Key of the last property edit, so a slider drag becomes one history entry. */
   const lastProp = useRef<string | null>(null);
 
+  // ---- 제보 tab (SPEC-v0.2 7.3). Screen state about reports; the map is only changed by core actions run through perform. ----
+  /** Report files of this campus as last loaded or saved (to know which ones changed). */
+  const [reportEntries, setReportEntries] = useState<{ path: string; report: Report }[]>([]);
+  const [unreadableReports, setUnreadableReports] = useState<string[]>([]);
+  const [reportsError, setReportsError] = useState<string | null>(null);
+  /** The reports with this session's status changes (not yet saved). */
+  const [reports, setReports] = useState<Report[]>([]);
+  /** Reports taken out of their bundle by hand: they are not bundled again. */
+  const [excluded, setExcluded] = useState<string[]>([]);
+  const [showFinished, setShowFinished] = useState(false);
+  /** Permanent reports applied in this session and waiting for 저장 (they become one changeset). */
+  const [pendingEdits, setPendingEdits] = useState<PendingEdit[]>([]);
+  /** overrides.json entries of applied temporary reports, written with the next 제보 저장. */
+  const [queuedOverrides, setQueuedOverrides] = useState<Override[]>([]);
+  const [rowNotes, setRowNotes] = useState<Record<string, RowNote>>({});
+  const [reportResult, setReportResult] = useState<string[] | null>(null);
+  const [reportHighlight, setReportHighlight] = useState<string[]>([]);
+  /** The state the changeset is made from: as loaded, or as of the last 제보 저장 (History.base() also moves on the toolbar 저장). */
+  const reportBase = useRef<EditState | null>(null);
+
+  useEffect(() => {
+    fetchReportFiles().then(
+      (files) => {
+        const loaded = loadReports(files, CAMPUS_ID);
+        setReportEntries(loaded.entries);
+        setReports(loaded.entries.map((e) => e.report));
+        setUnreadableReports(loaded.unreadable);
+      },
+      (err: Error) => setReportsError(err.message),
+    );
+  }, []);
+
   useEffect(() => {
     fetchCampusFiles(CAMPUS_ID).then(
       (files) => {
@@ -95,6 +135,7 @@ export function App() {
         setSession(s);
         setState(s.history.current());
         setSavedState(s.history.current());
+        reportBase.current = s.history.base();
         if (s.passthrough.length > 0) {
           setNotice({ text: `스키마에 맞지 않거나 이어진 지점이 없는 Feature ${s.passthrough.length}개는 고치지 않고 그대로 저장합니다.`, tone: 'error' });
         }
@@ -405,14 +446,14 @@ export function App() {
     setNotice({ text: [text, ...result.warnings].join(' '), tone: result.warnings.length > 0 ? 'warn' : 'info' });
   };
 
-  const onLocate = (featureId: string) => {
-    if (!state) return;
-    const scope = featureScope(state, featureId);
-    const center = featureCenter(state, featureId);
+  const onLocate = (featureId: string, from: EditState | null = state) => {
+    if (!from) return;
+    const scope = featureScope(from, featureId);
+    const center = featureCenter(from, featureId);
     setUi((u) => ({
       ...u,
       scope,
-      selectedBuildingId: scope.kind === 'building' ? scope.buildingId : state.buildings && Object.values(state.buildings).some((b) => b.id === featureId) ? featureId : null,
+      selectedBuildingId: scope.kind === 'building' ? scope.buildingId : from.buildings && Object.values(from.buildings).some((b) => b.id === featureId) ? featureId : null,
       selection: [featureId],
       tool: toolAvailable(u.tool, scope) ? u.tool : 'select',
       pickFrom: null,
@@ -568,11 +609,20 @@ export function App() {
     { id: 'redo', label: '다시 하기', shortcut: OPERATION_KEYS.redo, blocked: session?.history.canRedo() ? false : '다시 할 변경이 없습니다.', onClick: doRedo },
   ];
 
-  const onSave = useCallback(async () => {
-    if (!session || !state || saving) return;
+  /**
+   * Write the campus folder. Returns the result, or null when the person declined to save despite check errors.
+   * `queued` are the overrides.json entries of temporary reports applied in the 제보 tab (added to the file next to the ones a split or heal carries).
+   */
+  const persistCampus = async (queued: readonly Override[]): Promise<{ written: string[]; removed: string[] } | null> => {
+    if (!session || !state) return null;
     const files = stateToFiles(state, session.meta, session.passthrough);
     // A split or heal of a closed edge carries its overrides.json entries along.
-    const pending = pendingOverrides(session);
+    let pending = pendingOverrides(session);
+    if (queued.length > 0) {
+      const base = pending?.overrides ?? overridesOf(session.extras);
+      if (base === null) throw new Error('overrides.json을 읽을 수 없어 제보의 override를 더하지 못했습니다. 검사 탭을 확인해 주세요.');
+      pending = overridesWithQueued(base, queued);
+    }
     if (pending) files['overrides.json'] = pending.text;
     // Measurements typed since the last save are appended to observations/editor.jsonl (the other observation files stay as they are).
     const observations = pendingObservationsText(session);
@@ -580,24 +630,171 @@ export function App() {
     const extras = extrasWithPending(session, pending ? { path: 'overrides.json', text: pending.text } : undefined);
     // SPEC §8: check before saving, on exactly the files that will be written.
     const { errors } = validateCampus(stateToCampus(state, session.meta, session.passthrough, extras));
-    if (errors.length > 0 && !window.confirm(`검사 오류가 ${errors.length}개 있습니다. 그래도 저장하시겠습니까?`)) return;
+    if (errors.length > 0 && !window.confirm(`검사 오류가 ${errors.length}개 있습니다. 그래도 저장하시겠습니까?`)) return null;
 
+    const result = await saveCampus(session.campusId, files);
+    session.history.markSaved();
+    if (pending) commitOverrides(session, pending);
+    commitObservations(session);
+    setObsRev((v) => v + 1);
+    setSavedState(state);
+    return result;
+  };
+
+  const onSave = useCallback(async () => {
+    if (!session || !state || saving) return;
     setSaving(true);
     try {
-      const { written, removed } = await saveCampus(session.campusId, files);
-      session.history.markSaved();
-      if (pending) commitOverrides(session, pending);
-      commitObservations(session);
-      setObsRev((v) => v + 1);
-      setSavedState(state);
-      const removedText = removed.length > 0 ? `, 지운 파일 ${removed.length}개` : '';
-      info(`저장했습니다. 쓴 파일 ${written.length}개${removedText}. 커밋은 Git에서 해 주세요.`);
+      const result = await persistCampus([]);
+      if (result) {
+        const removedText = result.removed.length > 0 ? `, 지운 파일 ${result.removed.length}개` : '';
+        info(`저장했습니다. 쓴 파일 ${result.written.length}개${removedText}. 커밋은 Git에서 해 주세요.`);
+      }
     } catch (err) {
       fail((err as Error).message);
     } finally {
       setSaving(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, state, saving]);
+
+  // ---- 제보 tab handlers (SPEC-v0.2 7.3). `new Date()` is read here, at the edge, and passed down. ----
+  const reportView = useMemo(() => bundled(reports, excluded), [reports, excluded]);
+  const reportGroups = useMemo(() => queueGroups(reportView, showFinished), [reportView, showFinished]);
+  const reportBadge = useMemo(() => queueCount(reportView), [reportView]);
+  const pendingIds = useMemo(() => new Set(pendingEdits.map((p) => p.reportIds[0]!)), [pendingEdits]);
+  const reportsToSave = useMemo(() => Object.keys(changedReportFiles(reportEntries, reports)).length, [reportEntries, reports]);
+  const setNote = (primaryId: string, note: RowNote | null) => setRowNotes((n) => {
+    const { [primaryId]: _old, ...rest } = n;
+    return note ? { ...rest, [primaryId]: note } : rest;
+  });
+
+  /** A report's place on the map: its Feature when the map has it, otherwise its coordinate on its floor. */
+  const locateReport = (report: Report) => {
+    if (!state) return;
+    if (report.feature_id !== undefined && findFeature(state, report.feature_id)) return onLocate(report.feature_id);
+    const b = report.location.building_id !== null && report.location.level !== null ? buildingById(state, report.location.building_id) : undefined;
+    const scope: Scope = b && report.location.level !== null ? { kind: 'building', buildingId: b.id, level: report.location.level } : OUTDOOR;
+    setUi((u) => ({ ...u, scope, selectedBuildingId: b ? b.id : null, selection: [], pickFrom: null, tool: toolAvailable(u.tool, scope) ? u.tool : 'select' }));
+    setFocus((prev) => ({ position: report.location.coord, seq: (prev?.seq ?? 0) + 1 }));
+  };
+
+  const applyReport = (group: QueueGroup) => {
+    if (!session || !state) return;
+    const now = new Date();
+    const opts = { now, overrides: [...(overridesOf(session.extras) ?? []), ...queuedOverrides], ctx: session.ctx };
+    const plan = group.bundleId !== null ? planBundle(reportView, group.bundleId, state, opts) : planReport(group.reports[0]!, state, opts);
+    switch (plan.type) {
+      case 'override': {
+        const moved = setGroupStatus(reportView, group.primaryId, 'applied', { at: now });
+        if (!moved.ok) return fail(moved.reason);
+        setReports(moved.reports);
+        setQueuedOverrides((q) => [...q, ...plan.overrides.filter((o) => !q.some((x) => x.feature_id === o.feature_id && x.report_id === o.report_id))]);
+        setReportHighlight(plan.overrides.map((o) => o.feature_id));
+        setNote(group.primaryId, null);
+        setReportResult(null);
+        onLocate(plan.overrides[0]!.feature_id);
+        return info(`${plan.summary} 지도 원본은 그대로 두고, 저장하면 overrides.json에 더해집니다.`);
+      }
+      case 'edit': {
+        const failed = perform({ annotation: plan.annotation, steps: [() => plan.action], notices: plan.warnings });
+        if (failed !== undefined) return;
+        setPendingEdits((p) => [...p, { reportIds: plan.reportIds, featureIds: plan.featureIds }]);
+        setReportHighlight(plan.featureIds);
+        setNote(group.primaryId, null);
+        setReportResult(null);
+        if (plan.featureIds[0]) onLocate(plan.featureIds[0], session.history.current());
+        return;
+      }
+      default: {
+        const suggestion = planStatusSuggestion(plan);
+        setNote(group.primaryId, {
+          text: plan.reason,
+          tone: 'warn',
+          ...(suggestion ? { suggestion } : {}),
+          ...(plan.type === 'duplicate' ? { duplicateOf: plan.override.report_id } : {}),
+        });
+      }
+    }
+  };
+
+  const setReportStatus = (group: QueueGroup, to: ReportStatus) => {
+    const note = rowNotes[group.primaryId];
+    const moved = setGroupStatus(reportView, group.primaryId, to, {
+      at: new Date(),
+      ...(to === 'duplicate' && note?.duplicateOf ? { duplicate_of: note.duplicateOf } : {}),
+    });
+    if (!moved.ok) return fail(moved.reason);
+    setReports(moved.reports);
+    setNote(group.primaryId, null);
+    info(`제보 ${group.primaryId}을(를) "${STATUS_LABELS[to]}" 상태로 바꿨습니다. 저장하면 제보 파일에 기록됩니다.`);
+  };
+
+  const reopenGroup = (group: QueueGroup) => {
+    let next = [...reportView];
+    for (const r of group.reports) {
+      const cur = next.find((x) => x.id === r.id);
+      if (!cur) continue;
+      const out = reopenReport(cur, { by: REPORT_ACTOR, at: new Date() });
+      if (!out.ok) return fail(out.reason);
+      next = next.map((x) => (x.id === r.id ? out.report : x));
+    }
+    setReports(next);
+    info('제보를 다시 열었습니다. 저장하면 제보 파일에 기록됩니다.');
+  };
+
+  const removeMember = (reportId: string) => {
+    setReports(removeFromBundle(reportView, reportId, { by: REPORT_ACTOR, at: new Date() }));
+    setExcluded((e) => (e.includes(reportId) ? e : [...e, reportId]));
+    info(`제보 ${reportId}을(를) 묶음에서 뺐습니다.`);
+  };
+
+  /** 저장: the campus (with the overrides of temporary reports), the changeset of the permanent ones, and the report files. */
+  const saveReports = async () => {
+    if (!session || !state || !reportBase.current || saving) return;
+    const now = new Date();
+    setSaving(true);
+    try {
+      const build = buildReportChangeset({ base: reportBase.current, current: state, campus: session.campusId, pending: pendingEdits, reports: reportView, now });
+      const lines: string[] = [];
+      const saved = await persistCampus(queuedOverrides);
+      if (!saved) return;
+      lines.push(`캠퍼스 파일 ${saved.written.length}개를 저장했습니다.`);
+      if (queuedOverrides.length > 0) lines.push(`overrides.json에 ${queuedOverrides.length}건을 더했습니다. 지도 원본은 바꾸지 않았습니다.`);
+
+      let next = reportView;
+      if (build.changeset && build.fileName && build.text) {
+        await saveChangeset(build.fileName, build.text);
+        const marked = markApplied(next, build.kept, build.changeset.id, now);
+        if (!marked.ok) throw new Error(marked.reason);
+        next = marked.reports;
+        const count = (op: string) => build.changeset!.changes.filter((c) => c.op === op).length;
+        lines.push(`changeset ${build.fileName}을(를) 만들었습니다. 추가 ${count('create')}개, 변경 ${count('modify')}개, 삭제 ${count('delete')}개. 제보 ${build.changeset.report_ids.join(', ')}.`);
+      } else {
+        lines.push(pendingEdits.length === 0 ? '지도에 반영할 제보가 없어 changeset 파일은 만들지 않았습니다.' : '바뀐 내용이 없어 changeset 파일을 만들지 않았습니다.');
+      }
+      if (build.dropped.length > 0) lines.push(`되돌린 제보는 대기열에 남겼습니다: ${build.dropped.flatMap((d) => d.reportIds).join(', ')}.`);
+
+      const files = changedReportFiles(reportEntries, next);
+      if (Object.keys(files).length > 0) {
+        await saveReportFiles(files);
+        lines.push(`제보 파일 ${Object.keys(files).length}개의 상태를 기록했습니다.`);
+      }
+      setReports(next);
+      setReportEntries((es) => es.map((e) => ({ path: e.path, report: next.find((r) => r.id === e.report.id) ?? e.report })));
+      setPendingEdits([]);
+      setQueuedOverrides([]);
+      setRowNotes({});
+      setReportHighlight([]);
+      reportBase.current = state;
+      setReportResult(lines);
+      info('제보 처리를 저장했습니다. 커밋은 Git에서 해 주세요.');
+    } catch (err) {
+      fail((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Keys (SPEC-v0.2 5.3). The handler is registered once and reads the latest functions through a ref.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
@@ -686,7 +883,7 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const highlight = useMemo(() => new Set([ui.pickFrom, ...ui.selection, ...(ui.tool === 'strip' ? strip.edgeIds : [])].filter((id): id is string => !!id)), [ui.pickFrom, ui.selection, ui.tool, strip.edgeIds]);
+  const highlight = useMemo(() => new Set([ui.pickFrom, ...ui.selection, ...(ui.tool === 'strip' ? strip.edgeIds : []), ...(ui.panelTab === 'reports' ? reportHighlight : [])].filter((id): id is string => !!id)), [ui.pickFrom, ui.selection, ui.tool, strip.edgeIds, ui.panelTab, reportHighlight]);
 
   /** What stays on the map while 강의실 줄 is being set up: the two clicked places, then the doors the row would place (core's own layout). */
   const stripShown = useMemo(() => {
@@ -818,7 +1015,7 @@ export function App() {
           />
         )}
       </div>
-      <SidePanel tab={ui.panelTab} onTab={(panelTab) => patchUi({ panelTab })} badges={{ checks: checks.errors.length }}>
+      <SidePanel tab={ui.panelTab} onTab={(panelTab) => patchUi({ panelTab })} badges={{ checks: checks.errors.length, reports: reportBadge }}>
         {ui.panelTab === 'properties' && (
           <>
             <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} />
@@ -833,6 +1030,28 @@ export function App() {
           </>
         )}
         {ui.panelTab === 'checks' && <ChecksPanel result={checks} onLocate={onLocate} />}
+        {ui.panelTab === 'reports' && (
+          <ReportsPanel
+            state={state}
+            groups={reportGroups}
+            total={reports.length}
+            unreadable={unreadableReports}
+            loadError={reportsError}
+            showFinished={showFinished}
+            pending={pendingIds}
+            notes={rowNotes}
+            canSave={pendingEdits.length > 0 || queuedOverrides.length > 0 || reportsToSave > 0}
+            saving={saving}
+            result={reportResult}
+            onShowFinished={setShowFinished}
+            onLocate={locateReport}
+            onApply={applyReport}
+            onStatus={setReportStatus}
+            onReopen={reopenGroup}
+            onRemoveMember={removeMember}
+            onSave={() => void saveReports()}
+          />
+        )}
         {ui.panelTab === 'routes' && (
           <RoutePanel
             places={places}

@@ -75,7 +75,7 @@ export function shortcutSections(): { title: string; rows: ShortcutRow[] }[] {
 }
 /** What "지점 추가" places: indoors a node or a staircase; outdoors a point or a poi (SPEC §8). Elevators have their own tool. */
 export type AddKind = IndoorNodeKind | 'stairs' | 'outdoor' | 'poi';
-export type PanelTab = 'properties' | 'checks' | 'routes';
+export type PanelTab = 'properties' | 'checks' | 'routes' | 'reports';
 
 export const INDOOR_ADD_KINDS: AddKind[] = ['entrance', 'door', 'classroom', 'corridor', 'stairs'];
 export const OUTDOOR_ADD_KINDS: AddKind[] = ['outdoor', 'poi'];

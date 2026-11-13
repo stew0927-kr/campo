@@ -1,0 +1,29 @@
+{
+  "id": "rp-20261110-0003",
+  "campus": "fixture-basic",
+  "kind": "construction",
+  "status": "new",
+  "created_at": "2026-11-10T13:20:00+09:00",
+  "location": {
+    "coord": [
+      126.99995,
+      37.00095
+    ],
+    "building_id": null,
+    "level": null
+  },
+  "feature_id": "e_out_0004__out_0005",
+  "description": "경사로 보수 공사로 펜스가 쳐져 있어요.",
+  "photos": [
+    "rp-20261110-0003-1.jpg"
+  ],
+  "until": "2026-11-20T18:00:00+09:00",
+  "status_log": [
+    {
+      "from": null,
+      "to": "new",
+      "by": "app",
+      "at": "2026-11-10T13:20:00+09:00"
+    }
+  ]
+}

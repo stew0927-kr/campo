@@ -368,3 +368,34 @@ button.check-item:hover { background: var(--chrome); }
 .copy-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .copy-result { margin: 0; padding-left: 16px; }
 .copy-panel .field-help { margin: 0; }
+
+/* ---- 제보 ---- */
+.reports-panel { display: flex; flex-direction: column; gap: 10px; }
+.reports-panel .field-help { margin: 0; }
+.reports-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.reports-filter { display: flex; align-items: center; gap: 6px; }
+.reports-panel button { padding: 4px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.reports-panel button:disabled { opacity: 0.5; cursor: not-allowed; }
+.reports-panel .primary { border-color: var(--footway); background: var(--footway); color: #fff; font-weight: 600; }
+.reports-result { margin: 0; padding: 8px 8px 8px 24px; border: 1px solid var(--rule); border-radius: 6px; background: var(--chrome); }
+.report-list, .report-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.report-group { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+.report-bundle { border-left: 3px solid var(--footway); }
+.report-members { padding-left: 12px; border-left: 2px solid var(--rule); }
+.report-members > li { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.report-item {
+  display: grid; grid-template-columns: 1fr auto; column-gap: 8px; row-gap: 2px; width: 100%; text-align: left;
+  border: 0 !important; background: transparent !important; padding: 0 !important;
+}
+.report-item:hover .report-kind { text-decoration: underline; }
+.report-kind { font-weight: 600; }
+.report-where { grid-column: 1; color: var(--muted); font-size: var(--text-s); }
+.report-status { grid-column: 2; grid-row: 1; font-size: var(--text-s); color: var(--muted); }
+.report-badge { grid-column: 2; grid-row: 2; font-size: var(--text-s); color: var(--footway); }
+.report-id { grid-column: 1 / -1; color: var(--muted); font-size: var(--text-s); word-break: break-all; }
+.report-desc { grid-column: 1 / -1; font-size: var(--text-s); }
+.report-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.report-small { font-size: var(--text-s); }
+.report-note { margin: 0; font-size: var(--text-s); }
+.report-note-warn { color: var(--warning); }
+.report-note-info { color: var(--muted); }

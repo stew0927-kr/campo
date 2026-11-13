@@ -44,5 +44,6 @@ export { reverseEdge } from './actions/reverseEdge.ts';
 export { compose, type ComposeStep } from './compose.ts';
 export { addRoom, type NewRoom } from './actions/addRoom.ts';
 export { deleteRooms, doorsOfRoom } from './actions/deleteRooms.ts';
+export { applyChangeset } from './actions/applyChangeset.ts';
 export * from './macros/index.ts';
 export * from './overrides.ts';

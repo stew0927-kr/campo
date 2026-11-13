@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@campo/core": "*",
+    "fflate": "0.8.3",
     "maplibre-gl": "6.17.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",

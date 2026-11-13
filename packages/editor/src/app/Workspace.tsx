@@ -7,8 +7,8 @@
 //   operations below    whether each operation can run now, and how (one entry per operation)
 //   panels below        what each side-panel tab shows              (one entry per tab)
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { buildingById, type EditEdge, type EditNode, type EditState, type Override, type Position } from '@campo/core';
-import { saveCampus } from '../api.ts';
+import { buildingById, type EditEdge, type EditNode, type EditState, type Override, type Position, type Survey } from '@campo/core';
+import { fetchSurveyFiles, saveCampus, saveSurvey } from '../api.ts';
 import { MapView, type FocusRequest } from '../map/MapView.tsx';
 import { NOT_CONNECTED_NOTICE, planAttachUnattached, planDrawnPath, unattachedNodes } from '../model/connect.ts';
 import { copyBlocked, copySource, copyTargets, planCopyToFloors } from '../model/copy.ts';
@@ -22,6 +22,7 @@ import { isError, planReason, runPlan, type PlanResult } from '../model/plan.ts'
 import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong, sameScope, scopeLabel, type Scope } from '../model/scope.ts';
 import { propsOf, type Session } from '../model/session.ts';
 import { edgeMidpoint, planSplit } from '../model/split.ts';
+import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, toBase64, withSurvey } from '../model/survey.ts';
 import type { PathVertex } from '../model/tools.ts';
 import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, renameBlocked } from '../model/buildingEdit.ts';
 import { BuildingPanel } from '../ui/BuildingPanel.tsx';
@@ -39,6 +40,7 @@ import { RoutePanel } from '../ui/RoutePanel.tsx';
 import { SidePanel } from '../ui/SidePanel.tsx';
 import { StatusBar } from '../ui/StatusBar.tsx';
 import { StripForm } from '../ui/StripForm.tsx';
+import { SurveyNotes } from '../ui/SurveyNotes.tsx';
 import { Toolbar, type OperationState } from '../ui/Toolbar.tsx';
 import { TOOL_OPTIONS } from '../ui/ToolOptions.tsx';
 import { followBuildingRename, initialStrip, initialUi, reconcileUi, stripStage, type StripState, type UiState } from '../ui/ui-state.ts';
@@ -82,6 +84,9 @@ export function Workspace({ session }: { session: Session }) {
   const [helpOpen, setHelpOpen] = useState(false);
   /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
   const [obsRev, setObsRev] = useState(0);
+  /** Field surveys imported so far (data/surveys): their photos and readings are shown under 상세 정보. */
+  const [surveys, setSurveys] = useState<Survey[]>([]);
+  const surveyInput = useRef<HTMLInputElement>(null);
   /** Key of the last property edit, so a slider drag becomes one history entry. */
   const lastProp = useRef<string | null>(null);
 
@@ -287,6 +292,7 @@ export function Workspace({ session }: { session: Session }) {
     split: { blocked: blocked.split, run: () => perform(plans.split) },
     undo: { blocked: history.canUndo() ? false : '되돌릴 변경이 없습니다.', soft: true, run: () => stepHistory('undo') },
     redo: { blocked: history.canRedo() ? false : '다시 할 변경이 없습니다.', soft: true, run: () => stepHistory('redo') },
+    'import-survey': { blocked: false, run: () => surveyInput.current?.click() },
     'attach-unattached': {
       blocked: ui.scope.kind !== 'building'
         ? `층을 먼저 보여 주세요(${toolLabel('select-building')}). 이 층의 연결 안 된 지점을 한 번에 잇습니다.`
@@ -301,6 +307,39 @@ export function Workspace({ session }: { session: Session }) {
     const op = operations[id];
     if (op.blocked === false) op.run();
     else setNotice({ text: op.blocked, tone: op.soft ? 'info' : 'error' });
+  };
+
+  // ---- 현장 기록 불러오기 (docs/mobile/SPEC-mobile.md 5) ----
+  useEffect(() => {
+    let alive = true;
+    fetchSurveyFiles().then(
+      (files) => {
+        if (alive) setSurveys(loadSurveys(files, session.campusId).surveys);
+      },
+      () => {}, // without the dev server's surveys API the editor works as before
+    );
+    return () => {
+      alive = false;
+    };
+  }, [session.campusId]);
+
+  /** Apply the survey's changes as one history entry, then keep its file and photos on this PC. */
+  const importSurvey = async (file: File) => {
+    const read = readSurveyFile(new Uint8Array(await file.arrayBuffer()));
+    const refused = (r: { error: string; reasons: string[] }) => (r.reasons.length > 0 ? setDialog({ kind: 'survey-refused', ...r }) : fail(r.error));
+    if ('error' in read) return refused(read);
+    const planned = planSurveyImport(history.current(), session.campusId, read.survey);
+    if ('error' in planned) return refused(planned);
+    if (planned.plan && perform(planned.plan) !== undefined) return;
+    const lines = [...planned.lines];
+    if (read.missingPhotos.length > 0) lines.push(`파일에 없는 사진이 ${read.missingPhotos.length}장 있습니다.`);
+    try {
+      await saveSurvey(read.survey.id, read.text, Object.fromEntries(Object.entries(read.photos).map(([name, bytes]) => [name, toBase64(bytes)])));
+      setSurveys((list) => withSurvey(list, read.survey));
+    } catch (err) {
+      return setNotice({ text: [...lines, `기록 파일과 사진은 저장하지 못했습니다. ${(err as Error).message}`].join(' '), tone: 'warn' });
+    }
+    setNotice({ text: lines.join(' '), tone: read.missingPhotos.length > 0 ? 'warn' : 'info' });
   };
 
   /** V on a selected elevator stop: edit its floors; otherwise the 엘리베이터 tool. */
@@ -486,6 +525,7 @@ export function Workspace({ session }: { session: Session }) {
           />
         )}
         <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} />
+        {one && <SurveyNotes notes={surveyNotes(surveys, one.id)} />}
         {measure && measureTarget && (
           <MeasurePanel
             summary={measure}
@@ -514,6 +554,19 @@ export function Workspace({ session }: { session: Session }) {
 
   return (
     <div className="app">
+      <input
+        ref={surveyInput}
+        type="file"
+        accept=".zip,.json,application/zip,application/json"
+        className="visually-hidden-input"
+        aria-label="현장 기록 파일"
+        tabIndex={-1}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = ''; // the same file can be chosen again
+          if (file) void importSurvey(file);
+        }}
+      />
       <Toolbar
         ui={ui}
         operations={operations}

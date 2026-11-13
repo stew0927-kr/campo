@@ -114,6 +114,8 @@ export function seedCampus(id: string): void {
 /** Folder the reports tab reads (CAMPO_REPORTS_DIR) and the one changesets are written to (CAMPO_CHANGESETS_DIR). */
 export const REPORTS_DIR = join(E2E_DIR, 'reports');
 export const CHANGESETS_DIR = join(E2E_DIR, 'changesets');
+/** Folder imported field surveys are kept in (CAMPO_SURVEYS_DIR). */
+export const SURVEYS_DIR = join(E2E_DIR, 'surveys');
 /** Untouched copy of the seeded fixture campus: `npm run apply -- <changeset> --campuses-dir=<E2E_DIR>/pristine --dry-run` works on it, because the editor's save rewrites the copy in E2E_DIR. */
 export const PRISTINE_DIR = join(E2E_DIR, 'pristine');
 /** The sample reports name this campus id. */
@@ -124,7 +126,7 @@ export const SAMPLE_REPORTS = join(REPO, 'data', 'reports', 'sample');
 
 /** A copy of core's campus-basic fixture as campus "fixture-basic" (twice: the one the tests edit and the pristine one), and the sample reports. data/ is only read. */
 export function seedReports(): void {
-  for (const dir of [REPORTS_DIR, CHANGESETS_DIR, PRISTINE_DIR]) rmSync(dir, { recursive: true, force: true });
+  for (const dir of [REPORTS_DIR, CHANGESETS_DIR, PRISTINE_DIR, SURVEYS_DIR]) rmSync(dir, { recursive: true, force: true });
   rmSync(join(E2E_DIR, REPORTS_CAMPUS), { recursive: true, force: true });
   cpSync(FIXTURE_CAMPUS, join(E2E_DIR, REPORTS_CAMPUS), { recursive: true });
   cpSync(FIXTURE_CAMPUS, join(PRISTINE_DIR, REPORTS_CAMPUS), { recursive: true });

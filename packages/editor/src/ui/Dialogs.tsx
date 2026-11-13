@@ -221,6 +221,18 @@ export function DeleteBuildingDialog({ items, onConfirm, onCancel }: { items: De
   );
 }
 
+/** 현장 기록 불러오기 refused: why, and every reason (schema errors, or all of the changeset's conflicts at once). */
+export function SurveyRefusedDialog({ error, reasons, onClose }: { error: string; reasons: string[]; onClose: () => void }) {
+  return (
+    <Modal title="현장 기록 불러오기" submitLabel="확인" error={undefined} onSubmit={onClose} onCancel={onClose}>
+      <p>{error}</p>
+      <ul className="attach-failed">
+        {reasons.map((r, i) => <li key={i}>{r}</li>)}
+      </ul>
+    </Modal>
+  );
+}
+
 export interface AttachReportItem { label: string; reason: string }
 
 /** Result of 연결 안 된 지점 잇기: how many were attached, and the ones that could not be, each with the reason. */

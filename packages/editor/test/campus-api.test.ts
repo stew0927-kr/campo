@@ -4,7 +4,9 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createCampusApi, createReportsApi, isCampusPath, isChangesetFileName, isReportPath } from '../server/campus-api.ts';
+import {
+  createCampusApi, createReportsApi, createSurveysApi, isCampusPath, isChangesetFileName, isReportPath, isSurveyId, isSurveyPhotoName,
+} from '../server/campus-api.ts';
 
 let root: string;
 let server: Server;
@@ -182,5 +184,69 @@ describe('reports and changesets API', () => {
     expect((await send('PUT', '/api/changesets/20261113-x.json', {})).status).toBe(400);
     expect((await send('GET', '/api/changesets/20261113-x.json', undefined)).status).toBe(405);
     await expect(readdir(changesetsDir)).rejects.toThrow(); // nothing was created
+  });
+});
+
+describe('surveys API (현장 기록)', () => {
+  let surveysDir: string;
+  let sserver: Server;
+  let sbase: string;
+  const ID = 'sv-20261114-eng1-1000';
+  const text = (id = ID) => `${JSON.stringify({ format: 'campo-survey', version: 1, id, campus: 'c', attachments: {}, vertical: [] }, null, 2)}\n`;
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 8, 7]);
+
+  beforeEach(async () => {
+    surveysDir = join(root, 'surveys');
+    const api = createSurveysApi(surveysDir);
+    sserver = createServer((req, res) => void api(req, res, () => { res.statusCode = 404; res.end(); }));
+    await new Promise<void>((r) => sserver.listen(0, '127.0.0.1', r));
+    sbase = `http://127.0.0.1:${(sserver.address() as AddressInfo).port}`;
+  });
+  afterEach(async () => {
+    await new Promise((r) => sserver.close(r));
+  });
+
+  const put = (id: string, body: unknown) =>
+    fetch(`${sbase}/api/surveys/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  it('only accepts survey ids and plain photo names', () => {
+    for (const ok of ['sv-20261114-a', 'sv-20261114-eng1-1000']) expect(isSurveyId(ok), ok).toBe(true);
+    for (const bad of ['..', 'sv-2026-a', 'sv-20261114-', 'sv-20261114-A', 'cs-20261114-a', 'sv-20261114-a/..']) expect(isSurveyId(bad), bad).toBe(false);
+    for (const ok of ['n_A_1_door_k7x2qa-1.jpg', 'a.png', 'x-2.heic']) expect(isSurveyPhotoName(ok), ok).toBe(true);
+    for (const bad of ['../a.jpg', 'a/b.jpg', '.hidden.jpg', 'a.jpg.exe', 'a.svg', 'a..jpg', 'survey.json']) expect(isSurveyPhotoName(bad), bad).toBe(false);
+  });
+
+  it('lists nothing before the folder exists, then keeps a survey with its photos and serves them back', async () => {
+    expect(await (await fetch(`${sbase}/api/surveys`)).json()).toEqual({ surveys: [] });
+    const res = await put(ID, { text: text(), photos: { 'n_1-1.jpg': jpeg.toString('base64') } });
+    expect(await res.json()).toEqual({ written: ['survey.json', 'photos/n_1-1.jpg'] });
+    expect(await readFile(join(surveysDir, ID, 'survey.json'), 'utf8')).toBe(text());
+    expect(await (await fetch(`${sbase}/api/surveys`)).json()).toEqual({ surveys: [{ id: ID, text: text() }] });
+
+    const photo = await fetch(`${sbase}/api/surveys/${ID}/photos/n_1-1.jpg`);
+    expect(photo.headers.get('content-type')).toBe('image/jpeg');
+    expect(Buffer.from(await photo.arrayBuffer())).toEqual(jpeg);
+    expect((await fetch(`${sbase}/api/surveys/${ID}/photos/none.jpg`)).status).toBe(404);
+  });
+
+  it('the same survey again is a retry (photos are added); a different one under the same id is refused', async () => {
+    await put(ID, { text: text(), photos: {} });
+    const retry = await put(ID, { text: text(), photos: { 'n_2-2.jpg': jpeg.toString('base64') } });
+    expect(await retry.json()).toEqual({ written: ['photos/n_2-2.jpg'] });
+    const other = await put(ID, { text: text().replace('"c"', '"d"'), photos: {} });
+    expect(other.status).toBe(409);
+    expect(await readFile(join(surveysDir, ID, 'survey.json'), 'utf8')).toBe(text());
+  });
+
+  it('writes nothing for a bad id, a text that is another survey, a bad photo name or a path that leaves the folder', async () => {
+    expect((await put('sv-bad', { text: text('sv-bad'), photos: {} })).status).toBe(400);
+    expect((await put(ID, { text: text('sv-20261114-other'), photos: {} })).status).toBe(400);
+    expect((await put(ID, { text: '{ not json', photos: {} })).status).toBe(400);
+    expect((await put(ID, { text: text(), photos: { '../../campus.json': 'AAAA' } })).status).toBe(400);
+    expect((await put(ID, { text: text(), photos: { 'a.jpg': 1 } })).status).toBe(400);
+    expect((await put(ID, { photos: {} })).status).toBe(400);
+    expect((await fetch(`${sbase}/api/surveys/${ID}/photos/..%2Fsurvey.json`)).status).toBe(400);
+    expect((await fetch(`${sbase}/api/surveys/${ID}`, { method: 'DELETE' })).status).toBe(405);
+    expect(await readdir(root)).not.toContain('surveys');
   });
 });

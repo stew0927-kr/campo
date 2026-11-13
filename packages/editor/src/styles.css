@@ -379,6 +379,17 @@ button.check-item:hover { background: var(--chrome); }
 .copy-result { margin: 0; padding-left: 16px; }
 .copy-panel .field-help { margin: 0; }
 
+/* ---- 현장 기록 ---- */
+.survey-notes { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.survey-notes-title { margin: 0; font-size: var(--text-l); }
+.survey-note { display: flex; flex-direction: column; gap: 4px; }
+.survey-note-head { margin: 0; color: var(--muted); font-size: var(--text-s); word-break: break-all; }
+.survey-note-line { margin: 0; }
+.survey-photo { display: block; }
+.survey-photo img { display: block; width: 100%; max-height: 220px; object-fit: cover; border: 1px solid var(--rule); border-radius: 6px; }
+.survey-notes .field-help { margin: 0; }
+.visually-hidden-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
 /* ---- 제보 ---- */
 .reports-panel { display: flex; flex-direction: column; gap: 10px; }
 .reports-panel .field-help { margin: 0; }

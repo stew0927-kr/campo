@@ -153,6 +153,10 @@ const OPERATION_SPECS = [
   { id: 'undo', label: '되돌리기', group: 'edit', key: 'Ctrl+Z', description: '방금 한 편집을 취소합니다.' },
   { id: 'redo', label: '다시 하기', group: 'edit', key: 'Ctrl+Shift+Z', description: '되돌린 편집을 다시 적용합니다.' },
   {
+    id: 'import-survey', label: '현장 기록 불러오기', group: 'edit',
+    description: '현장 조사 앱에서 내보낸 zip 파일을 열어, 현장에서 기록한 지점·구간을 한 번에 반영합니다. 되돌리기 한 번으로 취소됩니다.',
+  },
+  {
     id: 'attach-unattached', label: '연결 안 된 지점 잇기', group: 'macro',
     description: '이 층에서 복도와 떨어져 있는 문·화장실·엘리베이터를 가까운 복도에 한꺼번에 잇습니다.',
   },

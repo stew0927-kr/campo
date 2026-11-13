@@ -9,7 +9,7 @@ import type { Plan, PlanResult } from '../model/plan.ts';
 import type { Scope } from '../model/scope.ts';
 import { planIndoorNode, planOutdoorNode, planStairs } from '../model/tools.ts';
 import {
-  AttachReportDialog, BuildingDialog, ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, MeasureDialog, PoiDialog, RestroomDialog, StairsDialog,
+  AttachReportDialog, BuildingDialog, ClassroomDialog, DeleteBuildingDialog, ElevatorDialog, MeasureDialog, PoiDialog, RestroomDialog, StairsDialog, SurveyRefusedDialog,
   type AttachReportItem, type DeleteBuildingItem,
 } from '../ui/Dialogs.tsx';
 
@@ -23,6 +23,7 @@ export type Dialog =
   | { kind: 'elevator-edit'; elevatorId: string }
   | { kind: 'measure'; target: MeasureTarget; directions: Direction[] }
   | { kind: 'attach-report'; attached: number; failed: AttachReportItem[] }
+  | { kind: 'survey-refused'; error: string; reasons: string[] }
   | { kind: 'building'; ring: Position[] }
   | { kind: 'delete-building'; plan: Plan; items: DeleteBuildingItem[] };
 
@@ -106,6 +107,8 @@ export function AppDialogs({ dialog, state, ctx, perform, followScope, addObserv
     }
     case 'measure':
       return <MeasureDialog target={dialog.target} directions={dialog.directions} onCancel={onClose} onSubmit={(form) => addObservation(dialog.target, form)} />;
+    case 'survey-refused':
+      return <SurveyRefusedDialog error={dialog.error} reasons={dialog.reasons} onClose={onClose} />;
     case 'attach-report':
       return <AttachReportDialog attached={dialog.attached} failed={dialog.failed} onClose={onClose} />;
   }

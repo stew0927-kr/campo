@@ -183,7 +183,8 @@ export function planCopyToFloors(state: EditState, ctx: EditContext, ids: readon
         summary.nodesReused++;
         continue;
       }
-      const { rev: _rev, ...rest } = n.props;
+      // room_ref is dropped: rooms differ from floor to floor (a copied front door would also trip W6)
+      const { rev: _rev, room_ref: _roomRef, ...rest } = n.props;
       const props: NodeProps = { ...rest, building_id: src.buildingId, level };
       const id = newId(props);
       made.set(n.id, id);

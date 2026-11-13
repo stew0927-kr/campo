@@ -87,6 +87,24 @@ describe('다른 층에 복사 (planCopyToFloors)', () => {
     expect(s.history.current()).toEqual(before);
   });
 
+  it('a copied door loses room_ref (rooms differ per floor); the source door keeps it', () => {
+    const s = fixtureSession(5);
+    const before = s.history.current();
+    const src = before.nodes['n_A_4_408door']!;
+    expect(src.props.room_ref).toBe('408');
+    const plan = planCopyToFloors(before, s.ctx, ['n_A_4_408door'], [3]);
+    if (isError(plan)) throw new Error(plan.error);
+    expect(runPlan(s.history, plan)).toMatchObject({ ok: true });
+    const after = s.history.current();
+    const made = added(before, after).nodes;
+    expect(made).toHaveLength(1);
+    expect(made[0]!.props.node_type).toBe('door');
+    expect(made[0]!.props.level).toBe(3);
+    expect('room_ref' in made[0]!.props).toBe(false);
+    expect(made[0]!.props.door_role).toBe(src.props.door_role);
+    expect(after.nodes['n_A_4_408door']).toEqual(src);
+  });
+
   it('copying twice: the points are reused and the edges that exist are not made again', () => {
     const s = fixtureSession(5);
     const sel = ['n_A_3_hall', 'n_A_3_bridge', 'e_A_3_hall__A_3_bridge'];

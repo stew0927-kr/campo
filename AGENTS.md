@@ -12,6 +12,7 @@
   - packages/core, data/schema, packages/tools: 리드
   - packages/editor: 편집기 담당
   - data/campuses: 데이터 담당(건물 단위로 나눠 맡음)
+  - apps/mobile: 현장 조사 앱 담당 (명세는 docs/mobile/SPEC-mobile.md)
 - 화면 문구는 한국어 존댓말. 코드 식별자와 커밋 메시지는 영어.
 - 데이터를 바꾸는 코드는 packages/core/src/edit의 동작(action)만 쓴다.
 - 패키지 설치와 package.json 변경은 메인 세션만 한다. 서브에이전트는 하지 않는다.

@@ -8,3 +8,6 @@ dist/
 .vite/
 coverage/
 .DS_Store
+
+# field survey photos (docs/mobile/SPEC-mobile.md): only survey.json is committed
+data/surveys/*/photos/

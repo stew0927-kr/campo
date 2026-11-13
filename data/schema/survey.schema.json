@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://campo.local/schema/survey.schema.json",
+  "title": "캠포 현장 기록 (data/surveys/{id}/survey.json)",
+  "description": "What the field survey app exports and the editor imports (docs/mobile/SPEC-mobile.md). Map changes are an ordinary changeset; photos and sensor readings stay here and never go into the map data. On purpose there is no field for who surveyed, which device, or the walked track. Unknown fields are refused at every level.",
+  "type": "object",
+  "required": ["format", "version", "id", "campus", "surveyed_at", "attachments", "vertical"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "campo-survey" },
+    "version": { "const": 1 },
+    "id": {
+      "description": "sv-{yyyymmdd}-{slug}",
+      "type": "string",
+      "pattern": "^sv-\\d{8}-[a-z0-9][a-z0-9-]*$"
+    },
+    "campus": {
+      "description": "Campus id (campus.json id).",
+      "type": "string",
+      "minLength": 1
+    },
+    "surveyed_at": { "$ref": "#/$defs/dateTime" },
+    "changeset": {
+      "description": "Features added or changed on site. Left out when the survey only attaches photos or readings to existing Features.",
+      "$ref": "changeset.schema.json"
+    },
+    "attachments": {
+      "description": "Photos and readings by Feature id (a Feature of the map, or one the changeset creates).",
+      "type": "object",
+      "propertyNames": { "minLength": 1 },
+      "additionalProperties": { "$ref": "#/$defs/attachment" }
+    },
+    "vertical": {
+      "description": "Height measured with the barometer along one edge (stairs, elevator, ramp).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/vertical" }
+    }
+  },
+  "$defs": {
+    "dateTime": {
+      "description": "ISO 8601 date-time with a time zone, e.g. 2026-11-14T09:00:00+09:00.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "pressure": {
+      "description": "Air pressure in hPa.",
+      "type": "number",
+      "minimum": 300,
+      "maximum": 1100
+    },
+    "attachment": {
+      "type": "object",
+      "required": ["recorded_at"],
+      "additionalProperties": false,
+      "properties": {
+        "recorded_at": { "$ref": "#/$defs/dateTime" },
+        "photos": {
+          "description": "Paths inside the survey folder. Check for faces before sharing.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^photos/[A-Za-z0-9][A-Za-z0-9_-]*\\.(jpg|jpeg|png|heic)$" }
+        },
+        "heading_mag_deg": {
+          "description": "Direction the surveyor faced, degrees clockwise from magnetic north (phone held flat).",
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 360
+        },
+        "pressure_hpa": { "$ref": "#/$defs/pressure" },
+        "note": { "type": "string" }
+      }
+    },
+    "vertical": {
+      "type": "object",
+      "required": ["edge_id", "pressure_start_hpa", "pressure_end_hpa", "height_m", "method", "measured_at"],
+      "additionalProperties": false,
+      "properties": {
+        "edge_id": { "type": "string", "minLength": 1 },
+        "pressure_start_hpa": { "$ref": "#/$defs/pressure" },
+        "pressure_end_hpa": { "$ref": "#/$defs/pressure" },
+        "height_m": {
+          "description": "Rise from the edge's from to its to; negative when it goes down.",
+          "type": "number"
+        },
+        "grade_pct": {
+          "description": "height_m / plan length × 100. Left out when the two ends are at the same spot (indoor stairs, elevators).",
+          "type": "number"
+        },
+        "method": { "const": "barometer" },
+        "measured_at": { "$ref": "#/$defs/dateTime" }
+      }
+    }
+  }
+}

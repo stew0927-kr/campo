@@ -1,7 +1,7 @@
 // Turning sensor readings into what the survey file stores (docs/mobile/SPEC-mobile.md 3).
 import {
   edgeCoords, gradePct, heightFromPressure, lineLength, normalizeDeg,
-  type EditState, type SurveyAttachment, type VerticalMeasurement,
+  refAfter, type EditState, type VerticalMeasurement,
 } from '@campo/core';
 
 /** A grade is only written for edges at least this long: over a shorter run the barometer's noise (about a metre) is the whole answer. */
@@ -23,11 +23,17 @@ export function storedHeading(deg: number): number {
   return rounded >= 360 ? 0 : rounded;
 }
 
-/** The pressure read at a Feature, when it was read recently enough to compare with one read at `nowIso`. */
-export function recentPressure(attachment: SurveyAttachment | undefined, nowIso: string): number | null {
-  if (attachment?.pressure_hpa === undefined) return null;
-  const age = Date.parse(nowIso) - Date.parse(attachment.recorded_at);
-  return age >= 0 && age <= MAX_PRESSURE_AGE_MS ? attachment.pressure_hpa : null;
+/** A pressure and when it was read (ISO 8601). */
+export interface PressureReading {
+  hpa: number;
+  at: string;
+}
+
+/** The reading's pressure, when it was read recently enough to compare with one read at `nowIso`. */
+export function recentPressure(reading: PressureReading | null, nowIso: string): number | null {
+  if (!reading) return null;
+  const age = Date.parse(nowIso) - Date.parse(reading.at);
+  return age >= 0 && age <= MAX_PRESSURE_AGE_MS ? reading.hpa : null;
 }
 
 export interface WalkedEdge {
@@ -65,8 +71,5 @@ export function verticalMeasurement({ state, edgeId, reversed, startHpa, endHpa,
 
 /** The room number after `ref` along a corridor: "408" → "409", "B101" → "B102", "12-3" → "12-4". Unchanged when it has no number. */
 export function nextRoomRef(ref: string): string {
-  const m = /^(.*?)(\d+)$/.exec(ref);
-  if (!m) return ref;
-  const next = String(Number(m[2]) + 1).padStart(m[2]!.length, '0');
-  return `${m[1]}${next}`;
+  return refAfter(ref, 1) ?? ref; // core's rule, the one the editor's 호실 연속 입력 uses
 }

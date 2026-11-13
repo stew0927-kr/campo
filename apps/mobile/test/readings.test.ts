@@ -46,12 +46,11 @@ describe('recentPressure', () => {
   const later = (ms: number) => new Date(Date.parse(AT) + ms).toISOString();
 
   it('is the reading at the point before while it is fresh, and nothing once the weather may have moved', () => {
-    const attachment = { recorded_at: AT, pressure_hpa: 1012.3 };
-    expect(recentPressure(attachment, later(60_000))).toBe(1012.3);
-    expect(recentPressure(attachment, later(MAX_PRESSURE_AGE_MS + 1))).toBeNull();
-    expect(recentPressure(attachment, later(-1000))).toBeNull(); // a clock that went backwards
-    expect(recentPressure({ recorded_at: AT }, later(1000))).toBeNull();
-    expect(recentPressure(undefined, AT)).toBeNull();
+    const reading = { hpa: 1012.3, at: AT };
+    expect(recentPressure(reading, later(60_000))).toBe(1012.3);
+    expect(recentPressure(reading, later(MAX_PRESSURE_AGE_MS + 1))).toBeNull();
+    expect(recentPressure(reading, later(-1000))).toBeNull(); // a clock that went backwards
+    expect(recentPressure(null, AT)).toBeNull();
   });
 });
 

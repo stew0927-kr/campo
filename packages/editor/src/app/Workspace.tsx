@@ -314,7 +314,7 @@ export function Workspace({ session }: { session: Session }) {
     let alive = true;
     fetchSurveyFiles().then(
       (files) => {
-        if (alive) setSurveys(loadSurveys(files, session.campusId).surveys);
+        if (alive) setSurveys(loadSurveys(files, session.campusId));
       },
       () => {}, // without the dev server's surveys API the editor works as before
     );

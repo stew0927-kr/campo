@@ -101,12 +101,12 @@ function builder(state: EditState, ctx: EditContext) {
   };
 }
 
-/** The closest node of `scope` within `maxM` of `coord` that passes `accept`. */
-export function nearestNode(state: EditState, scope: Scope, coord: Position, maxM: number, accept: (n: EditNode) => boolean = () => true): EditNode | undefined {
+/** The closest node within `maxM` of `coord` that passes `accept`. */
+function nearestWhere(state: EditState, coord: Position, maxM: number, accept: (n: EditNode) => boolean): EditNode | undefined {
   let best: EditNode | undefined;
   let bestM = maxM;
   for (const n of Object.values(state.nodes)) {
-    if (!nodeInScope(n, scope) || !accept(n)) continue;
+    if (!accept(n)) continue;
     const d = metres(n.coord, coord);
     if (d <= bestM) {
       best = n;
@@ -114,6 +114,29 @@ export function nearestNode(state: EditState, scope: Scope, coord: Position, max
     }
   }
   return best;
+}
+
+/** The closest node of `scope` within `maxM` of `coord` that passes `accept`. */
+export function nearestNode(state: EditState, scope: Scope, coord: Position, maxM: number, accept: (n: EditNode) => boolean = () => true): EditNode | undefined {
+  return nearestWhere(state, coord, maxM, (n) => nodeInScope(n, scope) && accept(n));
+}
+
+/** Whether a ride from stop `a` reaches stop `b` over elevator edges, through any stops in between. Follows the edges only. */
+function rideJoins(state: EditState, a: string, b: string): boolean {
+  const rides = Object.values(state.edges).filter((e) => e.props.highway === 'elevator');
+  const seen = new Set([a]);
+  const queue = [a];
+  for (let at = queue.shift(); at !== undefined; at = queue.shift()) {
+    if (at === b) return true;
+    for (const e of rides) {
+      const next = e.props.from === at ? e.props.to : e.props.to === at ? e.props.from : undefined;
+      if (next !== undefined && !seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  return false;
 }
 
 function edgeBetween(state: EditState, a: string, b: string): EditEdge | undefined {
@@ -255,11 +278,8 @@ export function planFloorChange(input: PlanInput, opts: FloorChangeOptions): Pla
   let elevatorId: string | undefined;
   if (opts.kind === 'elevator') {
     // The same shaft on any floor: its stops share one spot and one elevator_id (I5).
-    const shaft = Object.values(state.nodes)
-      .filter((n) => n.props.building_id === scope.buildingId && n.props.node_type === 'elevator_stop' && n.props.elevator_id !== undefined)
-      .map((n) => ({ n, d: metres(n.coord, coord) }))
-      .filter((s) => s.d <= SNAP_M)
-      .sort((a, b) => a.d - b.d)[0]?.n;
+    const shaft = nearestWhere(state, coord, SNAP_M, (n) =>
+      n.props.building_id === scope.buildingId && n.props.node_type === 'elevator_stop' && n.props.elevator_id !== undefined);
     if (shaft) coord = shaft.coord;
     elevatorId = shaft?.props.elevator_id ?? newElevatorId(state, building.props.code);
     if (elevatorId === undefined) return { error: '이 건물에는 엘리베이터를 더 만들 수 없습니다(A~Z 모두 사용 중).' };
@@ -279,8 +299,9 @@ export function planFloorChange(input: PlanInput, opts: FloorChangeOptions): Pla
   const toId = toNode?.id ?? b.node(spot, endProps(toScope));
 
   const existing = edgeBetween(state, fromId, toId);
-  // Two stops one elevator already has are joined through its other stops (검사 E11): a direct edge would be a second, shorter ride.
-  const alreadyJoined = opts.kind === 'elevator' && fromNode !== undefined && toNode !== undefined;
+  // Two stops the elevator already joins through its other stops get no direct edge: that would be a second, shorter ride.
+  // Stops that are not joined yet (two parts of a shaft recorded on different rides) are joined by this ride (검사 E11).
+  const alreadyJoined = opts.kind === 'elevator' && fromNode !== undefined && toNode !== undefined && rideJoins(state, fromNode.id, toNode.id);
   const edgeId = existing?.id ?? (alreadyJoined ? undefined : b.edge(opts.kind === 'stairs'
     ? {
         kind: 'edge', highway: 'steps', edge_type: 'indoor', from: fromId, to: toId, bidirectional: true, step_free: false,

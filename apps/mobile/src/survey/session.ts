@@ -4,6 +4,7 @@ import {
   applyChangeset,
   buildSurvey,
   createHistory,
+  findFeature,
   historyToChangeset,
   surveyId,
   type Changeset,
@@ -18,6 +19,7 @@ import {
 import { OUTDOOR, type Scope } from '../model/scope.ts';
 import { dayOf } from '../time.ts';
 import type { PlanOk } from './plans.ts';
+import { recentPressure, storedHeading, storedPressure, verticalMeasurement, type PressureReading } from './readings.ts';
 
 export const SNAPSHOT_VERSION = 1;
 
@@ -41,6 +43,29 @@ interface Place {
   scope: Scope;
   /** Whether the record that led here changed the map (and so has a history entry to undo). */
   edited: boolean;
+  /** The pressure read where the surveyor stands, for the height of the next stretch. null when none was read. */
+  pressure: PressureReading | null;
+}
+
+/** The walk as it was before a record: undo puts all of it back. Attachments and measurements are never changed in place. */
+interface Step {
+  place: Place;
+  attachments: Record<string, SurveyAttachment>;
+  measurements: VerticalMeasurement[];
+}
+
+/** What the sensors and the camera gave for one record. */
+export interface Readings {
+  /** ISO 8601 with offset. */
+  at: string;
+  /** Air pressure now; null without a barometer. */
+  pressureHpa: number | null;
+  /** Compass heading now; null without one. */
+  headingDeg: number | null;
+  /** 계단/EV: the pressures read on purpose when leaving and on arriving. */
+  trip?: { startHpa: number | null; endHpa: number | null };
+  /** Pictures taken for the record. */
+  photos?: number;
 }
 
 export interface SessionInit {
@@ -58,13 +83,18 @@ export class SurveySession {
   readonly startedAt: string;
   private history: History;
   /** Where the surveyor was before each record of this run, oldest first. */
-  private trail: Place[] = [];
-  private place: Place = { anchorId: null, scope: OUTDOOR, edited: false };
+  private trail: Step[] = [];
+  private place: Place = { anchorId: null, scope: OUTDOOR, edited: false, pressure: null };
   private attachmentsById: Record<string, SurveyAttachment> = {};
   private measurements: VerticalMeasurement[] = [];
   private photoSeq = 0;
   private listeners = new Set<() => void>();
   private revision = 0;
+  /** Depth of batch() calls, and whether something changed inside the outermost one. */
+  private batching = 0;
+  private dirty = false;
+  /** The changes of the state they were computed for. States are immutable, so the same state has the same changes. */
+  private diffed: { state: EditState; changes: Changeset['changes'] } | null = null;
 
   constructor(init: SessionInit) {
     this.campus = init.campus;
@@ -86,11 +116,11 @@ export class SurveySession {
       const action = applyChangeset(snapshot.changeset);
       const reason = action.disabled(init.base);
       if (reason !== false) return { error: reason };
-      // The restored state is where undo stops: records of an earlier run are not taken back one by one.
-      session.history = createHistory(action.apply(init.base));
+      // One history with one baseline, the bundled campus. Undo stops here because this run's trail is empty.
+      session.history.perform(action);
     }
     const anchorId = snapshot.anchorId !== null && snapshot.anchorId in session.state.nodes ? snapshot.anchorId : null;
-    session.place = { anchorId, scope: snapshot.scope, edited: false };
+    session.place = { anchorId, scope: snapshot.scope, edited: false, pressure: null };
     session.attachmentsById = { ...snapshot.attachments };
     session.measurements = [...snapshot.vertical];
     session.photoSeq = snapshot.photoSeq;
@@ -128,34 +158,86 @@ export class SurveySession {
   };
 
   private changed(): void {
+    if (this.batching > 0) {
+      this.dirty = true;
+      return;
+    }
     this.revision++;
     for (const l of [...this.listeners]) l();
   }
 
+  /** Make several changes and tell the listeners once (one re-render and one save for a record with its readings). */
+  batch(change: () => void): void {
+    this.batching++;
+    try {
+      change();
+    } finally {
+      this.batching--;
+      if (this.batching === 0 && this.dirty) {
+        this.dirty = false;
+        this.changed();
+      }
+    }
+  }
+
   // ---- recording ----
 
+  private step(): Step {
+    return { place: this.place, attachments: this.attachmentsById, measurements: this.measurements };
+  }
+
   /** Carry out a record plan: one history entry when it changes the map, and the walk moves on. */
-  run(plan: PlanOk): void {
+  run(plan: PlanOk, pressure: PressureReading | null = null): void {
     if (plan.action) this.history.perform(plan.action);
-    this.trail.push(this.place);
-    this.place = { anchorId: plan.anchorId, scope: plan.scope, edited: plan.action !== null };
+    this.trail.push(this.step());
+    this.place = { anchorId: plan.anchorId, scope: plan.scope, edited: plan.action !== null, pressure };
     this.changed();
+  }
+
+  /**
+   * Carry out a record plan with what the sensors read (docs/mobile/SPEC-mobile.md 3), as one change:
+   * - the record's Feature gets the heading and the pressure read at it (where a floor change began: the one read on leaving),
+   * - the walked edge gets a height when both of its ends have a pressure: the trip's two readings, or the one read at
+   *   the point before (if recent) and the one read now,
+   * - the point the walk continues from remembers the pressure read now, for the next stretch.
+   * Returns the paths reserved for the record's photos.
+   */
+  record(plan: PlanOk, r: Readings): string[] {
+    const startHpa = r.trip ? r.trip.startHpa : recentPressure(this.place.pressure, r.at);
+    const endHpa = r.trip ? r.trip.endHpa : r.pressureHpa;
+    const atFeature = r.trip ? r.trip.startHpa : r.pressureHpa;
+    let paths: string[] = [];
+    this.batch(() => {
+      this.run(plan, endHpa !== null ? { hpa: endHpa, at: r.at } : null);
+      const patch = {
+        ...(r.headingDeg !== null ? { heading_mag_deg: storedHeading(r.headingDeg) } : {}),
+        ...(atFeature !== null ? { pressure_hpa: storedPressure(atFeature) } : {}),
+      };
+      if (Object.keys(patch).length > 0) this.attach(plan.featureId, patch, r.at);
+      if (plan.anchorId !== plan.featureId && endHpa !== null) this.attach(plan.anchorId, { pressure_hpa: storedPressure(endHpa) }, r.at);
+      if (plan.edgeId !== undefined && startHpa !== null && endHpa !== null) {
+        this.addVertical(verticalMeasurement({ state: this.state, edgeId: plan.edgeId, reversed: plan.edgeReversed === true, startHpa, endHpa, at: r.at }));
+      }
+      paths = this.addPhotos(plan.featureId, r.photos ?? 0, r.at);
+    });
+    return paths;
   }
 
   /** Look at another floor (or the outdoors) by hand. The walk no longer continues from the last point. */
   moveTo(scope: Scope): void {
-    this.trail.push(this.place);
-    this.place = { anchorId: null, scope, edited: false };
+    this.trail.push(this.step());
+    this.place = { anchorId: null, scope, edited: false, pressure: null };
     this.changed();
   }
 
-  /** Take the last record (or move) back. Its photos and readings are left out of the export by buildSurvey. */
+  /** Take the last record (or move) back, with the readings and photo entries it added, also on Features that were already there. */
   undo(): boolean {
     const before = this.trail.pop();
     if (!before) return false;
     if (this.place.edited) this.history.undo();
-    this.place = before;
-    this.measurements = this.measurements.filter((m) => m.edge_id in this.state.edges);
+    this.place = before.place;
+    this.attachmentsById = before.attachments;
+    this.measurements = before.measurements;
     this.changed();
     return true;
   }
@@ -167,14 +249,14 @@ export class SurveySession {
     this.changed();
   }
 
-  /** Reserve the path of a new photo of `featureId` ("photos/<id>-<n>.jpg") and list it in the attachment. */
-  addPhoto(featureId: string, at: string): string {
-    this.photoSeq++;
-    const path = `photos/${featureId}-${this.photoSeq}.jpg`;
+  /** Reserve the paths of `count` new photos of `featureId` ("photos/<id>-<n>.jpg") and list them in the attachment. */
+  addPhotos(featureId: string, count: number, at: string): string[] {
+    const paths = Array.from({ length: count }, () => `photos/${featureId}-${++this.photoSeq}.jpg`);
+    if (paths.length === 0) return paths;
     const old = this.attachmentsById[featureId];
-    this.attachmentsById = { ...this.attachmentsById, [featureId]: { ...old, recorded_at: old?.recorded_at ?? at, photos: [...(old?.photos ?? []), path] } };
+    this.attachmentsById = { ...this.attachmentsById, [featureId]: { ...old, recorded_at: old?.recorded_at ?? at, photos: [...(old?.photos ?? []), ...paths] } };
     this.changed();
-    return path;
+    return paths;
   }
 
   /** Keep one barometer measurement per edge: walking the same stairs again replaces the earlier reading. */
@@ -185,9 +267,12 @@ export class SurveySession {
 
   // ---- saving and exporting ----
 
+  /** The map changes against the bundled campus. Comparing every Feature is the costly part of a save, so it is done once per state. */
   private changeset(id: string, summary: string): Changeset | null {
-    const cs = historyToChangeset(this.base, this.state, { id, campus: this.campus, source: 'editor', summary });
-    return cs.changes.length > 0 ? cs : null;
+    const state = this.state;
+    const meta = { id, campus: this.campus, source: 'editor' as const, summary };
+    if (this.diffed?.state !== state) this.diffed = { state, changes: historyToChangeset(this.base, state, meta).changes };
+    return this.diffed.changes.length > 0 ? { ...meta, report_ids: [], changes: this.diffed.changes } : null;
   }
 
   snapshot(): SessionSnapshot {
@@ -221,7 +306,8 @@ export class SurveySession {
   /** How much the walk has recorded so far, for the export sheet. */
   counts(): { nodes: number; edges: number; photos: number; measurements: number } {
     const added = (now: Record<string, unknown>, was: Record<string, unknown>) => Object.keys(now).filter((id) => !(id in was)).length;
-    const live = Object.entries(this.attachmentsById).filter(([id]) => id in this.state.nodes || id in this.state.edges);
+    // The same test buildSurvey uses for what is exported.
+    const live = Object.entries(this.attachmentsById).filter(([id]) => findFeature(this.state, id) !== undefined);
     return {
       nodes: added(this.state.nodes, this.base.nodes),
       edges: added(this.state.edges, this.base.edges),

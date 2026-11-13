@@ -218,3 +218,18 @@ describe('포탈', () => {
     expect(errorOf(planPortal(input(OUTDOOR, [127, 37], null), { buildingId: 'bldg_B', level: 7, stepFree: null }))).toContain('건물과 층');
   });
 });
+
+describe('계단/EV: an elevator shaft recorded in parts', () => {
+  it('a ride between two stops that are not joined yet makes the edge that joins them', () => {
+    // The shaft of building A with its middle ride missing: L1–L2 and L3–L4 are two separate parts.
+    const parts: EditState = { ...start, edges: { ...start.edges } };
+    delete parts.edges['e_A_elevA_L2__A_elevA_L3'];
+    const plan = ok(planFloorChange(input(floor('bldg_A', 2), [127.0008, 37.0005], 'n_A_elevA_L2', parts), { kind: 'elevator', toLevel: 3 }));
+    expect(plan.edgeId).toBeDefined();
+    const after = createHistory(parts).perform(plan.action!);
+    expect(after.edges[plan.edgeId!]!.props).toMatchObject({ highway: 'elevator', from: 'n_A_elevA_L2', to: 'n_A_elevA_L3' });
+    expect(campusErrors(loaded, after)).toEqual([]);
+    // and once joined, riding from the bottom to the top adds nothing
+    expect(ok(planFloorChange(input(floor('bldg_A', 1), [127.0008, 37.0005], 'n_A_elevA_L1', after), { kind: 'elevator', toLevel: 4 })).action).toBeNull();
+  });
+});

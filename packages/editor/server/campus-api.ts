@@ -193,12 +193,7 @@ export async function writeChangesetFile(dir: string, name: string, text: string
     throw new HttpError(400, 'changeset 내용이 올바르지 않습니다.');
   }
   const abs = join(dir, name);
-  let existing: string | null = null;
-  try {
-    existing = await readFile(abs, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-  }
+  const existing = await readIfExists(abs);
   if (existing !== null) {
     if (existing === text) return { written: false, path: name };
     throw new HttpError(409, `같은 이름의 changeset 파일이 이미 있습니다: ${name}`);
@@ -265,16 +260,12 @@ export async function readSurveyFiles(dir: string): Promise<{ id: string; text: 
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
   }
-  const surveys: { id: string; text: string }[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !isSurveyId(entry.name)) continue;
-    try {
-      surveys.push({ id: entry.name, text: await readFile(join(dir, entry.name, 'survey.json'), 'utf8') });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    }
-  }
-  return surveys.sort((a, b) => (a.id < b.id ? -1 : 1));
+  const ids = entries.filter((e) => e.isDirectory() && isSurveyId(e.name)).map((e) => e.name).sort();
+  const texts = await Promise.all(ids.map((id) => readIfExists(join(dir, id, 'survey.json'))));
+  return ids.flatMap((id, i) => {
+    const text = texts[i];
+    return typeof text === 'string' ? [{ id, text }] : [];
+  });
 }
 
 /**
@@ -291,12 +282,7 @@ export async function writeSurveyFiles(dir: string, id: string, text: string, ph
   }
   const folder = join(dir, id);
   const file = join(folder, 'survey.json');
-  let existing: string | null = null;
-  try {
-    existing = await readFile(file, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-  }
+  const existing = await readIfExists(file);
   if (existing !== null && existing !== text) throw new HttpError(409, `같은 id의 현장 기록이 이미 있습니다: ${id}`);
 
   const written: string[] = [];
@@ -305,10 +291,9 @@ export async function writeSurveyFiles(dir: string, id: string, text: string, ph
     await writeFile(file, text, 'utf8');
     written.push('survey.json');
   }
-  for (const [name, base64] of Object.entries(photos).sort()) {
-    await writeFile(join(folder, 'photos', name), Buffer.from(base64, 'base64'));
-    written.push(`photos/${name}`);
-  }
+  const names = Object.keys(photos).sort();
+  await Promise.all(names.map((name) => writeFile(join(folder, 'photos', name), Buffer.from(photos[name]!, 'base64'))));
+  written.push(...names.map((name) => `photos/${name}`));
   return { written };
 }
 
@@ -333,13 +318,8 @@ export function createSurveysApi(surveysDir: string) {
       if (photo && req.method === 'GET') {
         const [id, name] = [decodeURIComponent(photo[1]!), decodeURIComponent(photo[2]!)];
         if (!isSurveyId(id) || !isSurveyPhotoName(name)) throw new HttpError(400, '사진 경로가 올바르지 않습니다.');
-        let bytes: Buffer;
-        try {
-          bytes = await readFile(join(surveysDir, id, 'photos', name));
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new HttpError(404, '사진이 없습니다. 사진은 저장소에 올리지 않으므로, 불러온 PC에만 있습니다.');
-          throw err;
-        }
+        const bytes = await readIfExists(join(surveysDir, id, 'photos', name), null);
+        if (bytes === null) throw new HttpError(404, '사진이 없습니다. 사진은 저장소에 올리지 않으므로, 불러온 PC에만 있습니다.');
         res.statusCode = 200;
         res.setHeader('Content-Type', PHOTO_TYPES[name.split('.').pop()!.toLowerCase()] ?? 'application/octet-stream');
         res.end(bytes);
@@ -380,6 +360,18 @@ export function campusApiPlugin(dirs: string | ApiDirs): Plugin {
       }
     },
   };
+}
+
+/** The file's text (or its bytes with `encoding` null), or null when it is not there. */
+async function readIfExists(path: string): Promise<string | null>;
+async function readIfExists(path: string, encoding: null): Promise<Buffer | null>;
+async function readIfExists(path: string, encoding: 'utf8' | null = 'utf8'): Promise<string | Buffer | null> {
+  try {
+    return await readFile(path, encoding);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {

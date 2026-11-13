@@ -2,6 +2,7 @@
 // record), 되돌리기 and the 턱 toggle on the left. The menu stays open while walking; the round button folds it away to see the map.
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { nextStepFree, stepFreeLabel, type StepFree } from './stepFree.ts';
 import { TOUCH, TOUCH_LARGE, color, font, radius, space } from './theme.ts';
 
 export interface DockAction {
@@ -14,18 +15,13 @@ export interface DockAction {
   primary?: boolean;
 }
 
-/** What the surveyor saw on the stretch just walked: no step, a step, or did not look. */
-export type StepFree = boolean | null;
-
-const STEP_FREE_LABEL: Record<string, string> = { null: '턱: 안 봄', true: '턱: 없음', false: '턱: 있음' };
-const NEXT_STEP_FREE: Record<string, StepFree> = { null: true, true: false, false: null };
-
 interface Props {
   actions: readonly DockAction[];
   open: boolean;
   onToggle: () => void;
   canUndo: boolean;
   onUndo: () => void;
+  /** What the surveyor saw on the stretch just walked; the next 갈림길 기록 writes it. */
   stepFree: StepFree;
   onStepFree: (value: StepFree) => void;
 }
@@ -37,11 +33,11 @@ export function ActionDock({ actions, open, onToggle, canUndo, onUndo, stepFree,
       <View pointerEvents="box-none" style={styles.left}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${STEP_FREE_LABEL[String(stepFree)]}. 눌러서 바꾸기`}
-          onPress={() => onStepFree(NEXT_STEP_FREE[String(stepFree)]!)}
+          accessibilityLabel={`방금 걸은 구간의 턱: ${stepFreeLabel(stepFree)}. 눌러서 바꾸기`}
+          onPress={() => onStepFree(nextStepFree(stepFree))}
           style={({ pressed }) => [styles.side, stepFree === true && styles.sideOk, stepFree === false && styles.sideWarn, pressed && styles.pressed]}
         >
-          <Text style={[styles.sideLabel, stepFree !== null && styles.onColor]}>{STEP_FREE_LABEL[String(stepFree)]}</Text>
+          <Text style={[styles.sideLabel, stepFree !== null && styles.onColor]}>턱: {stepFreeLabel(stepFree)}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"

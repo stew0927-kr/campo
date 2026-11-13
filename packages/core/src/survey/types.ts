@@ -3,8 +3,7 @@
 // readings stay in this file and never enter the map data. No field says who surveyed, on which device, or along which track.
 import type { Changeset } from '../changeset/types.ts';
 
-/** Repo-root folder of imported surveys: data/surveys/{id}/survey.json and data/surveys/{id}/photos/. */
-export const SURVEYS_DIR = 'data/surveys';
+// The editor keeps imported surveys as data/surveys/{id}/survey.json and data/surveys/{id}/photos/.
 export const SURVEY_FILE = 'survey.json';
 export const SURVEY_PHOTOS_DIR = 'photos';
 export const SURVEY_FORMAT = 'campo-survey';

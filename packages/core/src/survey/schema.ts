@@ -14,7 +14,3 @@ export function validateSurvey(value: unknown): SchemaCheck {
   }
   return check;
 }
-
-export function isSurvey(value: unknown): value is Survey {
-  return validateSurvey(value).ok;
-}

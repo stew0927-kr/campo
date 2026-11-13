@@ -39,7 +39,7 @@ interface ChoiceProps<T> {
 }
 
 /** One of a few options, as a row of large chips that wraps. */
-export function Choice<T extends string | number | boolean>({ options, value, onChange, label }: ChoiceProps<T>) {
+export function Choice<T extends string | number | boolean | null>({ options, value, onChange, label }: ChoiceProps<T>) {
   return (
     <View accessibilityRole="radiogroup" accessibilityLabel={label} style={styles.choices}>
       {options.map((o) => {

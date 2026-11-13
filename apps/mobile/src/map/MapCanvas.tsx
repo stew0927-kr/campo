@@ -1,26 +1,35 @@
 // The survey map: only campus data (building outlines, points, edges), drawn by the app itself. No background tiles, so it
 // works without a network and no third-party map is involved. The crosshair in the middle is where a record goes:
 // the surveyor drags the map under it instead of aiming a finger at a small point.
-import { edgeCoords, type EditState } from '@campo/core';
-import { memo, useMemo, useRef } from 'react';
-import { PanResponder, StyleSheet, View, type GestureResponderEvent } from 'react-native';
+//
+// The map keeps its own view. Dragging re-renders this component only (the screen around it reads the crosshair through
+// the handle when a record is made), and the drawn Features are redrawn only when the data, the floor or the zoom step changes.
+import { buildingById, edgeCoords, type EditState, type Position } from '@campo/core';
+import { memo, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
+import { PanResponder, StyleSheet, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, G, Line, Polygon, Polyline } from 'react-native-svg';
 import { nodeInScope, type Scope } from '../model/scope.ts';
+import { SNAP_M } from '../survey/plans.ts';
 import { color } from '../ui/theme.ts';
-import { panned, zoomed, type Projection, type Size, type View as MapView } from './project.ts';
+import { fitView, panned, zoomed, type Projection, type Size, type View as MapView, type XY } from './project.ts';
+
+export interface MapHandle {
+  /** The position under the crosshair. */
+  crosshair(): Position;
+  /** Move the view so that all of `scope` is visible (its points, and the building's outline indoors). */
+  show(scope: Scope): void;
+}
 
 interface Props {
   state: EditState;
   /** The campus as bundled: what is not in it was recorded on this walk and is drawn in the accent colour. */
   base: EditState;
   projection: Projection;
+  /** Where the crosshair is before the map has been laid out. */
+  center: Position;
   scope: Scope;
-  view: MapView;
-  size: Size;
   anchorId: string | null;
-  /** The existing point a record at the crosshair would take, if any. */
-  snapId: string | null;
-  onViewChange: (view: MapView) => void;
+  handle: RefObject<MapHandle | null>;
 }
 
 interface Touch {
@@ -38,14 +47,47 @@ function touchOf(e: GestureResponderEvent): Touch {
   return { count: a ? 1 : 0, x: a?.pageX ?? 0, y: a?.pageY ?? 0, spread: 0 };
 }
 
-export function MapCanvas({ state, base, projection, scope, view, size, anchorId, snapId, onViewChange }: Props) {
-  // The responder is made once; it reads the newest view and callback through refs.
-  const viewRef = useRef(view);
-  viewRef.current = view;
-  const changeRef = useRef(onViewChange);
-  changeRef.current = onViewChange;
-  const last = useRef<Touch | null>(null);
+/** Strokes and dots are sized for the nearest of these zoom steps, so a pinch redraws the Features a few times, not every frame. */
+const ZOOM_STEP = 1.25;
+const steppedScale = (scale: number): number => ZOOM_STEP ** Math.round(Math.log(scale) / Math.log(ZOOM_STEP));
 
+export function MapCanvas({ state, base, projection, center, scope, anchorId, handle }: Props) {
+  const [size, setSize] = useState<Size | null>(null);
+  const [view, setView] = useState<MapView | null>(null);
+  // The responder and the handle are made once; they read the newest values through refs.
+  const latest = useRef({ view, size, state, scope });
+  latest.current = { view, size, state, scope };
+
+  /** A view that shows the scope. */
+  const fit = (target: Scope, on: Size): MapView => {
+    const now = latest.current.state;
+    const points: XY[] = Object.values(now.nodes).filter((n) => nodeInScope(n, target)).map((n) => projection.toXY(n.coord));
+    const b = target.kind === 'building' ? buildingById(now, target.buildingId) : undefined;
+    for (const p of b?.polygon[0] ?? []) points.push(projection.toXY(p));
+    return fitView(points, on);
+  };
+
+  useImperativeHandle(handle, () => ({
+    crosshair: () => {
+      const v = latest.current.view;
+      return v ? projection.toPosition([v.x, v.y]) : center;
+    },
+    show: (target) => {
+      const on = latest.current.size;
+      if (on) setView(fit(target, on));
+    },
+    // `fit` only reads refs and the projection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [projection, center]);
+
+  const onLayout = (e: LayoutChangeEvent): void => {
+    const { width, height } = e.nativeEvent.layout;
+    const next = { width, height };
+    setSize(next);
+    setView((v) => v ?? fit(latest.current.scope, next));
+  };
+
+  const last = useRef<Touch | null>(null);
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
@@ -58,9 +100,8 @@ export function MapCanvas({ state, base, projection, scope, view, size, anchorId
       last.current = now;
       // A finger was added or lifted: start measuring from here, or the map would jump.
       if (!before || before.count !== now.count || now.count === 0) return;
-      let next = panned(viewRef.current, now.x - before.x, now.y - before.y);
-      if (now.count === 2 && before.spread > 0 && now.spread > 0) next = zoomed(next, now.spread / before.spread);
-      changeRef.current(next);
+      const spread = now.count === 2 && before.spread > 0 && now.spread > 0 ? now.spread / before.spread : 1;
+      setView((v) => (v ? zoomed(panned(v, now.x - before.x, now.y - before.y), spread) : v));
     },
     onPanResponderRelease: () => {
       last.current = null;
@@ -70,17 +111,41 @@ export function MapCanvas({ state, base, projection, scope, view, size, anchorId
     },
   }), []);
 
-  // Metres → pixels: x east to the right, y north upwards.
-  const matrix = `matrix(${view.scale} 0 0 ${-view.scale} ${size.width / 2 - view.x * view.scale} ${size.height / 2 + view.y * view.scale})`;
+  // The points a record could take, in map metres: found once per floor, searched on every frame of a drag.
+  const points = useMemo(
+    () => Object.values(state.nodes).filter((n) => nodeInScope(n, scope)).map((n) => ({ id: n.id, xy: projection.toXY(n.coord) })),
+    [state.nodes, scope, projection],
+  );
+  const snap = useMemo(() => {
+    if (!view) return null;
+    let best: { id: string; xy: XY } | null = null;
+    let bestSq = SNAP_M * SNAP_M;
+    for (const p of points) {
+      const sq = (p.xy[0] - view.x) ** 2 + (p.xy[1] - view.y) ** 2;
+      if (sq <= bestSq) {
+        best = p;
+        bestSq = sq;
+      }
+    }
+    return best;
+  }, [points, view]);
+  const anchor = useMemo(() => points.find((p) => p.id === anchorId) ?? null, [points, anchorId]);
 
   return (
-    <View style={StyleSheet.absoluteFill} {...responder.panHandlers} accessibilityLabel="조사 지도. 끌어서 옮기고 두 손가락으로 확대합니다.">
-      <Svg width={size.width} height={size.height}>
-        <G transform={matrix}>
-          <Features state={state} base={base} projection={projection} scope={scope} anchorId={anchorId} snapId={snapId} px={1 / view.scale} />
-        </G>
-      </Svg>
-      <Crosshair size={size} snapped={snapId !== null} />
+    <View style={StyleSheet.absoluteFill} onLayout={onLayout} {...responder.panHandlers} accessibilityLabel="조사 지도. 끌어서 옮기고 두 손가락으로 확대합니다.">
+      {size && view && (
+        <>
+          <Svg width={size.width} height={size.height}>
+            {/* Metres → pixels: x east to the right, y north upwards. */}
+            <G transform={`matrix(${view.scale} 0 0 ${-view.scale} ${size.width / 2 - view.x * view.scale} ${size.height / 2 + view.y * view.scale})`}>
+              <Features state={state} base={base} projection={projection} scope={scope} px={1 / steppedScale(view.scale)} />
+              {anchor && <Circle cx={anchor.xy[0]} cy={anchor.xy[1]} r={15 / view.scale} fill="none" stroke={color.anchor} strokeWidth={3.5 / view.scale} />}
+              {snap && snap.id !== anchorId && <Circle cx={snap.xy[0]} cy={snap.xy[1]} r={13 / view.scale} fill="none" stroke={color.ok} strokeWidth={3 / view.scale} />}
+            </G>
+          </Svg>
+          <Crosshair size={size} snapped={snap !== null} />
+        </>
+      )}
     </View>
   );
 }
@@ -90,14 +155,14 @@ interface FeaturesProps {
   base: EditState;
   projection: Projection;
   scope: Scope;
-  anchorId: string | null;
-  snapId: string | null;
-  /** Metres per screen pixel, so strokes and dots keep their size on screen. */
+  /** Metres per screen pixel (at the zoom step), so strokes and dots keep about their size on screen. */
   px: number;
 }
 
-/** Redrawn only when the data, the scope or the zoom changes: dragging the map just moves the group around it. */
-const Features = memo(function Features({ state, base, projection, scope, anchorId, snapId, px }: FeaturesProps) {
+const pointsOf = (projection: Projection, coords: readonly Position[]): string => coords.map((p) => projection.toXY(p).join(',')).join(' ');
+
+/** Redrawn only when the data, the floor or the zoom step changes: dragging the map just moves the group around it. */
+const Features = memo(function Features({ state, base, projection, scope, px }: FeaturesProps) {
   const here = scope.kind === 'building' ? scope.buildingId : null;
   const inScope = (id: string): boolean => {
     const n = state.nodes[id];
@@ -108,7 +173,7 @@ const Features = memo(function Features({ state, base, projection, scope, anchor
   const buildings = Object.values(state.buildings).map((b) => (
     <Polygon
       key={b.id}
-      points={(b.polygon[0] ?? []).map((p) => projection.toXY(p).join(',')).join(' ')}
+      points={pointsOf(projection, b.polygon[0] ?? [])}
       fill={b.id === here ? color.buildingHere : color.building}
       stroke={color.buildingLine}
       strokeWidth={(b.id === here ? 2.5 : 1.2) * px}
@@ -124,7 +189,7 @@ const Features = memo(function Features({ state, base, projection, scope, anchor
     return [(
       <Polyline
         key={e.id}
-        points={edgeCoords(state, e).map((p) => projection.toXY(p).join(',')).join(' ')}
+        points={pointsOf(projection, edgeCoords(state, e))}
         fill="none"
         stroke={made ? color.made : strong ? color.edge : color.edgeFaint}
         strokeWidth={(strong ? 4 : 2) * px}
@@ -138,14 +203,9 @@ const Features = memo(function Features({ state, base, projection, scope, anchor
   const nodes = Object.values(state.nodes).flatMap((n) => {
     if (!nodeInScope(n, scope)) return [];
     const [x, y] = projection.toXY(n.coord);
-    const made = !(n.id in base.nodes);
     const walkPoint = n.props.node_type === 'corridor' || n.props.node_type === 'outdoor';
     return [(
-      <G key={n.id}>
-        {n.id === anchorId && <Circle cx={x} cy={y} r={15 * px} fill="none" stroke={color.anchor} strokeWidth={3.5 * px} />}
-        {n.id === snapId && n.id !== anchorId && <Circle cx={x} cy={y} r={13 * px} fill="none" stroke={color.ok} strokeWidth={3 * px} />}
-        <Circle cx={x} cy={y} r={(walkPoint ? 5 : 7.5) * px} fill={made ? color.made : color.node} stroke={color.surface} strokeWidth={1.5 * px} />
-      </G>
+      <Circle key={n.id} cx={x} cy={y} r={(walkPoint ? 5 : 7.5) * px} fill={n.id in base.nodes ? color.node : color.made} stroke={color.surface} strokeWidth={1.5 * px} />
     )];
   });
 
@@ -158,7 +218,7 @@ const Features = memo(function Features({ state, base, projection, scope, anchor
   );
 });
 
-function Crosshair({ size, snapped }: { size: Size; snapped: boolean }) {
+const Crosshair = memo(function Crosshair({ size, snapped }: { size: Size; snapped: boolean }) {
   const [cx, cy] = [size.width / 2, size.height / 2];
   const stroke = snapped ? color.ok : color.accent;
   return (
@@ -172,4 +232,4 @@ function Crosshair({ size, snapped }: { size: Size; snapped: boolean }) {
       <Circle cx={cx} cy={cy} r={2.5} fill={stroke} />
     </Svg>
   );
-}
+});

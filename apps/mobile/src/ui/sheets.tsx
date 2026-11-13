@@ -2,11 +2,12 @@
 import { heightFromPressure, type DoorRole, type EditBuilding } from '@campo/core';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { floorLabel, type Scope } from '../model/scope.ts';
+import { defaultLevel, floorLabel, type Scope } from '../model/scope.ts';
+import { usePressure } from '../sensors/device.ts';
 import type { VerticalKind } from '../survey/plans.ts';
-import type { StepFree } from './ActionDock.tsx';
 import { BottomSheet } from './BottomSheet.tsx';
 import { BigButton, Choice, FieldLabel } from './controls.tsx';
+import { STEP_FREE_CHOICES, type StepFree } from './stepFree.ts';
 import { TOUCH_LARGE, color, font, radius, space } from './theme.ts';
 
 // ---- shared ----
@@ -14,15 +15,6 @@ import { TOUCH_LARGE, color, font, radius, space } from './theme.ts';
 function PhotoRow({ count, onPhoto }: { count: number; onPhoto: () => void }) {
   return <BigButton tone="plain" label="사진 촬영" hint={count > 0 ? `${count}장 찍었습니다` : '기록과 함께 저장됩니다'} onPress={onPhoto} style={styles.gapTop} />;
 }
-
-const toStepFree = { yes: true, no: false, unknown: null } as const;
-const STEP_FREE_OPTIONS: readonly { value: keyof typeof toStepFree; label: string }[] = [
-  { value: 'unknown', label: '안 봄' },
-  { value: 'yes', label: '턱 없음' },
-  { value: 'no', label: '턱·계단 있음' },
-];
-type Sill = keyof typeof toStepFree;
-const fromStepFree = (v: StepFree): Sill => (v === true ? 'yes' : v === false ? 'no' : 'unknown');
 
 const levelOptions = (levels: readonly number[]) => [...levels].sort((a, b) => a - b).map((l) => ({ value: l, label: floorLabel(l) }));
 
@@ -94,10 +86,6 @@ interface FloorSheetProps {
   scope: Extract<Scope, { kind: 'building' }>;
   building: EditBuilding;
   trip: FloorTrip | null;
-  /** Live pressure; undefined before the first reading. */
-  pressure: number | undefined;
-  /** false when the phone has no barometer. */
-  barometer: boolean | null;
   photos: number;
   onPhoto: () => void;
   onDepart: (trip: FloorTrip) => void;
@@ -109,7 +97,9 @@ interface FloorSheetProps {
 /** Below this the barometer cannot tell up from down reliably, so the surveyor says which. */
 const MIN_CLEAR_HEIGHT_M = 1;
 
-export function FloorSheet({ scope, building, trip, pressure, barometer, photos, onPhoto, onDepart, onArrive, onCancelTrip, onClose }: FloorSheetProps) {
+export function FloorSheet({ scope, building, trip, photos, onPhoto, onDepart, onArrive, onCancelTrip, onClose }: FloorSheetProps) {
+  // Live pressure while the sheet is open (the reading is shared with the rest of the screen).
+  const { value: pressure, available: barometer } = usePressure();
   const others = building.props.levels.filter((l) => l !== scope.level);
   const [kind, setKind] = useState<VerticalKind>('stairs');
   const [toLevel, setToLevel] = useState<number | undefined>(others.length === 1 ? others[0] : undefined);
@@ -164,7 +154,6 @@ interface PortalSheetProps {
   scope: Scope;
   /** Buildings, nearest to the crosshair first. */
   buildings: readonly EditBuilding[];
-  defaultLevel: (b: EditBuilding) => number;
   stepFree: StepFree;
   photos: number;
   onPhoto: () => void;
@@ -172,12 +161,12 @@ interface PortalSheetProps {
   onClose: () => void;
 }
 
-export function PortalSheet({ scope, buildings, defaultLevel, stepFree, photos, onPhoto, onRecord, onClose }: PortalSheetProps) {
+export function PortalSheet({ scope, buildings, stepFree, photos, onPhoto, onRecord, onClose }: PortalSheetProps) {
   const goingOut = scope.kind === 'building';
   const [buildingId, setBuildingId] = useState<string | undefined>(buildings[0]?.id);
   const building = buildings.find((b) => b.id === buildingId);
   const [level, setLevel] = useState<number | undefined>(building ? defaultLevel(building) : undefined);
-  const [sill, setSill] = useState<Sill>(fromStepFree(stepFree));
+  const [sill, setSill] = useState<StepFree>(stepFree);
   const ready = goingOut || (building !== undefined && level !== undefined);
 
   return (
@@ -207,12 +196,12 @@ export function PortalSheet({ scope, buildings, defaultLevel, stepFree, photos, 
         </>
       )}
       <FieldLabel>문턱이나 계단이 있나요?</FieldLabel>
-      <Choice label="문턱" value={sill} onChange={setSill} options={STEP_FREE_OPTIONS} />
+      <Choice label="문턱" value={sill} onChange={setSill} options={STEP_FREE_CHOICES} />
       <PhotoRow count={photos} onPhoto={onPhoto} />
       <BigButton
         label="출입구 기록"
         disabled={!ready}
-        onPress={() => onRecord({ buildingId: building?.id ?? '', level: level ?? 0, stepFree: toStepFree[sill] })}
+        onPress={() => onRecord({ buildingId: building?.id ?? '', level: level ?? 0, stepFree: sill })}
         style={styles.gapTop}
       />
     </BottomSheet>

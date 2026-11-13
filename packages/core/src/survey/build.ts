@@ -60,6 +60,11 @@ export function formatSurvey(survey: Survey): string {
   return `${JSON.stringify(survey, null, 2)}\n`;
 }
 
+/** Photo paths of a survey ("photos/…"), in attachment order, each once. The exporter zips these and the importer looks for these. */
+export function surveyPhotoPaths(survey: Survey): string[] {
+  return [...new Set(Object.values(survey.attachments).flatMap((a) => a.photos ?? []))];
+}
+
 /** Ids the attachments and measurements point at that `state` (with the changeset applied) does not have. */
 export function surveyDanglingIds(state: EditState, survey: Survey): string[] {
   const ids = [...Object.keys(survey.attachments), ...survey.vertical.map((v) => v.edge_id)];

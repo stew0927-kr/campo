@@ -1,24 +1,26 @@
 // The one screen of the app: the map under a crosshair, the record menu at the thumb, and the sheets that ask the few
-// questions a record needs. Records are plans of core edit actions (survey/plans.ts) run by the session.
+// questions a record needs. Records are plans of core edit actions (survey/plans.ts); the session runs them and keeps what
+// the sensors read (survey/session.ts). This file only wires the pieces and holds what is on screen.
 import { buildingById, metres, surveySource, type EditBuilding, type Position } from '@campo/core';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Campus } from './campus.ts';
 import { buildArchive } from './export/archive.ts';
-import { MapCanvas } from './map/MapCanvas.tsx';
-import { fitView, projection, type Size, type View as MapView, type XY } from './map/project.ts';
-import { defaultLevel, nodeInScope, scopeLabel, type Scope } from './model/scope.ts';
-import { useHeading, usePressure } from './sensors/device.ts';
+import { MapCanvas, type MapHandle } from './map/MapCanvas.tsx';
+import { projection } from './map/project.ts';
+import { scopeLabel, type Scope } from './model/scope.ts';
 import { SURVEY_DIR, clearSnapshot, createSaver, type FileStore } from './storage/store.ts';
-import { SNAP_M, nearestNode, planDoor, planFloorChange, planJunction, planPortal, planStart, type Plan, type PlanInput } from './survey/plans.ts';
-import { nextRoomRef, recentPressure, storedHeading, storedPressure, verticalMeasurement } from './survey/readings.ts';
-import type { SurveySession } from './survey/session.ts';
+import { planDoor, planFloorChange, planJunction, planPortal, planStart, type Plan, type PlanInput } from './survey/plans.ts';
+import { nextRoomRef } from './survey/readings.ts';
+import type { Readings, SurveySession } from './survey/session.ts';
 import { isoLocal } from './time.ts';
-import { ActionDock, type DockAction, type StepFree } from './ui/ActionDock.tsx';
+import { ActionDock, type DockAction } from './ui/ActionDock.tsx';
 import { CameraCapture } from './ui/CameraCapture.tsx';
+import { SensorReadout, type SensorValues } from './ui/SensorReadout.tsx';
 import { DoorSheet, ExportSheet, FloorSheet, PortalSheet, ScopeSheet, type FloorTrip } from './ui/sheets.tsx';
+import type { StepFree } from './ui/stepFree.ts';
 import { TOUCH, color, font, radius, space } from './ui/theme.ts';
 
 interface Props {
@@ -49,13 +51,13 @@ function centreOf(b: EditBuilding): Position {
 
 export function SurveyScreen({ campus, session, store, greeting, onReset }: Props) {
   const insets = useSafeAreaInsets();
-  // Re-render on every change of the session (a record, an undo, a photo).
+  // Re-render on every change of the session (a record, an undo). Dragging the map and sensor readings do not come through here.
   useSyncExternalStore(session.subscribe, session.getRevision);
   const { state, scope, anchorId } = session;
   const proj = useMemo(() => projection(campus.center), [campus.center]);
 
-  const [size, setSize] = useState<Size | null>(null);
-  const [view, setView] = useState<MapView | null>(null);
+  const map = useRef<MapHandle>(null);
+  const sensors = useRef<SensorValues>({ pressureHpa: null, headingDeg: null });
   const [sheet, setSheet] = useState<Sheet>(null);
   const [menuOpen, setMenuOpen] = useState(true);
   const [camera, setCamera] = useState(false);
@@ -66,9 +68,6 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   const [lastRoom, setLastRoom] = useState('');
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(greeting ? { text: greeting, tone: 'info' } : null);
-
-  const pressure = usePressure();
-  const heading = useHeading();
 
   // Nothing below may touch the screen after it is gone (a photo copy or an export can finish late).
   const alive = useRef(true);
@@ -92,77 +91,44 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   );
   useEffect(() => session.subscribe(() => void saver.request()), [session, saver]);
 
-  /** A view that shows the scope: its points, and the building's outline when indoors. */
-  const viewOf = useCallback((target: Scope, on: Size): MapView => {
-    const points: XY[] = Object.values(session.state.nodes).filter((n) => nodeInScope(n, target)).map((n) => proj.toXY(n.coord));
-    const b = target.kind === 'building' ? buildingById(session.state, target.buildingId) : undefined;
-    for (const p of b?.polygon[0] ?? []) points.push(proj.toXY(p));
-    return fitView(points, on);
-  }, [session, proj]);
-
-  const onLayout = (e: LayoutChangeEvent): void => {
-    const { width, height } = e.nativeEvent.layout;
-    const next = { width, height };
-    setSize(next);
-    setView((v) => v ?? viewOf(session.scope, next));
-  };
-
-  const crosshair: Position = view ? proj.toPosition([view.x, view.y]) : campus.center;
-  const snap = nearestNode(state, scope, crosshair, SNAP_M);
-  const input = (coord: Position = crosshair): PlanInput => ({
+  const crosshair = (): Position => map.current?.crosshair() ?? campus.center;
+  const input = (coord: Position = crosshair()): PlanInput => ({
     state, ctx: session.ctx, scope, coord, anchorId, source: surveySource(session.startedAt),
   });
-  const buildingsNear = useMemo(
-    () => Object.values(state.buildings).map((b) => ({ b, d: metres(centreOf(b), crosshair) })).sort((a, z) => a.d - z.d).map((x) => x.b),
-    // Sorted when a sheet opens; the crosshair does not move while one is open.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.buildings, sheet],
-  );
+  /** Buildings, nearest to the crosshair first. Sorted when a sheet opens; the crosshair does not move while one is open. */
+  const buildingsNear = useMemo(() => {
+    const here = map.current?.crosshair() ?? campus.center;
+    return Object.values(state.buildings).map((b) => ({ b, d: metres(centreOf(b), here) })).sort((a, z) => a.d - z.d).map((x) => x.b);
+  }, [state.buildings, sheet, campus.center]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const closeSheet = (): void => {
     setSheet(null);
     setShots([]);
   };
+  /** The pictures taken so far and the button that takes another, for the sheets that have one. */
+  const photo = { photos: shots.length, onPhoto: () => setCamera(true) };
 
-  /** Copy the pending pictures into the walk's folder under the Feature they show. */
-  const filePhotos = async (featureId: string, uris: readonly string[], at: string): Promise<void> => {
-    for (const uri of uris) {
-      const path = session.addPhoto(featureId, at);
-      try {
-        await store.importFile(uri, `${SURVEY_DIR}/${path}`);
-      } catch (err) {
-        notify(`사진을 저장하지 못했습니다. ${(err as Error).message}`, 'error');
-      }
-    }
-  };
-
-  /**
-   * Run a plan and attach what the sensors read. `pressures` are the readings at the two ends of the walked edge when
-   * they were taken on purpose (a floor change); otherwise the pressure read at the point before is used.
-   */
-  const record = (plan: Plan, pressures?: { startHpa: number | null; endHpa: number | null }): boolean => {
+  /** Run a plan with what the sensors read now (`trip`: the pressures read on leaving and arriving), and file its pictures. */
+  const record = (plan: Plan, trip?: Readings['trip']): boolean => {
     if ('error' in plan) {
       notify(plan.error, 'error');
       return false;
     }
-    const at = isoLocal(new Date());
-    const now = pressure.value ?? null;
-    const startHpa = pressures ? pressures.startHpa : recentPressure(anchorId !== null ? session.attachments[anchorId] : undefined, at);
-    const endHpa = pressures ? pressures.endHpa : now;
-
-    session.run(plan);
-    const facing = heading.value !== undefined ? { heading_mag_deg: storedHeading(heading.value) } : {};
-    // The Feature of the record: where a floor change began it carries the pressure read there, otherwise the one read now.
-    const here = pressures ? pressures.startHpa : now;
-    session.attach(plan.featureId, { ...facing, ...(here !== null ? { pressure_hpa: storedPressure(here) } : {}) }, at);
-    // The point the walk continues from carries the pressure read now, for the next stretch's height.
-    if (plan.anchorId !== plan.featureId && endHpa !== null) session.attach(plan.anchorId, { pressure_hpa: storedPressure(endHpa) }, at);
-    if (plan.edgeId !== undefined && startHpa !== null && endHpa !== null) {
-      session.addVertical(verticalMeasurement({ state: session.state, edgeId: plan.edgeId, reversed: plan.edgeReversed === true, startHpa, endHpa, at }));
-    }
-    if (shots.length > 0) void filePhotos(plan.featureId, shots, at);
+    const uris = shots;
+    const paths = session.record(plan, { at: isoLocal(new Date()), ...sensors.current, ...(trip ? { trip } : {}), photos: uris.length });
+    // Copy the pictures into the walk's folder under the names the session reserved for them.
+    void Promise.all(paths.map((path, i) => store.importFile(uris[i]!, `${SURVEY_DIR}/${path}`)))
+      .catch((err: Error) => notify(`사진을 저장하지 못했습니다. ${err.message}`, 'error'));
     notify(plan.notices[0] ?? (plan.action ? '기록했습니다.' : '이미 있는 지점으로 옮겼습니다.'));
     return true;
+  };
+
+  /** Look at another floor (or the outdoors), then show `next` (the sheet that needed a floor). */
+  const pickScope = (to: Scope, next: Sheet = null): void => {
+    session.moveTo(to);
+    map.current?.show(to);
+    setSheet(next);
+    if (next === null) setShots([]);
   };
 
   const exportData = async (): Promise<void> => {
@@ -195,10 +161,10 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   };
 
   const actions: DockAction[] = [
-    { id: 'start', label: '출발점 지정', hint: snap ? '이미 있는 지점에서 시작' : '십자선 자리에서 시작', onPress: () => record(planStart(input())) },
+    { id: 'start', label: '출발점 지정', hint: '십자선 자리에서 시작', onPress: () => record(planStart(input())) },
     {
       id: 'junction', label: '갈림길 기록', primary: true,
-      hint: anchorId === null ? '먼저 출발점을 정해 주세요' : snap ? '이미 있는 지점에 잇기' : '직전 지점과 잇기',
+      hint: anchorId === null ? '먼저 출발점을 정해 주세요' : '직전 지점과 잇기',
       onPress: () => record(planJunction(input(), { stepFree })),
     },
     { id: 'door', label: '문/강의실 번호', onPress: () => setSheet('door') },
@@ -207,19 +173,10 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   ];
 
   const here = scope.kind === 'building' ? buildingById(state, scope.buildingId) : undefined;
-  const readings = [
-    pressure.available === false ? '기압계 없음' : pressure.value !== undefined ? `기압 ${pressure.value.toFixed(1)} hPa` : '기압 읽는 중',
-    heading.available === false ? '나침반 없음' : heading.value !== undefined ? `방향 ${Math.round(heading.value)}°` : '방향 읽는 중',
-  ].join(' · ');
 
   return (
-    <View style={styles.root} onLayout={onLayout}>
-      {size && view && (
-        <MapCanvas
-          state={state} base={session.base} projection={proj} scope={scope} view={view} size={size}
-          anchorId={anchorId} snapId={snap?.id ?? null} onViewChange={setView}
-        />
-      )}
+    <View style={styles.root}>
+      <MapCanvas state={state} base={session.base} projection={proj} center={campus.center} scope={scope} anchorId={anchorId} handle={map} />
 
       <View pointerEvents="box-none" style={[styles.top, { paddingTop: insets.top + space.sm }]}>
         <View pointerEvents="box-none" style={styles.topRow}>
@@ -236,7 +193,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
             <Text style={styles.exportLabel}>내보내기</Text>
           </Pressable>
         </View>
-        <Text style={styles.readings} accessibilityLabel={readings}>{readings}</Text>
+        <SensorReadout into={sensors} />
         {notice && (
           <View style={[styles.notice, notice.tone === 'error' && styles.noticeError]} accessibilityLiveRegion="polite" accessibilityRole="alert">
             <Text style={styles.noticeText}>{notice.text}</Text>
@@ -250,19 +207,10 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         stepFree={stepFree} onStepFree={setStepFree}
       />
 
-      {sheet === 'scope' && (
-        <ScopeSheet
-          scope={scope} buildings={buildingsNear} onClose={closeSheet}
-          onPick={(next) => {
-            session.moveTo(next);
-            if (size) setView(viewOf(next, size));
-            closeSheet();
-          }}
-        />
-      )}
+      {sheet === 'scope' && <ScopeSheet scope={scope} buildings={buildingsNear} onClose={closeSheet} onPick={(to) => pickScope(to)} />}
       {sheet === 'door' && (
         <DoorSheet
-          suggestion={lastRoom === '' ? '' : nextRoomRef(lastRoom)} photos={shots.length} onPhoto={() => setCamera(true)} onClose={closeSheet}
+          suggestion={lastRoom === '' ? '' : nextRoomRef(lastRoom)} {...photo} onClose={closeSheet}
           onRecord={(answer) => {
             if (!record(planDoor(input(), answer))) return;
             if (answer.roomRef !== '' && answer.doorRole === 'front') setLastRoom(answer.roomRef);
@@ -272,11 +220,10 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
       )}
       {sheet === 'floor' && (scope.kind === 'building' && here ? (
         <FloorSheet
-          scope={scope} building={here} trip={trip} pressure={pressure.value} barometer={pressure.available}
-          photos={shots.length} onPhoto={() => setCamera(true)}
+          scope={scope} building={here} trip={trip} {...photo}
           onClose={() => setSheet(null) /* pictures taken for the trip are kept until it ends */}
           onDepart={(next) => {
-            setTrip({ ...next, coord: crosshair });
+            setTrip({ ...next, coord: crosshair() });
             setSheet(null);
             notify('도착하면 [도착 기록]을 눌러 주세요.');
           }}
@@ -293,12 +240,12 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           }}
         />
       ) : (
-        <ScopeSheet scope={scope} buildings={buildingsNear} onClose={closeSheet} onPick={(next) => { session.moveTo(next); if (size) setView(viewOf(next, size)); setSheet(next.kind === 'building' ? 'floor' : null); }} />
+        // Stairs and elevators are inside a building: pick the floor first, then the sheet comes back.
+        <ScopeSheet scope={scope} buildings={buildingsNear} onClose={closeSheet} onPick={(to) => pickScope(to, to.kind === 'building' ? 'floor' : null)} />
       ))}
       {sheet === 'portal' && (
         <PortalSheet
-          scope={scope} buildings={buildingsNear} defaultLevel={defaultLevel} stepFree={stepFree}
-          photos={shots.length} onPhoto={() => setCamera(true)} onClose={closeSheet}
+          scope={scope} buildings={buildingsNear} stepFree={stepFree} {...photo} onClose={closeSheet}
           onRecord={(answer) => {
             if (record(planPortal(input(), answer))) closeSheet();
           }}
@@ -339,10 +286,6 @@ const styles = StyleSheet.create({
   scopeHint: { fontSize: font.small, fontWeight: '600', color: color.primary },
   export: { minHeight: TOUCH, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', ...shadow },
   exportLabel: { fontSize: font.body, fontWeight: '800', color: color.onPrimary },
-  readings: {
-    alignSelf: 'flex-start', fontSize: font.small, fontWeight: '600', color: color.inkSoft, fontVariant: ['tabular-nums'],
-    backgroundColor: 'rgba(255,255,255,0.85)', paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.sm, overflow: 'hidden',
-  },
   notice: { padding: space.md, borderRadius: radius.sm, backgroundColor: color.ink, ...shadow },
   noticeError: { backgroundColor: color.danger },
   noticeText: { fontSize: font.body, lineHeight: 22, fontWeight: '600', color: color.onPrimary },

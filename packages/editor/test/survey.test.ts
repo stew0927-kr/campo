@@ -139,14 +139,14 @@ describe('what the panel shows', () => {
     expect(withSurvey([first, second], { ...first, surveyed_at: 'x' }).map((s) => s.id)).toEqual([second.id, first.id]);
   });
 
-  it('loadSurveys keeps the open campus\'s surveys and names the unreadable ones', () => {
+  it('loadSurveys keeps the open campus\'s surveys and leaves out the unreadable ones', () => {
     const files = [
       { id: first.id, text: formatSurvey(first) },
       { id: 'sv-20261101-other', text: formatSurvey({ ...first, id: 'sv-20261101-other', campus: 'other', changeset: { ...first.changeset!, campus: 'other' } }) },
       { id: 'sv-20261102-bad', text: '{ not json' },
       { id: 'sv-20261103-old', text: JSON.stringify({ ...first, version: 0 }) },
     ];
-    expect(loadSurveys(files, CAMPUS)).toEqual({ surveys: [first], unreadable: ['sv-20261102-bad', 'sv-20261103-old'] });
+    expect(loadSurveys(files, CAMPUS)).toEqual([first]);
   });
 
   it('toBase64 matches Node for bytes of every value and for more than one chunk', () => {

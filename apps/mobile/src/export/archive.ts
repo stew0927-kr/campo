@@ -1,5 +1,5 @@
 // [데이터 내보내기]: survey.json and the photos it lists as one zip, the file the editor's 현장 기록 불러오기 reads.
-import { SURVEY_FILE, formatSurvey, type Survey } from '@campo/core';
+import { SURVEY_FILE, formatSurvey, surveyPhotoPaths, type Survey } from '@campo/core';
 import { strToU8, zipSync } from 'fflate';
 
 export interface Archive {
@@ -8,11 +8,6 @@ export interface Archive {
   bytes: Uint8Array;
   /** Photos the survey lists that could not be read. They are taken out of the survey inside the zip. */
   missing: string[];
-}
-
-/** Photo paths of a survey, in order, each once. */
-export function photoPaths(survey: Survey): string[] {
-  return [...new Set(Object.values(survey.attachments).flatMap((a) => a.photos ?? []))];
 }
 
 function withoutPhotos(survey: Survey, gone: ReadonlySet<string>): Survey {
@@ -30,13 +25,15 @@ function withoutPhotos(survey: Survey, gone: ReadonlySet<string>): Survey {
  * or null when the file is gone. JPEGs are stored without compressing them again.
  */
 export async function buildArchive(survey: Survey, readPhoto: (path: string) => Promise<Uint8Array | null>): Promise<Archive> {
+  const paths = surveyPhotoPaths(survey);
+  const read = await Promise.all(paths.map(readPhoto));
   const files: Record<string, [Uint8Array, { level: 0 }]> = {};
   const missing: string[] = [];
-  for (const path of photoPaths(survey)) {
-    const bytes = await readPhoto(path);
+  paths.forEach((path, i) => {
+    const bytes = read[i];
     if (bytes) files[path] = [bytes, { level: 0 }];
     else missing.push(path);
-  }
+  });
   const text = formatSurvey(withoutPhotos(survey, new Set(missing)));
   return { name: `${survey.id}.zip`, bytes: zipSync({ [SURVEY_FILE]: strToU8(text), ...files }), missing };
 }

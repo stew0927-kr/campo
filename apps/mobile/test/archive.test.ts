@@ -1,8 +1,8 @@
 // [데이터 내보내기]: the zip the editor imports.
 import { strFromU8, unzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
-import { validateSurvey, type Survey } from '@campo/core';
-import { buildArchive, photoPaths } from '../src/export/archive.ts';
+import { surveyPhotoPaths, validateSurvey, type Survey } from '@campo/core';
+import { buildArchive } from '../src/export/archive.ts';
 import { AT, CAMPUS } from './helpers.ts';
 
 const survey: Survey = {
@@ -40,6 +40,6 @@ describe('buildArchive', () => {
     expect(inside.attachments['n_B_1_main']).toEqual({ recorded_at: AT, photos: ['photos/n_B_1_main-2.jpg'], heading_mag_deg: 12 });
     expect(inside.attachments['n_B_1_hall']).toEqual({ recorded_at: AT }); // no empty photo list (the schema refuses one)
     expect(validateSurvey(inside)).toEqual({ ok: true, errors: [] });
-    expect(photoPaths(inside)).toEqual(Object.keys(files).filter((f) => f !== 'survey.json'));
+    expect(surveyPhotoPaths(inside)).toEqual(Object.keys(files).filter((f) => f !== 'survey.json'));
   });
 });

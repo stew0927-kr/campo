@@ -1,5 +1,5 @@
 // Where the surveyor is: outdoors, or on one floor of one building. Display and recording only: routing never uses this.
-import type { EditBuilding, EditNode, EditState } from '@campo/core';
+import { buildingById, type EditBuilding, type EditNode, type EditState } from '@campo/core';
 
 export type Scope = { kind: 'outdoor' } | { kind: 'building'; buildingId: string; level: number };
 
@@ -17,7 +17,8 @@ export function scopeProps(scope: Scope): { building_id: string | null; level: n
 
 export function scopeOfNode(node: Pick<EditNode, 'props'>): Scope {
   const { building_id, level } = node.props;
-  return building_id === null || level === null ? OUTDOOR : { kind: 'building', buildingId: building_id, level };
+  // Outdoors is building_id null, the test the editor uses; a building's node always has a level (the schema requires it).
+  return building_id === null ? OUTDOOR : { kind: 'building', buildingId: building_id, level: level ?? 0 };
 }
 
 export function nodeInScope(node: Pick<EditNode, 'props'>, scope: Scope): boolean {
@@ -30,9 +31,9 @@ export function floorLabel(level: number): string {
 }
 
 /** "제1공학관 3층", "바깥". */
-export function scopeLabel(scope: Scope, state: Pick<EditState, 'buildings'>): string {
+export function scopeLabel(scope: Scope, state: EditState): string {
   if (scope.kind === 'outdoor') return '바깥';
-  const b = Object.values(state.buildings).find((x) => x.id === scope.buildingId);
+  const b = buildingById(state, scope.buildingId);
   return `${b?.props.name ?? scope.buildingId} ${floorLabel(scope.level)}`;
 }
 

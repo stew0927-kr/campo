@@ -2,7 +2,7 @@
 // the survey's changeset run through core's applyChangeset (one history entry); photos and readings are only shown, never
 // written into the map data.
 import {
-  SURVEY_FILE, SURVEY_PHOTOS_DIR, applyChangeset, checkChangeset, surveyDanglingIds, validateSurvey,
+  SURVEY_FILE, SURVEY_PHOTOS_DIR, applyChangeset, checkChangeset, surveyDanglingIds, surveyPhotoPaths, validateSurvey,
   type EditState, type Survey, type SurveyAttachment, type VerticalMeasurement,
 } from '@campo/core';
 import { strFromU8, unzipSync } from 'fflate';
@@ -29,6 +29,18 @@ export interface SurveyRefusal {
 
 const refuse = (error: string, reasons: string[] = []): SurveyRefusal => ({ error, reasons });
 
+/** survey.json text as a checked Survey. */
+function parseSurvey(text: string): Survey | SurveyRefusal {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return refuse('현장 기록 파일이 JSON이 아닙니다.');
+  }
+  const check = validateSurvey(value);
+  return check.ok ? (value as Survey) : refuse('현장 기록 형식이 맞지 않습니다.', check.errors);
+}
+
 /** Read an exported survey: the zip (survey.json + photos/), or a bare survey.json. Nothing outside those paths is unpacked. */
 export function readSurveyFile(bytes: Uint8Array): SurveyFile | SurveyRefusal {
   let text: string;
@@ -45,19 +57,12 @@ export function readSurveyFile(bytes: Uint8Array): SurveyFile | SurveyRefusal {
   } catch (err) {
     return refuse(`파일을 열 수 없습니다. ${(err as Error).message}`);
   }
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    return refuse('현장 기록 파일이 JSON이 아닙니다.');
-  }
-  const check = validateSurvey(value);
-  if (!check.ok) return refuse('현장 기록 형식이 맞지 않습니다.', check.errors);
-  const survey = value as Survey;
+  const survey = parseSurvey(text);
+  if ('error' in survey) return survey;
 
   const photos: Record<string, Uint8Array> = {};
   const missingPhotos: string[] = [];
-  for (const path of new Set(Object.values(survey.attachments).flatMap((a) => a.photos ?? []))) {
+  for (const path of surveyPhotoPaths(survey)) {
     const found = entries[path];
     if (found) photos[path.slice(PHOTO_PREFIX.length)] = found;
     else missingPhotos.push(path);
@@ -78,8 +83,7 @@ export interface SurveyImport {
  */
 export function planSurveyImport(state: EditState, campusId: string, survey: Survey): SurveyImport | SurveyRefusal {
   if (survey.campus !== campusId) return refuse(`이 현장 기록은 다른 캠퍼스(${survey.campus})의 것입니다. 지금 연 캠퍼스는 ${campusId}입니다.`);
-  const photoCount = Object.values(survey.attachments).reduce((n, a) => n + (a.photos?.length ?? 0), 0);
-  const extras = `사진 ${photoCount}장, 높이 측정 ${survey.vertical.length}건은 상세 정보 탭에서 볼 수 있습니다.`;
+  const extras = `사진 ${surveyPhotoPaths(survey).length}장, 높이 측정 ${survey.vertical.length}건은 상세 정보 탭에서 볼 수 있습니다.`;
   const cs = survey.changeset;
   if (!cs) return { plan: null, lines: ['이 기록은 지도를 바꾸지 않습니다.', extras] };
 
@@ -101,22 +105,12 @@ export function planSurveyImport(state: EditState, campusId: string, survey: Sur
   };
 }
 
-/** Surveys of this campus from the files the dev server keeps; unreadable ones are skipped and named. */
-export function loadSurveys(files: readonly { id: string; text: string }[], campusId: string): { surveys: Survey[]; unreadable: string[] } {
-  const surveys: Survey[] = [];
-  const unreadable: string[] = [];
-  for (const file of files) {
-    let value: unknown;
-    try {
-      value = JSON.parse(file.text);
-    } catch {
-      unreadable.push(file.id);
-      continue;
-    }
-    if (!validateSurvey(value).ok) unreadable.push(file.id);
-    else if ((value as Survey).campus === campusId) surveys.push(value as Survey);
-  }
-  return { surveys, unreadable };
+/** Surveys of this campus from the files the dev server keeps. A file that cannot be read is left out (its notes are simply not shown). */
+export function loadSurveys(files: readonly { id: string; text: string }[], campusId: string): Survey[] {
+  return files.flatMap((file) => {
+    const survey = parseSurvey(file.text);
+    return 'error' in survey || survey.campus !== campusId ? [] : [survey];
+  });
 }
 
 /** `survey` added to the list, replacing an earlier copy with the same id. */

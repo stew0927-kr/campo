@@ -90,6 +90,33 @@ describe('planSurveyImport', () => {
     expect(again).toMatchObject({ plan: null, lines: [expect.stringContaining('이미'), expect.any(String)] });
   });
 
+  it('a later export of the same walk repeats the earlier one: only what is new comes in', () => {
+    const session = fixtureSession();
+    const first = planSurveyImport(session.history.current(), CAMPUS, exported());
+    if ('error' in first) throw new Error(first.error);
+    runPlan(session.history, first.plan!);
+
+    // The walk went on: one more point after n_out_sv01, exported again against the same bundled campus.
+    const walk = createHistory(base);
+    walk.perform(compose([
+      addNode({ id: 'n_out_sv01', coord: [126.9997, 37.0006], props: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: SOURCE } }),
+      addEdge({ id: 'e_out_sv01', props: { kind: 'edge', highway: 'footway', edge_type: 'outdoor', from: 'n_out_0004', to: 'n_out_sv01', bidirectional: true, step_free: true, source: SOURCE } }),
+      addNode({ id: 'n_out_sv02', coord: [126.9996, 37.0005], props: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: SOURCE } }),
+      addEdge({ id: 'e_out_sv02', props: { kind: 'edge', highway: 'footway', edge_type: 'outdoor', from: 'n_out_sv01', to: 'n_out_sv02', bidirectional: true, step_free: null, source: SOURCE } }),
+    ], '갈림길 기록'));
+    const later = buildSurvey({ base, current: walk.current(), campus: CAMPUS, id: 'sv-20261114-outdoor-1700', surveyedAt: AT, attachments: {}, vertical: [], summary: 's' });
+    expect(later.changeset!.changes).toHaveLength(4);
+
+    const planned = planSurveyImport(session.history.current(), CAMPUS, later);
+    if ('error' in planned) throw new Error(planned.error);
+    expect(planned.lines[0]).toContain('이미 반영된 2개는 건너뛰었습니다');
+    expect(planned.lines[1]).toContain('추가 2개');
+    const before = session.history.current();
+    runPlan(session.history, planned.plan!);
+    expect(Object.keys(session.history.current().nodes).filter((id) => !(id in before.nodes))).toEqual(['n_out_sv02']);
+    expect(session.history.undo()).toEqual(before); // only the new part is one undo
+  });
+
   it('a survey of photos only has no plan', () => {
     const photosOnly: Survey = { ...exported(), attachments: { n_out_0004: { recorded_at: AT, photos: ['photos/n_out_0004-1.jpg'] } }, vertical: [] };
     delete photosOnly.changeset;

@@ -2,8 +2,8 @@
 // the survey's changeset run through core's applyChangeset (one history entry); photos and readings are only shown, never
 // written into the map data.
 import {
-  SURVEY_FILE, SURVEY_PHOTOS_DIR, applyChangeset, checkChangeset, surveyDanglingIds, surveyPhotoPaths, validateSurvey,
-  type EditState, type Survey, type SurveyAttachment, type VerticalMeasurement,
+  SURVEY_FILE, SURVEY_PHOTOS_DIR, applyChangeset, checkChangeset, featuresById, sameFeature, surveyDanglingIds, surveyPhotoPaths, validateSurvey,
+  type Changeset, type EditState, type Survey, type SurveyAttachment, type VerticalMeasurement,
 } from '@campo/core';
 import { strFromU8, unzipSync } from 'fflate';
 import type { Plan } from './plan.ts';
@@ -84,11 +84,12 @@ export interface SurveyImport {
 export function planSurveyImport(state: EditState, campusId: string, survey: Survey): SurveyImport | SurveyRefusal {
   if (survey.campus !== campusId) return refuse(`이 현장 기록은 다른 캠퍼스(${survey.campus})의 것입니다. 지금 연 캠퍼스는 ${campusId}입니다.`);
   const extras = `사진 ${surveyPhotoPaths(survey).length}장, 높이 측정 ${survey.vertical.length}건은 상세 정보 탭에서 볼 수 있습니다.`;
-  const cs = survey.changeset;
-  if (!cs) return { plan: null, lines: ['이 기록은 지도를 바꾸지 않습니다.', extras] };
+  const whole = survey.changeset;
+  if (!whole) return { plan: null, lines: ['이 기록은 지도를 바꾸지 않습니다.', extras] };
 
+  const cs = remainingChanges(state, whole);
+  if (!cs) return { plan: null, lines: ['이미 지도에 반영된 기록입니다.', extras] };
   const check = checkChangeset(state, cs);
-  if (check.alreadyApplied) return { plan: null, lines: ['이미 지도에 반영된 기록입니다.', extras] };
   if (!check.ok) {
     const reasons = [...check.problems.map((p) => p.message), ...check.conflicts.map((c) => `[${c.code}] ${c.message}`)];
     return refuse('현장 기록을 적용할 수 없어 아무것도 바꾸지 않았습니다. 조사한 뒤에 같은 곳을 편집기에서 고쳤는지 확인해 주세요.', reasons);
@@ -98,11 +99,26 @@ export function planSurveyImport(state: EditState, campusId: string, survey: Sur
   return {
     plan: { annotation: `현장 기록 불러오기(${survey.id})`, steps: [() => applyChangeset(cs)] },
     lines: [
+      ...(cs.changes.length < whole.changes.length ? [`이미 반영된 ${whole.changes.length - cs.changes.length}개는 건너뛰었습니다.`] : []),
       `추가 ${count('create')}개, 변경 ${count('modify')}개, 삭제 ${count('delete')}개를 반영했습니다. 저장(Ctrl+S)하면 캠퍼스 파일에 기록됩니다.`,
       extras,
       ...(dangling.length > 0 ? [`지도에 없는 Feature를 가리키는 첨부가 ${dangling.length}개 있습니다: ${dangling.join(', ')}`] : []),
     ],
   };
+}
+
+/**
+ * The changes of `cs` the map does not have yet, or null when it has them all. The survey app always exports a walk
+ * against the campus it was built with, so a later export of the same walk repeats what an earlier import brought in.
+ */
+function remainingChanges(state: EditState, cs: Changeset): Changeset | null {
+  const now = featuresById(state);
+  const changes = cs.changes.filter((c) => {
+    if (c.op === 'delete') return now.has(c.id);
+    const have = now.get(c.feature.id);
+    return !have || !sameFeature(have, c.feature);
+  });
+  return changes.length > 0 ? { ...cs, changes } : null;
 }
 
 /** Surveys of this campus from the files the dev server keeps. A file that cannot be read is left out (its notes are simply not shown). */

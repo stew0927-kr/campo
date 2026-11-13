@@ -100,9 +100,14 @@ const MIN_CLEAR_HEIGHT_M = 1;
 export function FloorSheet({ scope, building, trip, photos, onPhoto, onDepart, onArrive, onCancelTrip, onClose }: FloorSheetProps) {
   // Live pressure while the sheet is open (the reading is shared with the rest of the screen).
   const { value: pressure, available: barometer } = usePressure();
-  const others = building.props.levels.filter((l) => l !== scope.level);
+  const levels = [...building.props.levels].sort((a, b) => a - b);
+  const at = levels.indexOf(scope.level);
   const [kind, setKind] = useState<VerticalKind>('stairs');
-  const [toLevel, setToLevel] = useState<number | undefined>(others.length === 1 ? others[0] : undefined);
+  // Stairs are recorded one floor at a time (the floor above or below); an elevator can go to any floor.
+  const reachable = (k: VerticalKind): number[] => levels.filter((l, i) => l !== scope.level && (k === 'elevator' || Math.abs(i - at) === 1));
+  const others = reachable(kind);
+  const [picked, setToLevel] = useState<number | undefined>(undefined);
+  const toLevel = picked !== undefined && others.includes(picked) ? picked : others.length === 1 ? others[0] : undefined;
   const [said, setSaid] = useState<'up' | 'down' | undefined>(undefined);
 
   if (!trip) {

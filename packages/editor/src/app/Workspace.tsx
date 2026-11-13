@@ -323,22 +323,22 @@ export function Workspace({ session }: { session: Session }) {
     };
   }, [session.campusId]);
 
-  /** Apply the survey's changes as one history entry, then keep its file and photos on this PC. */
+  /** Keep the survey's file and photos on this PC, then apply its changes as one history entry. A survey that cannot be kept changes nothing. */
   const importSurvey = async (file: File) => {
     const read = readSurveyFile(new Uint8Array(await file.arrayBuffer()));
     const refused = (r: { error: string; reasons: string[] }) => (r.reasons.length > 0 ? setDialog({ kind: 'survey-refused', ...r }) : fail(r.error));
     if ('error' in read) return refused(read);
     const planned = planSurveyImport(history.current(), session.campusId, read.survey);
     if ('error' in planned) return refused(planned);
+    try {
+      await saveSurvey(read.survey.id, read.text, Object.fromEntries(Object.entries(read.photos).map(([name, bytes]) => [name, toBase64(bytes)])));
+    } catch (err) {
+      return fail(`현장 기록을 저장하지 못해 지도에도 반영하지 않았습니다. ${(err as Error).message}`);
+    }
+    setSurveys((list) => withSurvey(list, read.survey));
     if (planned.plan && perform(planned.plan) !== undefined) return;
     const lines = [...planned.lines];
     if (read.missingPhotos.length > 0) lines.push(`파일에 없는 사진이 ${read.missingPhotos.length}장 있습니다.`);
-    try {
-      await saveSurvey(read.survey.id, read.text, Object.fromEntries(Object.entries(read.photos).map(([name, bytes]) => [name, toBase64(bytes)])));
-      setSurveys((list) => withSurvey(list, read.survey));
-    } catch (err) {
-      return setNotice({ text: [...lines, `기록 파일과 사진은 저장하지 못했습니다. ${(err as Error).message}`].join(' '), tone: 'warn' });
-    }
     setNotice({ text: lines.join(' '), tone: read.missingPhotos.length > 0 ? 'warn' : 'info' });
   };
 

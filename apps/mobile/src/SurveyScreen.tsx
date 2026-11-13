@@ -38,8 +38,8 @@ interface Notice {
   text: string;
   tone: 'info' | 'error';
 }
-/** A floor change in progress, with where it began. */
-type Trip = FloorTrip & { coord: Position };
+/** A floor change in progress, with where it began: the spot, the floor and the point walked from. */
+type Trip = FloorTrip & { coord: Position; scope: Scope; anchorId: string | null };
 
 const NOTICE_MS = { info: 4000, error: 7000 } as const;
 
@@ -108,13 +108,15 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   /** The pictures taken so far and the button that takes another, for the sheets that have one. */
   const photo = { photos: shots.length, onPhoto: () => setCamera(true) };
 
-  /** Run a plan with what the sensors read now (`trip`: the pressures read on leaving and arriving), and file its pictures. */
-  const record = (plan: Plan, trip?: Readings['trip']): boolean => {
+  /**
+   * Run a plan with what the sensors read now (`trip`: the pressures read on leaving and arriving). `uris` are the pictures
+   * taken in the record's own sheet; a record made from the menu has none, so pictures waiting for another record stay with it.
+   */
+  const record = (plan: Plan, uris: readonly string[] = [], trip?: Readings['trip']): boolean => {
     if ('error' in plan) {
       notify(plan.error, 'error');
       return false;
     }
-    const uris = shots;
     const paths = session.record(plan, { at: isoLocal(new Date()), ...sensors.current, ...(trip ? { trip } : {}), photos: uris.length });
     // Copy the pictures into the walk's folder under the names the session reserved for them.
     void Promise.all(paths.map((path, i) => store.importFile(uris[i]!, `${SURVEY_DIR}/${path}`)))
@@ -136,7 +138,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     try {
       const at = isoLocal(new Date());
       const where = scope.kind === 'building' ? buildingById(state, scope.buildingId)?.props.code ?? 'indoor' : 'outdoor';
-      const survey = session.toSurvey(`${where}-${at.slice(11, 16).replace(':', '')}`, at);
+      // The time to the second keeps two exports (or two phones in one building) from sharing an id.
+      const survey = session.toSurvey(`${where}-${at.slice(11, 19).replaceAll(':', '')}`, at);
       const archive = await buildArchive(survey, (path) => store.readBytes(`${SURVEY_DIR}/${path}`));
       const uri = await store.writeShared(archive.name, archive.bytes);
       if (archive.missing.length > 0) notify(`사진 ${archive.missing.length}장을 찾지 못해 빼고 묶었습니다.`, 'error');
@@ -212,7 +215,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         <DoorSheet
           suggestion={lastRoom === '' ? '' : nextRoomRef(lastRoom)} {...photo} onClose={closeSheet}
           onRecord={(answer) => {
-            if (!record(planDoor(input(), answer))) return;
+            if (!record(planDoor(input(), answer), shots)) return;
             if (answer.roomRef !== '' && answer.doorRole === 'front') setLastRoom(answer.roomRef);
             closeSheet();
           }}
@@ -223,7 +226,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           scope={scope} building={here} trip={trip} {...photo}
           onClose={() => setSheet(null) /* pictures taken for the trip are kept until it ends */}
           onDepart={(next) => {
-            setTrip({ ...next, coord: crosshair() });
+            setTrip({ ...next, coord: crosshair(), scope, anchorId });
             setSheet(null);
             notify('도착하면 [도착 기록]을 눌러 주세요.');
           }}
@@ -233,8 +236,10 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           }}
           onArrive={({ incline, endHpa }) => {
             if (!trip) return;
-            const plan = planFloorChange(input(trip.coord), { kind: trip.kind, toLevel: trip.toLevel, ...(incline ? { incline } : {}) });
-            if (!record(plan, { startHpa: trip.startHpa, endHpa })) return;
+            // From where the trip began, whatever floor the map was turned to on the way.
+            const from = { ...input(trip.coord), scope: trip.scope, anchorId: trip.anchorId !== null && trip.anchorId in state.nodes ? trip.anchorId : null };
+            const plan = planFloorChange(from, { kind: trip.kind, toLevel: trip.toLevel, ...(incline ? { incline } : {}) });
+            if (!record(plan, shots, { startHpa: trip.startHpa, endHpa })) return;
             setTrip(null);
             closeSheet();
           }}
@@ -247,7 +252,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         <PortalSheet
           scope={scope} buildings={buildingsNear} stepFree={stepFree} {...photo} onClose={closeSheet}
           onRecord={(answer) => {
-            if (record(planPortal(input(), answer))) closeSheet();
+            if (record(planPortal(input(), answer), shots)) closeSheet();
           }}
         />
       )}

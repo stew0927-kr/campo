@@ -199,7 +199,9 @@ export class SurveySession {
    * - the record's Feature gets the heading and the pressure read at it (where a floor change began: the one read on leaving),
    * - the walked edge gets a height when both of its ends have a pressure: the trip's two readings, or the one read at
    *   the point before (if recent) and the one read now,
-   * - the point the walk continues from remembers the pressure read now, for the next stretch.
+   * - the point the walk continues from remembers the pressure read now, for the next stretch; it is written into that
+   *   point's attachment only after a floor change, where the surveyor stands on it (a door or a portal can leave the
+   *   walk at a point some metres away, and a reading is never attributed to a place it was not taken at).
    * Returns the paths reserved for the record's photos.
    */
   record(plan: PlanOk, r: Readings): string[] {
@@ -214,7 +216,7 @@ export class SurveySession {
         ...(atFeature !== null ? { pressure_hpa: storedPressure(atFeature) } : {}),
       };
       if (Object.keys(patch).length > 0) this.attach(plan.featureId, patch, r.at);
-      if (plan.anchorId !== plan.featureId && endHpa !== null) this.attach(plan.anchorId, { pressure_hpa: storedPressure(endHpa) }, r.at);
+      if (r.trip && plan.anchorId !== plan.featureId && endHpa !== null) this.attach(plan.anchorId, { pressure_hpa: storedPressure(endHpa) }, r.at);
       if (plan.edgeId !== undefined && startHpa !== null && endHpa !== null) {
         this.addVertical(verticalMeasurement({ state: this.state, edgeId: plan.edgeId, reversed: plan.edgeReversed === true, startHpa, endHpa, at: r.at }));
       }

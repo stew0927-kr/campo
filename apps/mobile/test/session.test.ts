@@ -223,6 +223,18 @@ describe('SurveySession', () => {
     });
   });
 
+  it('a reading is not written onto a point the surveyor is not standing at (a door down the corridor keeps the walk where it was)', () => {
+    const s = newSession();
+    s.moveTo({ kind: 'building', buildingId: 'bldg_B', level: 2 });
+    s.record(ok(planStart(at(s, [127.0012, 37.0005]))), { at: AT, pressureHpa: 1012.5, headingDeg: 10 }); // n_B_2_hall
+    const hall = s.attachments['n_B_2_hall'];
+    const door = ok(planDoor(at(s, [127.00127, 37.0005]), { roomRef: '202', doorRole: 'front' }));
+    s.record(door, { at: '2026-11-14T10:03:00+09:00', pressureHpa: 1012.1, headingDeg: 200 });
+    expect(s.anchorId).toBe('n_B_2_hall');
+    expect(s.attachments['n_B_2_hall']).toBe(hall); // untouched
+    expect(s.attachments[door.featureId]).toMatchObject({ pressure_hpa: 1012.1, heading_mag_deg: 200 });
+  });
+
   it('after a restart, revisions are counted from the bundled campus, as the editor counts them', () => {
     const s = newSession();
     s.run(ok(planStart(at(s, [127.00105, 37.00052]))));

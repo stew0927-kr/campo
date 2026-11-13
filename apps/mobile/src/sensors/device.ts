@@ -27,9 +27,13 @@ interface Source<T> {
 
 function useSensor<T, V>(source: Source<T>, map: (reading: T) => V | undefined): SensorValue<V> {
   const [available, setAvailable] = useState<boolean | null>(null);
-  const [value, setValue] = useState<V | undefined>(undefined);
   const mapRef = useRef(map);
   mapRef.current = map;
+  // When another part of the screen is already reading the sensor, start from its newest reading instead of waiting for the next one.
+  const [value, setValue] = useState<V | undefined>(() => {
+    const newest = source.shared.latest();
+    return newest !== undefined ? map(newest) : undefined;
+  });
 
   useEffect(() => {
     let alive = true;

@@ -409,3 +409,20 @@ button.check-item:hover { background: var(--chrome); }
 .report-note { margin: 0; font-size: var(--text-s); }
 .report-note-warn { color: var(--warning); }
 .report-note-info { color: var(--muted); }
+
+/* Compass and scale bar side by side in the bottom-left corner (the compass is added last, so it comes first = left). */
+.maplibregl-ctrl-bottom-left { display: flex; align-items: flex-end; }
+.maplibregl-ctrl-bottom-left .maplibregl-ctrl { float: none; }
+
+/* ---- 건물 상세 정보 ---- */
+.building-panel { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--rule); }
+.inline-row { display: flex; gap: 6px; }
+.inline-row input { flex: 1; min-width: 0; }
+.building-panel button { padding: 5px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; white-space: nowrap; }
+.building-panel button[aria-disabled="true"] { color: var(--muted); opacity: 0.55; cursor: not-allowed; }
+.field-error { margin: 0; color: var(--danger); font-size: var(--text-s); }
+.levels-field { margin: 0; padding: 0; border: 0; min-width: 0; }
+.levels-field legend { padding: 0; margin-bottom: 4px; }
+.level-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; padding: 0; list-style: none; }
+.level-chip { display: flex; align-items: center; gap: 2px; padding: 2px 4px 2px 8px; border: 1px solid var(--rule); border-radius: 12px; background: var(--chrome); color: var(--ink); }
+.level-chip button { padding: 0 6px; border: 0; background: transparent; font-size: var(--text-l); line-height: 1.2; }

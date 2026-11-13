@@ -11,6 +11,8 @@ import type { Preview } from '../model/doors.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import type { OutdoorKind, PathVertex } from '../model/tools.ts';
+import type { MapLimits } from '@campo/core';
+import { startZoom, viewLimits } from '../model/viewLimits.ts';
 import { buildingInScope, edgeStrong, nodeStrong, scopeAt, scopeLabel, snappable, type Scope } from '../model/scope.ts';
 import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } from '../model/snap.ts';
 import { toolDef, type Tool } from '../ui/registry.ts';
@@ -51,6 +53,8 @@ export interface FocusRequest {
 interface Props {
   state: EditState;
   center: Position;
+  /** campus.json map_limits: how far the map may be moved. Undefined: not limited. */
+  limits: MapLimits | undefined;
   tool: Tool;
   outdoorKind: OutdoorKind;
   basemap: BasemapId;
@@ -81,6 +85,15 @@ interface Props {
   onDragEnd: (result: DragResult | null) => void;
 }
 
+/** Constructor options for the limits; a limit that is not declared is left out (MapLibre's default stays). */
+function applicable(v: ReturnType<typeof viewLimits>) {
+  return {
+    ...(v.maxBounds ? { maxBounds: v.maxBounds } : {}),
+    ...(v.minZoom !== null ? { minZoom: v.minZoom } : {}),
+    ...(v.maxZoom !== null ? { maxZoom: v.maxZoom } : {}),
+  };
+}
+
 // Vite pre-bundles maplibre-gl, which breaks the worker's relative URL; point MapLibre at the file directly.
 setWorkerUrl(workerUrl);
 
@@ -95,7 +108,7 @@ interface ActiveDrag {
 }
 
 export function MapView(props: Props) {
-  const { state, scope, tool, outdoorKind, basemap, highlight, routes, focus } = props;
+  const { state, scope, tool, outdoorKind, basemap, highlight, routes, focus, limits } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const drawRef = useRef<TerraDraw | null>(null);
@@ -121,11 +134,14 @@ export function MapView(props: Props) {
       container: container.current!,
       style: baseStyle(),
       center: latest.current.center,
-      zoom: 17,
+      zoom: startZoom(latest.current.limits),
+      ...applicable(viewLimits(latest.current.limits)),
       attributionControl: { compact: false },
     });
     map.addControl(new NavigationControl({ showCompass: false }), 'top-left');
+    // Bottom-left, beside the scale bar: the needle turns with the map, a click turns the map back to north (MapLibre's own control).
     map.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left');
+    map.addControl(new NavigationControl({ showZoom: false, showCompass: true, visualizePitch: true }), 'bottom-left');
     map.boxZoom.disable(); // Shift + drag is the box select
     mapRef.current = map;
     // The e2e tests turn coordinates into pixels with this (dev server only).
@@ -543,6 +559,16 @@ export function MapView(props: Props) {
       }
     });
   }, [state, scope, highlight]);
+
+  // Another campus brings its own area: the limits follow campus.json.
+  useEffect(() => {
+    whenReady((map) => {
+      const v = viewLimits(limits);
+      map.setMaxBounds(v.maxBounds);
+      map.setMinZoom(v.minZoom);
+      map.setMaxZoom(v.maxZoom);
+    });
+  }, [limits]);
 
   useEffect(() => {
     whenReady((map) => (map.getSource(ROUTE_SOURCE) as GeoJSONSource).setData(routesGeoJSON(routes)));

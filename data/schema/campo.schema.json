@@ -35,6 +35,28 @@
             { "$ref": "#/$defs/longitude" },
             { "$ref": "#/$defs/latitude" }
           ]
+        },
+        "map_limits": {
+          "description": "How far the editor's map may be moved (optional; without it the map is not limited). The map cannot be panned out of bounds, and the zoom stays between min_zoom and max_zoom. Each campus declares its own, so another university switches to its own area.",
+          "type": "object",
+          "required": ["bounds", "min_zoom", "max_zoom"],
+          "additionalProperties": false,
+          "properties": {
+            "bounds": {
+              "description": "[west, south, east, north] in EPSG:4326. Should contain the campus and the neighbourhood around it (about 1.5 km from the centre for Hanyang).",
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "prefixItems": [
+                { "$ref": "#/$defs/longitude" },
+                { "$ref": "#/$defs/latitude" },
+                { "$ref": "#/$defs/longitude" },
+                { "$ref": "#/$defs/latitude" }
+              ]
+            },
+            "min_zoom": { "type": "number", "minimum": 0, "maximum": 24 },
+            "max_zoom": { "type": "number", "minimum": 0, "maximum": 24 }
+          }
         }
       }
     },

@@ -319,6 +319,36 @@ describe('schema v0.2 (SPEC-v0.2 §2)', () => {
     expect(error!.message).toContain('npm run migrate');
   });
 
+  describe('map_limits (campus.json)', () => {
+    const withLimits = (limits: unknown, center?: [number, number]) => {
+      const campus = structuredClone(fixture);
+      const meta = campus.meta as AnyFeature;
+      meta.map_limits = limits;
+      if (center) meta.center = center;
+      return validateCampus(campus).errors.filter((e) => e.file === 'campus.json');
+    };
+
+    it('the fixture declares valid limits, and a campus without them is fine too', () => {
+      expect((fixture.meta as AnyFeature).map_limits).toBeDefined();
+      expect(validateCampus(fixture).errors).toEqual([]);
+      expect(withLimits(undefined)).toEqual([]);
+    });
+
+    it('rejects bounds out of order, a centre outside, and min_zoom above max_zoom (E14)', () => {
+      const ok = { bounds: [126.998, 36.998, 127.003, 37.002], min_zoom: 15, max_zoom: 22 };
+      expect(withLimits({ ...ok, bounds: [127.003, 36.998, 126.998, 37.002] }).map((e) => e.code)).toEqual([E.mapLimitsInvalid]);
+      expect(withLimits({ ...ok, bounds: [127.1, 36.998, 127.2, 37.002] }).map((e) => e.code)).toEqual([E.mapLimitsInvalid]);
+      expect(withLimits({ ...ok, min_zoom: 20, max_zoom: 16 }).map((e) => e.code)).toEqual([E.mapLimitsInvalid]);
+    });
+
+    it('rejects a missing field, a wrong length and unknown keys (schema)', () => {
+      const ok = { bounds: [126.998, 36.998, 127.003, 37.002], min_zoom: 15, max_zoom: 22 };
+      expect(withLimits({ bounds: ok.bounds, min_zoom: 15 }).map((e) => e.code)).toEqual([E.schema]);
+      expect(withLimits({ ...ok, bounds: [1, 2, 3] }).map((e) => e.code)).toEqual([E.schema]);
+      expect(withLimits({ ...ok, radius_m: 1500 }).map((e) => e.code)).toEqual([E.schema]);
+    });
+  });
+
   it('rejects the v0.1 shaft_id', () => {
     const result = broken(({ get }) => {
       get('n_A_elevA_L1').properties.shaft_id = 'A_elevA';

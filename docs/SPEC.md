@@ -94,7 +94,7 @@ v0.1은 아래가 모두 되면 끝이다.
 
 ```
 data/campuses/hanyang-seoul/
-├─ campus.json                 # id, name, center([경도, 위도]), bbox([서, 남, 동, 북])
+├─ campus.json                 # id, name, center([경도, 위도]), bbox([서, 남, 동, 북]), map_limits(선택: 편집기 지도 이동 범위)
 ├─ outdoor.geojson             # 바깥 node·edge, poi
 ├─ connections.geojson         # 포탈 edge, 연결통로(bridge) edge
 └─ buildings/
@@ -104,6 +104,7 @@ data/campuses/hanyang-seoul/
                                # 층을 넘는 계단·엘리베이터 edge는 아래층 파일에 둔다
 ```
 
+- `campus.json`의 `map_limits`(선택): `bounds`([서, 남, 동, 북], 캠퍼스 중심을 포함해야 함), `min_zoom`, `max_zoom`. 편집기는 지도를 이 범위 밖으로 옮기지 못하게 한다. 범위는 코드에 두지 않고 캠퍼스마다 이 파일에 적는다(한양대는 중심에서 약 1.5km). 없으면 제한이 없다. 검사 E14가 순서·중심·줌 범위를 확인한다(v0.2 8장).
 - 한 건물은 한 사람이 맡아 편집한다. 그러면 Git 충돌이 거의 없다.
 - 저장할 때 Feature는 `id` 순서로 정렬하고, Feature 하나를 한 줄에 쓴다. 그래야 Git에서 바뀐 부분이 잘 보인다.
 

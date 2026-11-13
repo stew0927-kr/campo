@@ -1,11 +1,12 @@
 // Screen-only state. Never saved; never mixed into CampusDoc.
 // (What the editor offers - tools, operations, panel tabs - is in registry.ts.)
+import { buildingById, findFeature, type EditState } from '@campo/core';
 import type { IndoorNodeKind, OutdoorKind } from '../model/tools.ts';
 import { OUTDOOR, type Scope } from '../model/scope.ts';
 import { initialDoorRun, type DoorRun } from '../model/doors.ts';
 import type { EscalatorMode } from '../model/escalator.ts';
 import type { BasemapId } from '../map/basemaps.ts';
-import type { PanelTab, Tool } from './registry.ts';
+import { toolAvailable, type PanelTab, type Tool } from './registry.ts';
 
 /** What "지점 추가" places: indoors a node or a staircase; outdoors a point or a poi (SPEC §8). Elevators have their own tool. */
 export type AddKind = IndoorNodeKind | 'stairs' | 'outdoor' | 'poi';
@@ -62,6 +63,40 @@ export const initialUi: UiState = {
   nearest: null,
   doorRun: initialDoorRun,
 };
+
+/**
+ * The screen state after the data changed (delete, merge, undo, a report applied): whatever it points at that is gone is dropped.
+ * A floor of a deleted building (or a deleted level) goes back to the outdoors, so the tools that only work outdoors
+ * (건물 외곽선 그리기) are usable again at once. Returns `ui` itself when nothing was pointing at something gone.
+ */
+export function reconcileUi(ui: UiState, state: EditState): UiState {
+  const patch: Partial<UiState> = {};
+  const { scope } = ui;
+  if (scope.kind === 'building') {
+    const b = buildingById(state, scope.buildingId);
+    if (!b || !b.props.levels.includes(scope.level)) patch.scope = OUTDOOR;
+  }
+  if (ui.selectedBuildingId !== null && !buildingById(state, ui.selectedBuildingId)) patch.selectedBuildingId = null;
+  if (!ui.selection.every((id) => findFeature(state, id))) patch.selection = ui.selection.filter((id) => findFeature(state, id));
+  if (ui.pickFrom !== null && !(ui.pickFrom in state.nodes)) patch.pickFrom = null;
+  if (ui.routeFrom !== null && !(ui.routeFrom in state.nodes)) patch.routeFrom = null;
+  if (ui.routeTo !== null && !(ui.routeTo in state.nodes)) patch.routeTo = null;
+  if (Object.keys(patch).length === 0) return ui;
+  const next = { ...ui, ...patch };
+  // A tool that cannot be used in the scope we fell back to gives way to 선택.
+  return toolAvailable(next.tool, next.scope) ? next : { ...next, tool: 'select', pickFrom: null };
+}
+
+/** A building's Feature id changed (renameBuilding): the screen follows it instead of losing the selection and the shown floor. */
+export function followBuildingRename(ui: UiState, oldId: string, newId: string): UiState {
+  const swap = (id: string) => (id === oldId ? newId : id);
+  return {
+    ...ui,
+    scope: ui.scope.kind === 'building' && ui.scope.buildingId === oldId ? { ...ui.scope, buildingId: newId } : ui.scope,
+    selectedBuildingId: ui.selectedBuildingId === null ? null : swap(ui.selectedBuildingId),
+    selection: ui.selection.map(swap),
+  };
+}
 
 /** The 지점 추가 kinds that can be placed in this scope. */
 export const addKindsIn = (scope: Scope): AddKind[] => (scope.kind === 'outdoor' ? OUTDOOR_ADD_KINDS : INDOOR_ADD_KINDS);

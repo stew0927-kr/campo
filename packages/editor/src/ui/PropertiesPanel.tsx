@@ -33,6 +33,7 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
   if (selectedCount > 1) return <p className="panel-empty">{selectedCount}개를 골랐습니다. 속성은 하나만 골랐을 때 고칠 수 있습니다.</p>;
   if (!feature) return <p className="panel-empty">선택 도구로 지점이나 구간을 누르면 여기에서 속성을 고칠 수 있습니다.</p>;
   const p = feature.props;
+  const isBuilding = p.kind === 'building'; // its name, code and floors are in BuildingPanel above
   const kind = p.kind === 'node' ? KIND_LABELS[p.node_type] : p.kind === 'edge'
     ? (p.conveying !== undefined && p.highway === 'steps' ? '에스컬레이터' : p.conveying !== undefined ? '무빙워크'
       : p.edge_type === 'portal' ? '출입구 연결' : p.edge_type === 'bridge' ? '연결통로' : KIND_LABELS[p.highway === 'corridor' ? 'corridor_edge' : p.highway])
@@ -40,8 +41,8 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
   const sources = SOURCES.some((s) => s.value === p.source) ? SOURCES : [...SOURCES, { value: p.source, label: p.source }];
   return (
     <form className="props" onSubmit={(e) => e.preventDefault()}>
-      <p className="props-kind">{kind}</p>
-      <p className="props-id">{feature.id}</p>
+      {!isBuilding && <p className="props-kind">{kind}</p>}
+      {!isBuilding && <p className="props-id">{feature.id}</p>}
       {p.kind === 'edge' && p.conveying !== undefined && (
         <p className="conveying-note">{CONVEYING_TEXT[p.conveying] ?? p.conveying} 방향을 바꾸려면 뒤집기(F)를 쓰세요.</p>
       )}

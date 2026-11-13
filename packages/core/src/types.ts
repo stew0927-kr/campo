@@ -19,6 +19,15 @@ export interface CampusMeta {
   center: Position;
   /** [west, south, east, north] */
   bbox: [number, number, number, number];
+  /** How far the editor's map may be moved. Left out: not limited. Declared per campus so another university uses its own area. */
+  map_limits?: MapLimits;
+}
+
+export interface MapLimits {
+  /** [west, south, east, north]: the map cannot be panned out of it. Contains the campus centre (E14). */
+  bounds: [number, number, number, number];
+  min_zoom: number;
+  max_zoom: number;
 }
 
 interface CommonProperties {
@@ -252,6 +261,8 @@ export const ERROR_CODES = {
   escalatorNotStepFree: 'escalator-not-step-free',
   /** E13 */
   elevatorEdgeNotStops: 'elevator-edge-not-stops',
+  /** E14: campus.json map_limits is not a usable area (bounds out of order, centre outside, min_zoom above max_zoom). */
+  mapLimitsInvalid: 'map-limits-invalid',
 } as const;
 
 export const WARNING_CODES = {

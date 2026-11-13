@@ -7,7 +7,7 @@
 //   operations below    whether each operation can run now, and how (one entry per operation)
 //   panels below        what each side-panel tab shows              (one entry per tab)
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { buildingById, findFeature, type EditEdge, type EditNode, type EditState, type Override, type Position } from '@campo/core';
+import { buildingById, type EditEdge, type EditNode, type EditState, type Override, type Position } from '@campo/core';
 import { saveCampus } from '../api.ts';
 import { MapView, type FocusRequest } from '../map/MapView.tsx';
 import { NOT_CONNECTED_NOTICE, planAttachUnattached, planDrawnPath, unattachedNodes } from '../model/connect.ts';
@@ -23,6 +23,8 @@ import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong,
 import { propsOf, type Session } from '../model/session.ts';
 import { edgeMidpoint, planSplit } from '../model/split.ts';
 import type { PathVertex } from '../model/tools.ts';
+import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, renameBlocked } from '../model/buildingEdit.ts';
+import { BuildingPanel } from '../ui/BuildingPanel.tsx';
 import { ChecksPanel } from '../ui/ChecksPanel.tsx';
 import { ContextMenu } from '../ui/ContextMenu.tsx';
 import { CopyPanel } from '../ui/CopyPanel.tsx';
@@ -39,7 +41,7 @@ import { StatusBar } from '../ui/StatusBar.tsx';
 import { StripForm } from '../ui/StripForm.tsx';
 import { Toolbar, type OperationState } from '../ui/Toolbar.tsx';
 import { TOOL_OPTIONS } from '../ui/ToolOptions.tsx';
-import { initialStrip, initialUi, stripStage, type StripState, type UiState } from '../ui/ui-state.ts';
+import { followBuildingRename, initialStrip, initialUi, reconcileUi, stripStage, type StripState, type UiState } from '../ui/ui-state.ts';
 import { AppDialogs, type Dialog } from './AppDialogs.tsx';
 import { commitSave, prepareSave } from './persist.ts';
 import { toolClicks } from './toolClicks.ts';
@@ -97,9 +99,9 @@ export function Workspace({ session }: { session: Session }) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty, pendingMeasures]);
 
-  // A selected Feature can disappear (delete, merge, undo): drop it from the selection.
+  // Whatever the screen points at can disappear (delete, merge, undo): selection, shown floor, picks. See reconcileUi.
   useEffect(() => {
-    setUi((u) => (u.selection.every((id) => findFeature(state, id)) ? u : { ...u, selection: u.selection.filter((id) => findFeature(state, id)) }));
+    setUi((u) => reconcileUi(u, state));
   }, [state]);
 
   const { checks, graph, places, routeResults, nearest, routeLines, measureTarget, measure } = useInspection(session, state, ui, obsRev);
@@ -459,10 +461,30 @@ export function Workspace({ session }: { session: Session }) {
     if (patch) perform(planSetProps(state, one.id, patch), 'flight_sec' in patch ? `${one.id}:flight_sec` : undefined);
   };
 
+  /** The building outline selected: its name, code and floors. The selection and the shown floor follow a new code. */
+  const selectedBuilding = one?.props.kind === 'building' ? buildingById(state, one.id) : undefined;
+  const renameSelected = (newCode: string) => {
+    if (!selectedBuilding) return undefined;
+    const { id, props } = selectedBuilding;
+    const err = perform(planRenameBuilding(ctx, props.code, newCode));
+    if (err === undefined) setUi((u) => followBuildingRename(u, id, `bldg_${newCode.trim()}`));
+    return err;
+  };
+
   /** What each tab of the side panel shows. */
   const panels: Record<PanelTab, () => ReactNode> = {
     properties: () => (
       <>
+        {selectedBuilding && (
+          <BuildingPanel
+            building={selectedBuilding}
+            onName={(name) => perform(planSetBuildingName(state, selectedBuilding.props.code, name))}
+            onRename={renameSelected}
+            onLevels={(levels) => perform(planSetBuildingLevels(selectedBuilding.props.code, levels))}
+            renameBlocked={(newCode) => renameBlocked(state, ctx, selectedBuilding.props.code, newCode)}
+            removeBlocked={(level) => levelRemoveBlocked(state, selectedBuilding.props.code, level)}
+          />
+        )}
         <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} />
         {measure && measureTarget && (
           <MeasurePanel
@@ -517,6 +539,7 @@ export function Workspace({ session }: { session: Session }) {
         <MapView
           state={state}
           center={session.meta.center}
+          limits={session.meta.map_limits}
           tool={ui.tool}
           outdoorKind={ui.outdoorKind}
           basemap={ui.basemap}

@@ -54,6 +54,18 @@ export interface ValidateOptions {
   now?: Date;
 }
 
+/** E14: what the schema cannot say about map_limits. Why it is not usable (Korean), or false. */
+export function mapLimitsProblem(meta: Pick<CampusMeta, 'center' | 'map_limits'>): string | false {
+  const limits = meta.map_limits;
+  if (!limits) return false;
+  const [west, south, east, north] = limits.bounds;
+  if (west >= east || south >= north) return 'map_limits.bounds는 [서, 남, 동, 북] 순서이고 서쪽이 동쪽보다, 남쪽이 북쪽보다 작아야 합니다.';
+  const [lng, lat] = meta.center;
+  if (lng < west || lng > east || lat < south || lat > north) return 'map_limits.bounds 안에 캠퍼스 중심(center)이 들어 있어야 합니다.';
+  if (limits.min_zoom > limits.max_zoom) return 'map_limits.min_zoom은 max_zoom보다 클 수 없습니다.';
+  return false;
+}
+
 export function validateCampus(campus: LoadedCampus, options: ValidateOptions = {}): ValidationResult {
   const errors: ValidationIssue<ErrorCode>[] = [];
   const warnings: ValidationIssue<WarningCode>[] = [];
@@ -71,6 +83,9 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     error(CAMPUS_META_FILE, null, E.schema, 'campus.json에 schema_version이 없습니다. v0.1 데이터이면 npm run migrate를 먼저 돌려 주세요.');
   } else if (!validateMetaSchema(campus.meta)) {
     error(CAMPUS_META_FILE, null, E.schema, formatSchemaErrors(validateMetaSchema.errors));
+  } else {
+    const problem = mapLimitsProblem(campus.meta as CampusMeta);
+    if (problem) error(CAMPUS_META_FILE, null, E.mapLimitsInvalid, problem);
   }
 
   let overrides: Override[] = [];

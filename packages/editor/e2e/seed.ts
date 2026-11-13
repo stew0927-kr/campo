@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 export const PORT = 5199;
 export const E2E_DIR = join(tmpdir(), 'campo-e2e');
-export const CAMPUS_IDS = ['e2e-floor', 'e2e-scope', 'e2e-escalator', 'e2e-copy'] as const;
+export const CAMPUS_IDS = ['e2e-floor', 'e2e-scope', 'e2e-escalator', 'e2e-copy', 'e2e-building'] as const;
 
 /** The map centre and the building outline (lng, lat). */
 export const CENTER: [number, number] = [127.0005, 37.0003];
@@ -86,7 +86,10 @@ export function seedCampus(id: string): void {
   const dir = join(E2E_DIR, id);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(join(dir, 'buildings', 'A'), { recursive: true });
-  const meta = { id, schema_version: '0.2', name: 'e2e 캠퍼스', center: CENTER, bbox: [126.999, 36.999, 127.002, 37.001] };
+  const meta = {
+    id, schema_version: '0.2', name: 'e2e 캠퍼스', center: CENTER, bbox: [126.999, 36.999, 127.002, 37.001],
+    map_limits: { bounds: [126.995, 36.995, 127.006, 37.005], min_zoom: 15, max_zoom: 22 },
+  };
   writeFileSync(join(dir, 'campus.json'), JSON.stringify(meta, null, 2) + '\n');
   writeFileSync(join(dir, 'buildings', 'A', 'building.geojson'), lines([
     { type: 'Feature', id: 'bldg_A', geometry: { type: 'Polygon', coordinates: [BUILDING] }, properties: { kind: 'building', name: 'A동', code: 'A', levels: [1, 2, 3, 4], ground_levels: [1], source: 'estimate', rev: 1 } },

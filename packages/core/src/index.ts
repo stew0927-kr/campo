@@ -7,7 +7,7 @@ export * from './types.ts';
 export { CAMPUS_META_FILE, CALIBRATION_FILE, OBSERVATIONS_DIR, OVERRIDES_FILE, isCampusFile, parseCampus } from './load.ts';
 export { formatFeatureCollection, formatMeta } from './format.ts';
 export { migrateCampusFiles, type MigrateProblem, type MigrateResult, type MigrateSummary } from './migrate.ts';
-export { ENDPOINT_TOLERANCE_M, isClassroomDoor, isValidFeature, validateCampus } from './validate.ts';
+export { ENDPOINT_TOLERANCE_M, isClassroomDoor, isValidFeature, mapLimitsProblem, validateCampus } from './validate.ts';
 export * from './costs.ts';
 export * from './calibration/index.ts';
 export {

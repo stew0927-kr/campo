@@ -350,6 +350,8 @@ iD 편집기의 구조를 따른다.
 | `setProps(ids, patch)` | 속성 바꾸기 |
 | `addBuilding({polygon, code, name, levels, ground_levels?, building_type?})` | 건물 외곽선을 등록한다. id는 `bldg_{code}`, `rev` 1. 코드(영문자·숫자)가 겹치거나, 층이 비었거나 0이 있거나, `ground_levels`가 `levels` 밖이거나, 구름다리 건물의 층이 둘 이상이면 `disabled`. `ground_levels`를 안 주면 1층이 있으면 `[1]`, 없으면 가장 낮은 층 |
 | `reverseEdge(ids)` | 구간 방향을 뒤집는다. `from`/`to`와 `vertices` 순서, `conveying`(forward↔backward, reversible은 그대로), `incline`(up↔down), `level_from`↔`level_to`, `building_from`↔`building_to`를 함께 뒤집고 `rev`+1. 나머지 속성(`bidirectional`, `step_free`, `elevator_id` 등)은 그대로 |
+| `renameBuilding(code, newCode)` | 건물 코드를 바꾼다. 건물의 레코드 키·Feature id(`bldg_{code}`)·`code`(저장 폴더 `buildings/{code}/`는 여기서 따라온다), 그 건물 지점·강의실 영역의 `building_id`, 건물을 드나드는 구간의 `building_from`/`building_to`, 옛 코드로 시작하는 `elevator_id`(`A-EV1` → `ENG1-EV1`)를 한 번에 바꾸고 건드린 Feature의 `rev`를 올린다. 지점·구간·강의실 id는 그대로 둔다(overrides·측정·제보·changeset이 가리킨다). 코드가 영문자·숫자가 아니거나 이미 있거나 같으면, 바뀐 `elevator_id`를 다른 건물이 이미 쓰면 `disabled`. 바뀌는 엘리베이터에 측정이 있으면 경고 |
+| `setBuildingLevels(code, levels)` | 건물의 층 목록을 바꾼다. 지우는 층에 지점·구간·강의실 영역이 하나라도 있으면 `disabled`(어느 층에 무엇이 몇 개 있는지 알려 준다). `ground_levels`는 남은 층만 두고, 비면 1층(없으면 가장 낮은 층) |
 | `compose(steps, annotation)` | 여러 동작(또는 앞 동작이 남긴 상태로 동작을 만드는 함수)을 동작 하나로 묶는다. 이력 한 줄이고 되돌리기 한 번으로 취소된다. 어느 한 단계가 못 하면 그 이유로 `disabled`. 경고와 `overrideCopies`는 모든 단계 것을 모은다. 편집기의 작업(plan)과 매크로가 쓴다. 끌기만 이력 규칙(perform(noop) → replace → 설명 있는 replace)이 따로 있다 |
 
 **공통 규칙 (이번에 정함)**
@@ -423,6 +425,9 @@ I4는 검사에서 층 값을 비교한다. 길찾기가 아니라 검사이므�
   - **도구 막대는 세 묶음**이다: 그리기 도구 / 편집 작업 / 자동화 매크로(호실 연속 입력, 강의실 자동 연결, 연결 안 된 지점 잇기). 패널 탭은 상세 정보 / 오류 검사 / 경로 테스트 / 제보 관리다.
   - 도구·작업·탭의 이름, 키, 툴팁, 묶음은 `packages/editor/src/ui/registry.ts` 한 곳에 둔다. 도구 막대, 단축키 목록(`?`), 키 처리가 모두 이 목록에서 만들어진다. 도구를 더할 때는 목록에 한 줄을 넣고, 지도 클릭 처리(`packages/editor/src/app/toolClicks.ts`)를 채운다.
 - **작업(operation)**: 삭제, 합치기, 나누기, 뒤집기. 각 작업에 키와 "못 하는 이유" 툴팁이 있다.
+- **화면이 가리키는 것이 사라지면** 화면 상태가 바로 따라 정리된다(`reconcileUi`): 지운 건물의 층을 보고 있었으면 바깥으로 돌아가고(그래야 건물 외곽선 그리기를 다시 쓸 수 있다), 고른 것·건물 선택·첫 번째로 찍은 지점이 없어졌으면 푼다. 되돌리기로 건물이 돌아와도 데이터는 그대로 복원된다.
+- **건물 외곽선을 누르면** 상세 정보 탭에 이름, 코드, 층 목록을 보이고 고칠 수 있다. 이름은 자유, 코드는 `renameBuilding`(되돌리기 한 번), 층 추가·삭제는 `setBuildingLevels`(내용이 있는 층은 못 지우고 이유를 안내). 코드를 바꾸면 화면의 선택과 보고 있는 층이 새 코드를 따라간다.
+- **지도 컨트롤**: 왼쪽 아래에 나침반과 축척을 나란히 둔다(MapLibre 기본 나침반: 지도를 돌리면 바늘이 돌고, 누르면 정북). 지도 이동 범위와 줌 범위는 `campus.json`의 `map_limits`에서 읽는다(SPEC.md 4.3).
 
 ### 5.2 범위(scope) 자동 판단 (요구사항 3)
 
@@ -629,6 +634,7 @@ Turf 주의 (7.4.0 소스에서 확인):
 | W10 | 경고 | 연결통로(`bridge`) 구간의 양 끝 지점이 같은 건물에 있음 |
 | E12 | 오류 | `conveying`이 있는 `highway=steps`(에스컬레이터)의 `step_free`가 `false`가 아님 |
 | E13 | 오류 | `highway=elevator` 구간의 양 끝이 `elevator_stop`이 아님 ("엘리베이터 도구로 다시 만드세요"). 길찾기 그래프는 이런 구간을 건너뛰고 `graph.warnings`에 남긴다 |
+| E14 | 오류 | `campus.json`의 `map_limits`를 쓸 수 없음: `bounds`가 [서, 남, 동, 북] 순서가 아니거나 캠퍼스 `center`가 밖에 있거나 `min_zoom`이 `max_zoom`보다 큼 |
 | W12 | 경고 | 실내 에스컬레이터의 양 끝이 같은 건물·같은 층(층이 안 바뀜) |
 | W13 | 경고 | `observations`의 `target`이 존재하지 않는 구간·엘리베이터를 가리킴 |
 

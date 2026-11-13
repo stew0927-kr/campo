@@ -59,8 +59,8 @@ export function BuildingDialog({ onSubmit, onCancel }: { onSubmit: Submit<Buildi
   };
   return (
     <Modal title="건물 등록" submitLabel="건물 만들기" error={error} onSubmit={submit} onCancel={onCancel}>
-      <label className="field">이름<input value={name} onChange={(e) => setName(e.target.value)} placeholder="제1공학관" autoFocus /></label>
-      <label className="field">코드<input value={code} onChange={(e) => setCode(e.target.value)} placeholder="ENG1" /></label>
+      <label className="field">이름<input value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label>
+      <label className="field">코드<input value={code} onChange={(e) => setCode(e.target.value)} /></label>
       <label className="field">층 목록<input value={levels} onChange={(e) => setLevels(e.target.value)} aria-describedby="levels-help" /></label>
       <p className="field-help" id="levels-help">예: 1-4, -1~5, 1,2,4. 지하 1층은 -1입니다.</p>
       <label className="field">지면과 닿는 층<input value={ground} onChange={(e) => setGround(e.target.value)} aria-describedby="ground-help" /></label>

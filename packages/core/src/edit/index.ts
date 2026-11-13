@@ -40,6 +40,8 @@ export { mergeNodes, mergeSurvivor, IMPORTANT_NODE_TYPES } from './actions/merge
 export { splitEdgeAt, splitPlan, type SplitOptions, type SplitPlan } from './actions/splitEdgeAt.ts';
 export { setProps, LOCKED_PROPS, type PropsPatch } from './actions/setProps.ts';
 export { addBuilding, type NewBuilding } from './actions/addBuilding.ts';
+export { BUILDING_CODE, renameBuilding, renamedElevatorId } from './actions/renameBuilding.ts';
+export { setBuildingLevels } from './actions/setBuildingLevels.ts';
 export { reverseEdge } from './actions/reverseEdge.ts';
 export { compose, type ComposeStep } from './compose.ts';
 export { addRoom, type NewRoom } from './actions/addRoom.ts';

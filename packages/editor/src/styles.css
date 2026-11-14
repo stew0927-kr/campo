@@ -500,10 +500,30 @@ button.check-item:hover { background: var(--chrome); }
 .route-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .route-head h3 { margin: 0; }
 .route-badge { margin-left: 4px; padding: 1px 6px; border-radius: 9px; background: var(--route); color: #fff; font-size: 11px; font-weight: 600; }
-.route-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-s); color: var(--muted); white-space: nowrap; cursor: pointer; }
-.route-toggle input { accent-color: var(--route); }
-.route-card.route-off { border-top-color: color-mix(in srgb, var(--route) 35%, var(--surface)); }
-.route-card.route-off .route-stats dd { color: var(--muted); }
+/* A route card is its own switch: raised and lit while its route is on the map, flat and dimmed while off. */
+.route-switch {
+  cursor: pointer; user-select: none;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+.route-switch:focus-visible { outline: 2px solid var(--route); outline-offset: 2px; }
+.route-on {
+  background: color-mix(in srgb, var(--route) 5%, var(--surface));
+  border-color: color-mix(in srgb, var(--route) 45%, var(--rule));
+  box-shadow: 0 1px 2px rgb(30 41 51 / 0.08), 0 4px 14px color-mix(in srgb, var(--route) 22%, transparent);
+  transform: translateY(-1px);
+}
+.route-on:hover { box-shadow: 0 2px 4px rgb(30 41 51 / 0.1), 0 8px 20px color-mix(in srgb, var(--route) 28%, transparent); }
+.route-off {
+  background: var(--chrome); border-top-color: color-mix(in srgb, var(--route) 35%, var(--surface));
+  box-shadow: inset 0 1px 3px rgb(30 41 51 / 0.1);
+}
+.route-off:hover { background: color-mix(in srgb, var(--route) 4%, var(--chrome)); }
+.route-off .route-stats dd, .route-off .route-steps { color: var(--muted); }
+.route-off .route-swatch { opacity: 0.45; }
+.route-switch:active { transform: translateY(0); }
+.route-state { flex: none; font-size: 11px; font-weight: 600; color: var(--muted); }
+.route-on .route-state { color: var(--route); }
+.route-on .route-state::before { content: "●"; margin-right: 4px; font-size: 9px; vertical-align: 1px; }
 
 /* 출입 정보: folded behind a chevron (open when the point already has any). */
 .disclosure > legend { padding: 0; }

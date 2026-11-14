@@ -21,7 +21,7 @@ import {
   DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, WAY_COLORS,
   dragGeoJSON, dragMembers, hideInData, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON, type RouteLine,
 } from './layers.ts';
-import { registerBeltIcons, registerRestroomIcons } from './icons.ts';
+import { registerBeltIcons, registerRestroomIcons, registerRoutePins } from './icons.ts';
 
 /** Clicking within this many pixels of a node picks it (잇기, 선택). Larger than the 5px snap: it is a pick, not a placement. */
 const PICK_PX = 10;
@@ -474,6 +474,7 @@ export function MapView(props: Props) {
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
       registerRestroomIcons(map);
       registerBeltIcons(map);
+      registerRoutePins(map);
       // Routes sit above the faded data but below the points, so the points stay clickable and readable.
       for (const layer of DATA_LAYERS) {
         if (layer.id === 'campo-nodes-highlight') for (const r of ROUTE_LAYERS) map.addLayer(r);

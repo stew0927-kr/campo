@@ -81,10 +81,19 @@ export function useInspection(
     };
     if (nearest) draw(nearest.kind === 'wheelchair' ? 'wheelchair' : 'shortest', nearest.result);
     else for (const { kind, result } of routeResults) if (shown.includes(kind)) draw(kind, result);
-    // The foot of the perpendicular from each 직접 선택 point, dashed.
-    for (const e of [ends.from, ends.to]) if (e?.snap) lines.push({ profile: 'snap', coordinates: [e.snap.point, e.snap.foot] });
+    // A 직접 선택 end is joined to the route by its perpendicular, dashed: 출발 pin → foot, foot → 도착 pin.
+    if (ends.from?.snap) lines.push({ profile: 'snap', coordinates: [ends.from.snap.point, ends.from.snap.foot] });
+    if (ends.to?.snap) lines.push({ profile: 'snap', coordinates: [ends.to.snap.foot, ends.to.snap.point] });
+    // The 출발 / 도착 pins, whatever the end is: a picked point, a place, or the restroom found.
+    const at = (id: string | null) => (id ? checkedState.nodes[id]?.coord : undefined);
+    const start = routeFromPoint?.at ?? at(routeFrom);
+    const end = nearest
+      ? (nearest.result.found && 'targetId' in nearest.result ? at(nearest.result.targetId as string) : undefined)
+      : routeToPoint?.at ?? at(routeTo);
+    if (start) lines.push({ profile: 'start', coordinates: [start] });
+    if (end) lines.push({ profile: 'end', coordinates: [end] });
     return lines;
-  }, [routeResults, nearest, shown, ends, checkedState, routesOpen]);
+  }, [routeResults, nearest, shown, ends, checkedState, routesOpen, routeFrom, routeTo, routeFromPoint, routeToPoint]);
 
   // ---- 측정: the selected edge or elevator, with core's predicted time (a graph built without calibration) ----
   const measureTarget = useMemo(() => (ui.selection.length === 1 ? measureTargetOf(state, ui.selection) : null), [state, ui.selection]);

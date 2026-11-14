@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, type KeyboardEvent } from 'react';
 import type { PointRouteResult } from '@campo/core';
 import type { Place } from '../model/places.ts';
 import type { RouteKind } from './ui-state.ts';
@@ -45,9 +45,6 @@ export function RoutePanel(p: Props) {
   const { places, fromId, toId, fromPoint, toPoint, picking, results, shown, nearest, warnings } = p;
   const fromList = useId();
   const toList = useId();
-  if (places.length === 0) {
-    return <p className="panel-empty">출발·도착 후보(poi)나 강의실 문을 만들면 경로를 찾을 수 있습니다.</p>;
-  }
   const hasFrom = fromId !== null || fromPoint;
   const hasTo = toId !== null || toPoint;
 
@@ -99,6 +96,7 @@ export function RoutePanel(p: Props) {
 
   return (
     <div className="route-panel">
+      {places.length === 0 && <p className="route-note">이름 있는 장소가 아직 없습니다. [직접 선택]으로 지도에서 출발·도착 위치를 눌러 바로 경로를 볼 수 있습니다.</p>}
       {field('from', '출발', fromId, fromPoint)}
       {field('to', '도착', toId, toPoint)}
       <div className="nearest" role="group" aria-label="가장 가까운 화장실">
@@ -113,7 +111,7 @@ export function RoutePanel(p: Props) {
         />
       )}
       {hasFrom && hasTo && !nearest && results.length > 0 && (
-        <p className="route-note">가장 빠른 경로만 먼저 그립니다. 다른 경로는 [지도에 표시]로 함께 켜서 비교하세요.</p>
+        <p className="route-note">가장 빠른 경로만 먼저 그립니다. 다른 경로 상자를 누르면 지도에 함께 켜서 비교할 수 있습니다.</p>
       )}
       {hasFrom && hasTo && !nearest && results.map(({ kind, result }) => (
         <RouteCard
@@ -147,16 +145,30 @@ interface CardProps {
 }
 
 function RouteCard({ title, className, result: r, badge, toggle }: CardProps) {
+  // With a toggle the whole card is the switch: a press anywhere on it shows or hides the route on the map.
+  const switchable = toggle !== undefined && r.found;
+  const on = switchable && toggle.on;
   return (
-    <section className={`route-card ${className}${toggle && !toggle.on ? ' route-off' : ''}`} aria-label={title}>
+    <section
+      className={`route-card ${className}${switchable ? ' route-switch' : ''}${on ? ' route-on' : ''}${switchable && !on ? ' route-off' : ''}`}
+      aria-label={title}
+      {...(switchable ? {
+        role: 'switch',
+        'aria-checked': on,
+        tabIndex: 0,
+        title: on ? '눌러서 지도에서 숨기기' : '눌러서 지도에 함께 표시',
+        onClick: toggle.onChange,
+        onKeyDown: (e: KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggle.onChange();
+          }
+        },
+      } : {})}
+    >
       <div className="route-head">
         <h3><span className="route-swatch" aria-hidden="true" />{title}{badge && <span className="route-badge">{badge}</span>}</h3>
-        {toggle && r.found && (
-          <label className="route-toggle" title="이 경로를 지도에 함께 그립니다">
-            <input type="checkbox" checked={toggle.on} onChange={toggle.onChange} />
-            지도에 표시
-          </label>
-        )}
+        {switchable && <span className="route-state" aria-hidden="true">{on ? '지도에 표시 중' : '꺼짐'}</span>}
       </div>
       {r.found ? (
         <>

@@ -352,25 +352,31 @@ export const DRAG_LAYERS: LayerSpecification[] = [
 // ---- Routes (길찾기 tab) ----
 
 export const ROUTE_SOURCE = 'campo-routes';
+/** 경로 테스트 ends: the 출발 pin green, the 도착 pin red (icons.ts draws the pins). */
+export const ROUTE_PIN_COLORS = { start: '#2b8a3e', end: '#e03131' } as const;
 /** The routes the 경로 테스트 tab draws (core profiles; fewest_steps only appears as the step_free fallback). */
 export type EditorProfile = Extract<Profile, 'shortest' | 'step_free' | 'elevator_first' | 'wheelchair'>;
 /** Same values as the CSS tokens --route-shortest / --route-step-free / --route-elevator / --route-wheelchair. */
 export const ROUTE_COLORS: Record<EditorProfile, string> = { shortest: '#c2255c', step_free: '#0b7285', elevator_first: '#e67700', wheelchair: '#5f3dc4' };
 
 export interface RouteLine {
-  /** 'snap': the dashed foot of the perpendicular from a 직접 선택 point to the edge it was snapped to. */
-  profile: EditorProfile | 'snap';
+  /**
+   * 'snap': the dashed line between a picked end (the pin) and the foot of the perpendicular on the route.
+   * 'start' / 'end': the 출발 / 도착 pin, one position.
+   */
+  profile: EditorProfile | 'snap' | 'start' | 'end';
   coordinates: Position[];
 }
 
 export function routesGeoJSON(routes: readonly RouteLine[]): FeatureCollection {
   return {
     type: 'FeatureCollection',
-    features: routes.filter((r) => r.coordinates.length >= 2).map((r) => ({
-      type: 'Feature',
-      geometry: { type: 'LineString', coordinates: r.coordinates },
-      properties: { profile: r.profile },
-    })),
+    features: routes.flatMap((r): FeatureCollection['features'] => {
+      if (r.profile === 'start' || r.profile === 'end') {
+        return r.coordinates[0] ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: r.coordinates[0] }, properties: { profile: r.profile } }] : [];
+      }
+      return r.coordinates.length >= 2 ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates: r.coordinates }, properties: { profile: r.profile } }] : [];
+    }),
   };
 }
 
@@ -387,7 +393,7 @@ export const ROUTE_LAYERS: LayerSpecification[] = [
     id: 'campo-routes',
     type: 'line',
     source: ROUTE_SOURCE,
-    filter: ['!=', ['get', 'profile'], 'snap'],
+    filter: ['all', ['==', ['geometry-type'], 'LineString'], ['!=', ['get', 'profile'], 'snap']],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
     paint: { 'line-color': routeColor, 'line-width': 6, 'line-opacity': 0.85, 'line-offset': routeOffset },
   },
@@ -397,7 +403,33 @@ export const ROUTE_LAYERS: LayerSpecification[] = [
     source: ROUTE_SOURCE,
     filter: ['==', ['get', 'profile'], 'snap'],
     layout: { 'line-cap': 'round' },
-    paint: { 'line-color': '#1e2933', 'line-width': 2, 'line-dasharray': [1.5, 1.5] },
+    paint: { 'line-color': '#1e2933', 'line-width': 2.5, 'line-opacity': 0.85, 'line-dasharray': [1, 1.4] },
+  },
+  {
+    // The exact spot under each pin's tip.
+    id: 'campo-routes-end-dot',
+    type: 'circle',
+    source: ROUTE_SOURCE,
+    filter: ['match', ['get', 'profile'], ['start', 'end'], true, false],
+    paint: {
+      'circle-radius': 3.5,
+      'circle-color': ['match', ['get', 'profile'], 'start', ROUTE_PIN_COLORS.start, ROUTE_PIN_COLORS.end],
+      'circle-stroke-color': '#ffffff',
+      'circle-stroke-width': 1.5,
+    },
+  },
+  {
+    id: 'campo-routes-pins',
+    type: 'symbol',
+    source: ROUTE_SOURCE,
+    filter: ['match', ['get', 'profile'], ['start', 'end'], true, false],
+    layout: {
+      'icon-image': ['match', ['get', 'profile'], 'start', 'route-start', 'route-end'],
+      'icon-anchor': 'bottom',
+      'icon-offset': [0, -2],
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
   },
 ];
 

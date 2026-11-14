@@ -185,7 +185,7 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
     if (isEscalator(edge)) escalatorCount++;
     else if (edge.highway === 'steps') stairsCount++;
     else if (!isStepFreePassable(edge)) barrierCount++;
-    if (requested === 'step_free' && isStepFreeUnknown(edge)) {
+    if ((requested === 'step_free' || requested === 'wheelchair') && isStepFreeUnknown(edge)) {
       uncertainSegments.push({ edgeId: data.edge.id, from: leg.from, to: leg.to });
     }
   }
@@ -278,7 +278,10 @@ function label(g: CampusGraph, id: string): string {
 }
 
 function kindWord(profile: Profile): string {
-  return profile === 'step_free' ? '계단 없는 경로' : '경로';
+  if (profile === 'step_free') return '계단 없는 경로';
+  if (profile === 'wheelchair') return '휠체어 경로';
+  if (profile === 'elevator_first') return '엘리베이터 우선 경로';
+  return '경로';
 }
 
 function round1(value: number): number {

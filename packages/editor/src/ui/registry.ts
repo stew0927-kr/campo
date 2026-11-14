@@ -57,7 +57,7 @@ const TOOL_SPECS = [
     hint: '건물 외곽선을 클릭하며 그리고, 첫 점을 다시 누르면 끝납니다.',
   },
   {
-    id: 'osm-building', label: 'OSM 건물 가져오기', group: 'draw', scope: 'outdoor',
+    id: 'osm-building', label: '건물 외곽선 가져오기', group: 'draw', scope: 'outdoor',
     description: '지도에서 건물을 누르면 OpenStreetMap의 외곽선·이름·층수로 건물을 등록합니다.',
     hint: '가져올 건물의 안쪽을 누르세요. OpenStreetMap(Overpass)에서 외곽선을 받아 건물로 등록합니다. 되돌리기로 취소할 수 있고, 이름·코드·층은 상세 정보에서 고칩니다.',
   },

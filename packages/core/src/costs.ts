@@ -7,11 +7,14 @@
 // (AGENTS.md; a test checks this file).
 import { CONVEYING_VALUES, type Conveying, type EdgeProperties, type NodeType } from './types.ts';
 
-export const PROFILES = ['shortest', 'step_free', 'fewest_steps'] as const;
+export const PROFILES = ['shortest', 'step_free', 'fewest_steps', 'elevator_first', 'wheelchair'] as const;
 /**
  * shortest: stairs allowed, plain travel time.
  * step_free: no steps, nothing marked step_free: false; unknown (null) costs a penalty.
  * fewest_steps: the step_free fallback, stairs allowed but each flight costs a big penalty.
+ * elevator_first: nothing closed, but stairs and escalators cost as much as in fewest_steps and each ramp costs
+ *   RAMP_PENALTY_SEC, so the lift is taken wherever there is one.
+ * wheelchair: closed like step_free (no fallback to stairs), unknown step_free and ramps cost a penalty.
  */
 export type Profile = (typeof PROFILES)[number];
 
@@ -21,7 +24,7 @@ export function isProfile(value: unknown): value is Profile {
 
 /** One value per profile. Written out so that adding a profile is a type error here. */
 export function perProfile<T>(f: (profile: Profile) => T): Record<Profile, T> {
-  return { shortest: f('shortest'), step_free: f('step_free'), fewest_steps: f('fewest_steps') };
+  return { shortest: f('shortest'), step_free: f('step_free'), fewest_steps: f('fewest_steps'), elevator_first: f('elevator_first'), wheelchair: f('wheelchair') };
 }
 
 // ---- Time (seconds) ----
@@ -69,6 +72,9 @@ export const FEWEST_STEPS_STAIRS_PENALTY_SEC = 600;
 
 /** fewest_steps: an escalator (highway=steps + conveying) costs a tenth of a flight of stairs. */
 export const FEWEST_STEPS_ESCALATOR_PENALTY_SEC = FEWEST_STEPS_STAIRS_PENALTY_SEC / 10;
+
+/** elevator_first and wheelchair: each ramp edge, so a level way round or a lift is taken when it is not much longer. */
+export const RAMP_PENALTY_SEC = 30;
 
 // ---- Calibration (SPEC-v0.2 3.9) ----
 
@@ -189,7 +195,7 @@ export function portalSec(edge: Pick<EdgeProperties, 'edge_type'>): number {
  */
 export function isClosedFor(edge: StepFreeFacts | null, profile: Profile): boolean {
   if (edge === null) return false;
-  return profile === 'step_free' && !isStepFreePassable(edge);
+  return (profile === 'step_free' || profile === 'wheelchair') && !isStepFreePassable(edge);
 }
 
 /**
@@ -207,5 +213,10 @@ export function penaltySec(edge: PenaltyFacts | null, profile: Profile): number 
     case 'fewest_steps':
       if (edge.highway !== 'steps') return 0;
       return isEscalator(edge) ? FEWEST_STEPS_ESCALATOR_PENALTY_SEC : FEWEST_STEPS_STAIRS_PENALTY_SEC;
+    case 'elevator_first':
+      if (edge.highway === 'steps') return FEWEST_STEPS_STAIRS_PENALTY_SEC;
+      return edge.highway === 'ramp' ? RAMP_PENALTY_SEC : 0;
+    case 'wheelchair':
+      return (isStepFreeUnknown(edge) ? UNKNOWN_STEP_FREE_PENALTY_SEC : 0) + (edge.highway === 'ramp' ? RAMP_PENALTY_SEC : 0);
   }
 }

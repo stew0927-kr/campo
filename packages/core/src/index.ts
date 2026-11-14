@@ -5,7 +5,8 @@ enablePatches();
 
 export * from './types.ts';
 export * from './access.ts';
-export { isRestroomFor } from './restroom.ts';
+export { findNearestRestroom, isRestroomFor, isWheelchairRestroom } from './restroom.ts';
+export { findNearestRestroomFrom, findRouteBetween, snapToRoutes, type PointRoute, type PointRouteResult, type RouteEnd, type RouteSnap } from './routing/fromPoint.ts';
 export { CAMPUS_META_FILE, CALIBRATION_FILE, OBSERVATIONS_DIR, OVERRIDES_FILE, isCampusFile, parseCampus } from './load.ts';
 export { formatFeatureCollection, formatMeta } from './format.ts';
 export { migrateCampusFiles, type MigrateProblem, type MigrateResult, type MigrateSummary } from './migrate.ts';

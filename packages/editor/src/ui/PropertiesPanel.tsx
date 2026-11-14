@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, FLOOR_FLIGHT_SEC, type AccessProp } from '@campo/core';
 import type { CommonEdits } from '../model/ops.ts';
 import type { AnyProps } from '../model/session.ts';
@@ -113,12 +113,13 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
         </div>
       )}
       {p.kind === 'node' && (
-        <fieldset className="access" aria-label="출입 정보">
-          <legend>출입 정보</legend>
-          {ACCESS_PROPS.map((name) => <AccessField key={`${feature.id}:${name}`} name={name} value={p[name]} onCommit={(value) => onEdit({ access: { [name]: value } })} />)}
-          <p className="field-help">빠른 선택을 누르거나 직접 적고 Enter를 누르세요. 비우면 지워집니다. 길찾기에는 쓰이지 않고 안내에만 보입니다.</p>
+        <>
+          <AccessSection key={feature.id} filled={ACCESS_PROPS.filter((name) => !!p[name]).length}>
+            {ACCESS_PROPS.map((name) => <AccessField key={`${feature.id}:${name}`} name={name} value={p[name]} onCommit={(value) => onEdit({ access: { [name]: value } })} />)}
+            <p className="field-help">빠른 선택을 누르거나 직접 적고 Enter를 누르세요. 비우면 지워집니다. 길찾기에는 쓰이지 않고 안내에만 보입니다.</p>
+          </AccessSection>
           {p.sync_group !== undefined && <p className="field-help sync-note">다른 층의 같은 자리 지점과 연동되어 있습니다({p.sync_group}). 우클릭 메뉴에서 연동을 취소할 수 있습니다.</p>}
-        </fieldset>
+        </>
       )}
       <label className="check-field">
         <input type="checkbox" checked={p.needs_check === true} onChange={(e) => onEdit({ needs_check: e.target.checked })} />
@@ -131,5 +132,28 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
       </label>
       {p.kind === 'edge' && <p className="field-help">'있음'은 현장에서 확인했을 때만 골라 주세요. 모르면 '모름'으로 두세요.</p>}
     </form>
+  );
+}
+
+/**
+ * 출입 정보 (개방시간 · 폐쇄기간 · 개방조건), folded away because it is mostly left empty: a chevron button opens it.
+ * It starts open when the point already has any of them (`filled`: how many). Keyed by the Feature, so each point starts afresh.
+ */
+function AccessSection({ filled, children }: { filled: number; children: ReactNode }) {
+  const [open, setOpen] = useState(filled > 0);
+  const bodyId = useId();
+  return (
+    <fieldset className="access disclosure" aria-label="출입 정보">
+      <legend>
+        <button type="button" className="disclosure-toggle" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
+          <svg className="disclosure-chevron" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+            <path d="M4 2.5 L7.5 6 L4 9.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          출입 정보
+          <span className="disclosure-summary">{filled > 0 ? `${filled}개 입력됨` : '개방시간 · 개방조건 · 폐쇄기간'}</span>
+        </button>
+      </legend>
+      {open && <div id={bodyId} className="disclosure-body">{children}</div>}
+    </fieldset>
   );
 }

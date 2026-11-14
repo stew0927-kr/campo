@@ -310,22 +310,42 @@ export function PointInfoSheet({ title, sill, access, note, photos, onPhoto, onS
   const [stepFree, setStepFree] = useState<StepFree | undefined>(sill?.value);
   const [values, setValues] = useState<Required<AccessInfo>>({ hours: access.hours ?? '', closed_period: access.closed_period ?? '', access_condition: access.access_condition ?? '' });
   const [memo, setMemo] = useState(note);
+  // Mostly left empty, so folded away; open from the start when the point already has any of them.
+  const filled = ACCESS_PROPS.filter((name) => (access[name] ?? '') !== '').length + (note !== '' ? 1 : 0);
+  const [open, setOpen] = useState(filled > 0);
   return (
     <BottomSheet title={title} onClose={onClose}>
-      <Text style={styles.note}>현장에서 본 대로 적어 주세요. 비워 두면 지워집니다.</Text>
-      {ACCESS_PROPS.map((name) => (
-        <AccessInput key={name} name={name} value={values[name]} onChange={(value) => setValues((v) => ({ ...v, [name]: value }))} />
-      ))}
-      <FieldLabel>메모</FieldLabel>
-      <TextInput
-        value={memo}
-        onChangeText={setMemo}
-        placeholder="예: 경비실에서 열어 줍니다"
-        placeholderTextColor={color.inkSoft}
-        accessibilityLabel="메모"
-        multiline
-        style={[styles.input, styles.inputTall]}
-      />
+      <Pressable
+        onPress={() => setOpen((o) => !o)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`개방시간, 개방조건, 폐쇄기간, 메모 ${open ? '접기' : '펼치기'}`}
+        style={({ pressed }) => [styles.fold, pressed && { opacity: 0.6 }]}
+      >
+        <Text style={[styles.foldChevron, open && styles.foldChevronOpen]}>›</Text>
+        <View style={styles.foldText}>
+          <Text style={styles.foldTitle}>개방시간 · 개방조건 · 폐쇄기간 · 메모</Text>
+          <Text style={styles.foldHint}>{filled > 0 ? `${filled}개 입력됨` : '대부분 비워 둡니다. 눌러서 적기'}</Text>
+        </View>
+      </Pressable>
+      {open && (
+        <>
+          <Text style={styles.note}>현장에서 본 대로 적어 주세요. 비워 두면 지워집니다.</Text>
+          {ACCESS_PROPS.map((name) => (
+            <AccessInput key={name} name={name} value={values[name]} onChange={(value) => setValues((v) => ({ ...v, [name]: value }))} />
+          ))}
+          <FieldLabel>메모</FieldLabel>
+          <TextInput
+            value={memo}
+            onChangeText={setMemo}
+            placeholder="예: 경비실에서 열어 줍니다"
+            placeholderTextColor={color.inkSoft}
+            accessibilityLabel="메모"
+            multiline
+            style={[styles.input, styles.inputTall]}
+          />
+        </>
+      )}
       {sill && (
         <>
           <FieldLabel>이 지점에 닿는 길의 문턱·턱 (구간 {sill.count}개)</FieldLabel>
@@ -399,6 +419,16 @@ export function ExportSheet({ counts, busy, onExport, onReset, onClose }: Export
 }
 
 const styles = StyleSheet.create({
+  // 개방시간 · 개방조건 · 폐쇄기간 · 메모, folded
+  fold: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: TOUCH, paddingHorizontal: space.md, paddingVertical: space.sm,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: color.line, backgroundColor: color.surface,
+  },
+  foldChevron: { width: 14, fontSize: 22, lineHeight: 24, fontWeight: '700', color: color.inkSoft, textAlign: 'center' },
+  foldChevronOpen: { transform: [{ rotate: '90deg' }] },
+  foldText: { flex: 1 },
+  foldTitle: { fontSize: font.body, fontWeight: '700', color: color.ink },
+  foldHint: { fontSize: font.small, color: color.inkSoft, marginTop: 1 },
   lead: { fontSize: font.body, lineHeight: 24, color: color.ink, marginTop: space.sm },
   note: { fontSize: font.small, lineHeight: 21, color: color.inkSoft, marginTop: space.md },
   gapTop: { marginTop: space.lg },

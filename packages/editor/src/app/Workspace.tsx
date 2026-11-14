@@ -115,7 +115,7 @@ export function Workspace({ session }: { session: Session }) {
     setUi((u) => reconcileUi(u, state));
   }, [state]);
 
-  const { checks, graph, places, routeResults, nearest, routeLines, measureTarget, measure } = useInspection(session, state, ui, obsRev);
+  const { checks, graph, places, routeResults, routeShown, nearest, routeLines, measureTarget, measure } = useInspection(session, state, ui, obsRev);
 
   // ---- Edits: every one is a Plan of core actions run as one history entry ----
 
@@ -151,8 +151,18 @@ export function Workspace({ session }: { session: Session }) {
 
   // ---- What is shown: the tool, the floor, the place ----
 
+  /**
+   * The building 건물 외곽선 가져오기 just added stays selected (yellow outline) only until the next tool or tab:
+   * switching away puts it back to the plain outline.
+   */
+  const imported = useRef<string | null>(null);
+  const dropImported = (): Partial<UiState> => {
+    const id = imported.current;
+    imported.current = null;
+    return id !== null && ui.selection.includes(id) ? { selection: ui.selection.filter((x) => x !== id) } : {};
+  };
   const setTool = (tool: Tool) => {
-    patchUi({ tool, pickFrom: null });
+    patchUi({ tool, pickFrom: null, ...dropImported() });
     setStrip(initialStrip);
     setNotice(null);
   };
@@ -221,6 +231,7 @@ export function Workspace({ session }: { session: Session }) {
     if (perform(planOsmBuilding(history.current(), found.building)) !== undefined) return;
     const id = `bldg_${osmCode(found.building.osmId)}`;
     patchUi({ selection: [id], selectedBuildingId: id, panelTab: 'properties' });
+    imported.current = id;
   };
   const onToolClick = toolClicks({
     state, ctx, ui, strip, perform, patchUi, setStrip, followScope, showFloor, info, fail,
@@ -598,11 +609,22 @@ export function Workspace({ session }: { session: Session }) {
         places={places}
         fromId={ui.routeFrom}
         toId={ui.routeTo}
+        fromPoint={ui.routeFromPoint !== null}
+        toPoint={ui.routeToPoint !== null}
+        picking={ui.routePick}
         results={routeResults}
+        shown={routeShown}
         nearest={nearest}
         warnings={graph?.warnings ?? []}
-        onPick={(end, id) => patchUi(end === 'from' ? { routeFrom: id } : { routeTo: id, nearest: null })}
-        onNearest={(kind) => patchUi({ nearest: kind })}
+        onPick={(end, id) => patchUi(end === 'from'
+          ? { routeFrom: id, routeFromPoint: null, routePick: null, routeShown: null }
+          : { routeTo: id, routeToPoint: null, routePick: null, routeShown: null, nearest: null })}
+        onDirect={(end) => {
+          patchUi({ routePick: ui.routePick === end ? null : end });
+          info(`지도에서 ${end === 'from' ? '출발' : '도착'} 위치를 눌러 주세요.`);
+        }}
+        onNearest={(kind) => patchUi({ nearest: kind, routeTo: null, routeToPoint: null, routePick: ui.routePick === 'to' ? null : ui.routePick })}
+        onToggle={(kind) => patchUi({ routeShown: routeShown.includes(kind) ? routeShown.filter((k) => k !== kind) : [...routeShown, kind] })}
       />
     ),
     reports: () => <ReportsPanel state={state} {...reports.panel} />,
@@ -662,7 +684,17 @@ export function Workspace({ session }: { session: Session }) {
           previewShapes={stripShown.shapes}
           onPathDrawn={onPathDrawn}
           onPolygonDrawn={(ring) => setDialog({ kind: 'building', ring })}
-          onMapClick={(click) => onToolClick[ui.tool]?.(click)}
+          onMapClick={(click) => {
+            // 경로 테스트 → 직접 선택: the click is the route's end, snapped to the nearest edge there.
+            if (ui.panelTab === 'routes' && ui.routePick) {
+              const point = { at: click.position, scope: click.scope };
+              setNotice(null);
+              return patchUi(ui.routePick === 'from'
+                ? { routeFromPoint: point, routeFrom: null, routePick: null, routeShown: null }
+                : { routeToPoint: point, routeTo: null, routePick: null, routeShown: null, nearest: null });
+            }
+            onToolClick[ui.tool]?.(click);
+          }}
           onContextMenu={onContextMenu}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
@@ -708,7 +740,7 @@ export function Workspace({ session }: { session: Session }) {
           />
         )}
       </div>
-      <SidePanel tab={ui.panelTab} onTab={(panelTab) => patchUi({ panelTab })} badges={{ checks: checks.errors.length, reports: reports.badge }}>
+      <SidePanel tab={ui.panelTab} onTab={(panelTab) => patchUi({ panelTab, ...dropImported(), ...(panelTab !== 'routes' ? { routePick: null } : {}) })} badges={{ checks: checks.errors.length, reports: reports.badge }}>
         {panels[ui.panelTab]()}
       </SidePanel>
       <StatusBar

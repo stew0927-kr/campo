@@ -352,13 +352,14 @@ export const DRAG_LAYERS: LayerSpecification[] = [
 // ---- Routes (길찾기 tab) ----
 
 export const ROUTE_SOURCE = 'campo-routes';
-/** Same values as the CSS tokens --route-shortest / --route-step-free. */
-/** The two routes the 길찾기 tab shows; core's fewest_steps only appears as the step_free fallback. */
-export type EditorProfile = Extract<Profile, 'shortest' | 'step_free'>;
-export const ROUTE_COLORS: Record<EditorProfile, string> = { shortest: '#c2255c', step_free: '#0b7285' };
+/** The routes the 경로 테스트 tab draws (core profiles; fewest_steps only appears as the step_free fallback). */
+export type EditorProfile = Extract<Profile, 'shortest' | 'step_free' | 'elevator_first' | 'wheelchair'>;
+/** Same values as the CSS tokens --route-shortest / --route-step-free / --route-elevator / --route-wheelchair. */
+export const ROUTE_COLORS: Record<EditorProfile, string> = { shortest: '#c2255c', step_free: '#0b7285', elevator_first: '#e67700', wheelchair: '#5f3dc4' };
 
 export interface RouteLine {
-  profile: EditorProfile;
+  /** 'snap': the dashed foot of the perpendicular from a 직접 선택 point to the edge it was snapped to. */
+  profile: EditorProfile | 'snap';
   coordinates: Position[];
 }
 
@@ -373,17 +374,30 @@ export function routesGeoJSON(routes: readonly RouteLine[]): FeatureCollection {
   };
 }
 
-const routeColor: ExpressionSpecification = ['match', ['get', 'profile'], 'shortest', ROUTE_COLORS.shortest, ROUTE_COLORS.step_free];
-/** Side by side where both routes share a path, so neither hides the other. */
-const routeOffset: ExpressionSpecification = ['match', ['get', 'profile'], 'shortest', -5, 5];
+const routeColor: ExpressionSpecification = [
+  'match', ['get', 'profile'],
+  'shortest', ROUTE_COLORS.shortest, 'elevator_first', ROUTE_COLORS.elevator_first, 'wheelchair', ROUTE_COLORS.wheelchair,
+  ROUTE_COLORS.step_free,
+];
+/** Side by side where routes share a path, so none hides another. */
+const routeOffset: ExpressionSpecification = ['match', ['get', 'profile'], 'shortest', -6, 'elevator_first', 6, 0];
 
 export const ROUTE_LAYERS: LayerSpecification[] = [
   {
     id: 'campo-routes',
     type: 'line',
     source: ROUTE_SOURCE,
+    filter: ['!=', ['get', 'profile'], 'snap'],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': routeColor, 'line-width': 7, 'line-opacity': 0.85, 'line-offset': routeOffset },
+    paint: { 'line-color': routeColor, 'line-width': 6, 'line-opacity': 0.85, 'line-offset': routeOffset },
+  },
+  {
+    id: 'campo-routes-snap',
+    type: 'line',
+    source: ROUTE_SOURCE,
+    filter: ['==', ['get', 'profile'], 'snap'],
+    layout: { 'line-cap': 'round' },
+    paint: { 'line-color': '#1e2933', 'line-width': 2, 'line-dasharray': [1.5, 1.5] },
   },
 ];
 

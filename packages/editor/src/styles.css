@@ -484,3 +484,37 @@ button.check-item:hover { background: var(--chrome); }
 .history-btn:active { transform: scale(0.95); }
 .history-btn:focus-visible { outline: 2px solid #0b5fff; outline-offset: 2px; }
 .history-btn[aria-disabled="true"] { opacity: 0.38; box-shadow: none; cursor: default; }
+
+/* 경로 테스트: the third route, the wheelchair route, 직접 선택 and the 지도에 표시 toggles. */
+:root { --route-elevator: #e67700; --route-wheelchair: #5f3dc4; }
+.route-elevator { --route: var(--route-elevator); }
+.route-wheelchair { --route: var(--route-wheelchair); }
+.route-end { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 6px; }
+.route-end .field { margin: 0; }
+.route-direct {
+  height: 30px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 15px; background: var(--surface);
+  font-size: var(--text-s); white-space: nowrap; cursor: pointer;
+}
+.route-direct[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.route-hint { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: var(--text-s); }
+.route-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.route-head h3 { margin: 0; }
+.route-badge { margin-left: 4px; padding: 1px 6px; border-radius: 9px; background: var(--route); color: #fff; font-size: 11px; font-weight: 600; }
+.route-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-s); color: var(--muted); white-space: nowrap; cursor: pointer; }
+.route-toggle input { accent-color: var(--route); }
+.route-card.route-off { border-top-color: color-mix(in srgb, var(--route) 35%, var(--surface)); }
+.route-card.route-off .route-stats dd { color: var(--muted); }
+
+/* 출입 정보: folded behind a chevron (open when the point already has any). */
+.disclosure > legend { padding: 0; }
+.disclosure-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px; border: 0; border-radius: 4px;
+  background: none; color: var(--ink); font: inherit; font-weight: 600; cursor: pointer;
+}
+.disclosure-toggle:hover { background: var(--chrome); }
+.disclosure-toggle:focus-visible { outline: 2px solid #0b5fff; outline-offset: 1px; }
+.disclosure-chevron { transition: transform 0.15s ease; }
+.disclosure-toggle[aria-expanded="true"] .disclosure-chevron { transform: rotate(90deg); }
+.disclosure-summary { color: var(--muted); font-size: var(--text-s); font-weight: 400; }
+.disclosure:has(.disclosure-toggle[aria-expanded="false"]) { padding-bottom: 4px; }
+.disclosure-body { display: flex; flex-direction: column; gap: inherit; }

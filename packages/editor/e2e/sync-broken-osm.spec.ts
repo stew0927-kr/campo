@@ -163,7 +163,7 @@ test('OSM 건물 가져오기: 누른 자리의 외곽선·이름·층수로 건
   const ed = new Editor(page);
   await ed.open('e2e-osm');
   await ed.view(AT, 18.4);
-  await ed.click(ed.tool('OSM 건물 가져오기'));
+  await ed.click(ed.tool('건물 외곽선 가져오기'));
   await ed.clickMap(AT);
   await expect(status(page)).toContainText('OSM 건물 "테스트관" 가져오기: 완료했습니다');
   await expect(status(page)).toContainText('OSM의 층수(4개 층)를 넣었습니다');

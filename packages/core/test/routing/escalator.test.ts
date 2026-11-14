@@ -500,7 +500,7 @@ describe('measured time calibration (SPEC-v0.2 3.9)', () => {
         boards++;
         expect(stops).toContain(l.data.stopId);
         expect(l.data.timeSec).toBe(70);
-        expect(l.data.cost).toEqual({ shortest: 70, step_free: 70, fewest_steps: 70 });
+        expect(l.data.cost).toEqual({ shortest: 70, step_free: 70, fewest_steps: 70, elevator_first: 70, wheelchair: 70 });
       }
       if (l.data.kind === 'alight') expect(l.data.timeSec).toBe(ELEVATOR_ALIGHT_SEC);
     });

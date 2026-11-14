@@ -121,6 +121,12 @@ const NORTH_MS = 320;
 /** Radius of the photo fan on the map, in pixels: small, so the map around the point stays visible. */
 const FAN_PX = 64;
 
+/** The colour of a point by its type, so doors, lifts, stairs and so on tell apart at a glance. */
+const NODE_COLOR: Partial<Record<string, string>> = {
+  door: '#0C8599', corridor: '#8A94A3', outdoor: '#8A94A3', elevator_stop: '#D6336C', stair_landing: '#F59F00',
+  restroom: '#12B886', entrance: '#C92A2A', poi: '#495057',
+};
+
 /** Map metres of a turned map, as screen pixels on a north-up layout: the tiles under the map are laid out unturned. */
 const unturned = (v: MapView): MapView => ({ x: v.x, y: v.y, scale: v.scale });
 
@@ -503,12 +509,19 @@ const Features = memo(function Features({ state, base, projection, scope, px }: 
     )];
   });
 
+  // Ends of escalator belts: the belt is an edge, so its two points are coloured like it.
+  const beltEnds = new Set<string>();
+  for (const e of Object.values(state.edges)) if (isEscalator(e.props)) beltEnds.add(e.props.from).add(e.props.to);
   const nodes = Object.values(state.nodes).flatMap((n) => {
     if (!nodeInScope(n, scope)) return [];
     const [x, y] = projection.toXY(n.coord);
-    const walkPoint = n.props.node_type === 'corridor' || n.props.node_type === 'outdoor';
+    const type = n.props.node_type;
+    const walkPoint = type === 'corridor' || type === 'outdoor';
+    const fill = beltEnds.has(n.id) && walkPoint ? color.escalator : NODE_COLOR[type] ?? color.node;
+    // A point recorded on this walk has an orange ring; the others a white one. (The selection ring is blue, the snap ring green.)
+    const made = !(n.id in base.nodes);
     return [(
-      <Circle key={n.id} cx={x} cy={y} r={(walkPoint ? 5 : 7.5) * px} fill={n.id in base.nodes ? color.node : color.made} stroke={color.surface} strokeWidth={1.5 * px} />
+      <Circle key={n.id} cx={x} cy={y} r={(walkPoint ? 5 : 7.5) * px} fill={fill} stroke={made ? color.accent : color.surface} strokeWidth={(made ? 2.5 : 1.5) * px} />
     )];
   });
 
@@ -635,13 +648,13 @@ const Crosshair = memo(function Crosshair({ size, snapped }: { size: Size; snapp
   const stroke = snapped ? color.ok : color.accent;
   return (
     <Svg width={size.width} height={size.height} style={StyleSheet.absoluteFill} pointerEvents="none">
-      <Circle cx={cx} cy={cy} r={18} fill="none" stroke={color.surface} strokeWidth={5} />
-      <Circle cx={cx} cy={cy} r={18} fill="none" stroke={stroke} strokeWidth={2.5} />
-      <Line x1={cx - 30} y1={cy} x2={cx - 8} y2={cy} stroke={stroke} strokeWidth={2.5} />
-      <Line x1={cx + 8} y1={cy} x2={cx + 30} y2={cy} stroke={stroke} strokeWidth={2.5} />
-      <Line x1={cx} y1={cy - 30} x2={cx} y2={cy - 8} stroke={stroke} strokeWidth={2.5} />
-      <Line x1={cx} y1={cy + 8} x2={cx} y2={cy + 30} stroke={stroke} strokeWidth={2.5} />
-      <Circle cx={cx} cy={cy} r={2.5} fill={stroke} />
+      <Circle cx={cx} cy={cy} r={9} fill="none" stroke={color.surface} strokeWidth={3} />
+      <Circle cx={cx} cy={cy} r={9} fill="none" stroke={stroke} strokeWidth={1.25} />
+      <Line x1={cx - 15} y1={cy} x2={cx - 4} y2={cy} stroke={stroke} strokeWidth={1.25} />
+      <Line x1={cx + 4} y1={cy} x2={cx + 15} y2={cy} stroke={stroke} strokeWidth={1.25} />
+      <Line x1={cx} y1={cy - 15} x2={cx} y2={cy - 4} stroke={stroke} strokeWidth={1.25} />
+      <Line x1={cx} y1={cy + 4} x2={cx} y2={cy + 15} stroke={stroke} strokeWidth={1.25} />
+      <Circle cx={cx} cy={cy} r={1.5} fill={stroke} />
     </Svg>
   );
 });

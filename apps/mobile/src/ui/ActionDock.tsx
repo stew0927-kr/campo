@@ -3,8 +3,8 @@
 // 외부 길, 문, 호실 연속, 화장실, 계단/EV, 에스컬레이터, 출입구) and the tools (선택, 강의실 자동 연결, OSM 건물 가져오기, …).
 // Picking one closes the bar. While a mode is on (잇기, 선택, a drawing, a move …) a compact panel across the bottom shows
 // only what that mode needs. Everything pressed is TOUCH (38 dp) high or more.
-import { useEffect, useRef, type ReactNode } from 'react';
-import { Animated, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { type ReactNode } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TOUCH, color, font, radius, space } from './theme.ts';
 
@@ -112,16 +112,6 @@ function Burger({ open }: { open: boolean }) {
 export function ActionDock({ records, tools, open, onToggle, onClose, mode, onHeight }: Props) {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
-  const rise = useRef(new Animated.Value(open ? 1 : 0)).current;
-  useEffect(() => {
-    const anim = Animated.spring(rise, { toValue: open ? 1 : 0, useNativeDriver: true, bounciness: 3, speed: 22 });
-    anim.start();
-    return () => anim.stop();
-  }, [open, rise]);
-  // A mode replaces the menu: the menu goes to rest at once, so no half-risen menu is left when the mode ends.
-  useEffect(() => {
-    if (mode) rise.setValue(0);
-  }, [mode, rise]);
   const bottom = insets.bottom + space.md;
 
   if (mode) {
@@ -136,22 +126,21 @@ export function ActionDock({ records, tools, open, onToggle, onClose, mode, onHe
     );
   }
 
-  const translateY = rise.interpolate({ inputRange: [0, 1], outputRange: [40, 0] });
   return (
     <>
-      {open && <Pressable style={StyleSheet.absoluteFill} onPress={onToggle} accessibilityLabel="메뉴 닫기" />}
-      <Animated.View
-        pointerEvents={open ? 'auto' : 'none'}
-        style={[styles.menu, { bottom: bottom + FAB + space.md, maxHeight: height * 0.66, opacity: open ? rise : 0, transform: [{ translateY }] }]}
-        accessibilityViewIsModal={open}
-      >
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.menuBody} showsVerticalScrollIndicator={false}>
-          <Text style={styles.section}>기록</Text>
-          {records.map((a) => <MenuItem key={a.id} a={a} onPicked={onClose} />)}
-          <Text style={[styles.section, styles.sectionGap]}>도구</Text>
-          {tools.map((a) => <MenuItem key={a.id} a={a} onPicked={onClose} />)}
-        </ScrollView>
-      </Animated.View>
+      {open && (
+        <>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onToggle} accessibilityLabel="메뉴 닫기" />
+          <View style={[styles.menu, { bottom: bottom + FAB + space.md, maxHeight: height * 0.66 }]} accessibilityViewIsModal>
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.menuBody} showsVerticalScrollIndicator={false}>
+              <Text style={styles.section}>기록</Text>
+              {records.map((a) => <MenuItem key={a.id} a={a} onPicked={onClose} />)}
+              <Text style={[styles.section, styles.sectionGap]}>도구</Text>
+              {tools.map((a) => <MenuItem key={a.id} a={a} onPicked={onClose} />)}
+            </ScrollView>
+          </View>
+        </>
+      )}
       <View pointerEvents="box-none" style={[styles.fabWrap, { bottom }]} onLayout={(e) => onHeight?.(e.nativeEvent.layout.height + space.md)}>
         <Pressable
           onPress={onToggle}

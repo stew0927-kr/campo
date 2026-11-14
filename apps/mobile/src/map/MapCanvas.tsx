@@ -19,7 +19,7 @@ import { hitAt, inBox, type Box, type Hit, type Selection } from '../survey/sele
 import { dialHeading, fanPath, polar, touchAngle, wholeDegrees } from '../ui/dial.ts';
 import { color, font, radius, space } from '../ui/theme.ts';
 import {
-  coverSide, fitView, mapMatrix, panned, rotated, rotationOf, scaleBar, shortestTurn, toScreen, withRotation, zoomed,
+  coverSide, fitView, fromScreen, mapMatrix, panned, rotated, rotationOf, scaleBar, shortestTurn, toScreen, withRotation, zoomed,
   type Projection, type Size, type View as MapView, type XY,
 } from './project.ts';
 import type { TileCache } from './tileCache.ts';
@@ -68,6 +68,9 @@ interface Props {
   /** 선택 mode: a tap (what is under the finger, or null) and a dragged box (the points and edges inside). */
   onTapHit?: (hit: Hit | null) => void;
   onBoxPick?: (picked: { nodes: string[]; edges: string[] }) => void;
+  /** 선택 mode: the one point that is the whole selection. Held down for a moment, it can be dragged; it is put down where the finger lifts. */
+  dragNodeId?: string | null;
+  onNodeMove?: (nodeId: string, coord: Position) => void;
   heading?: HeadingEdit | null;
   /** Edges drawn highlighted (the corridor a row of rooms will line). */
   highlightEdges?: readonly string[] | undefined;
@@ -108,6 +111,8 @@ const ROTATE_START_DEG = 10;
 /** A touch that moves less than this and lifts quickly is a tap. */
 const TAP_PX = 10;
 const TAP_MS = 450;
+/** A single selected point held this long (without moving) is picked up to be dragged. */
+const HOLD_MS = 400;
 /** The turn back to north takes this long. */
 const NORTH_MS = 320;
 /** Radius of the photo fan on the map, in pixels: small, so the map around the point stays visible. */
@@ -118,14 +123,16 @@ const unturned = (v: MapView): MapView => ({ x: v.x, y: v.y, scale: v.scale });
 
 export function MapCanvas({
   state, base, projection, center, scope, anchorId, handle, tileCache, draft = null, movingId = null, onSnap,
-  mode = 'pan', selection = null, onTapHit, onBoxPick, heading = null, highlightEdges, marks, bottomInset = 0,
+  mode = 'pan', selection = null, onTapHit, onBoxPick, dragNodeId = null, onNodeMove, heading = null, highlightEdges, marks, bottomInset = 0,
 }: Props) {
   const [size, setSize] = useState<Size | null>(null);
   const [view, setView] = useState<MapView | null>(null);
   const [box, setBox] = useState<Box | null>(null);
+  /** Where a held point is being carried, in map metres; null when none is. */
+  const [carry, setCarry] = useState<{ id: string; xy: XY } | null>(null);
   // The responder and the handle are made once; they read the newest values through refs.
-  const latest = useRef({ view, size, state, scope, mode, heading, onTapHit, onBoxPick });
-  latest.current = { view, size, state, scope, mode, heading, onTapHit, onBoxPick };
+  const latest = useRef({ view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove });
+  latest.current = { view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove };
 
   /** A view that shows the scope, at the map's current turn. */
   const fit = (target: Scope, on: Size): MapView => {
@@ -181,14 +188,71 @@ export function MapCanvas({
   };
 
   // ---- gestures ----
-  const gesture = useRef({ last: null as Touch | null, start: { x: 0, y: 0, at: 0 }, maxCount: 0, moved: 0, turn: 0, turning: false, fanStart: null as { angle: number; deg: number } | null });
+  const gesture = useRef({
+    last: null as Touch | null, start: { x: 0, y: 0, at: 0 }, maxCount: 0, moved: 0, turn: 0, turning: false,
+    fanStart: null as { angle: number; deg: number } | null,
+    /** The press timer of a single selected point, and the point while it is being carried. */
+    hold: null as ReturnType<typeof setTimeout> | null, carrying: null as string | null,
+  });
+  // Moves of the view are gathered here and applied at most once per frame: a setView on every touch event
+  // overflows the update depth of React on a fast drag.
+  const pending = useRef({ dx: 0, dy: 0, spread: 1, dTurn: 0, keepCentre: false, carry: null as { id: string; xy: XY } | null });
+  const frame = useRef<number | null>(null);
+  const clearPending = (): void => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+    pending.current = { dx: 0, dy: 0, spread: 1, dTurn: 0, keepCentre: false, carry: null };
+  };
+  const clearHold = (): void => {
+    if (gesture.current.hold !== null) clearTimeout(gesture.current.hold);
+    gesture.current.hold = null;
+  };
+  const flush = (): void => {
+    frame.current = null;
+    const p = pending.current;
+    pending.current = { dx: 0, dy: 0, spread: 1, dTurn: 0, keepCentre: false, carry: null };
+    if (p.carry) setCarry(p.carry);
+    if (p.dx !== 0 || p.dy !== 0 || p.spread !== 1 || p.dTurn !== 0) {
+      setView((cur) => {
+        if (!cur) return cur;
+        let next = p.keepCentre ? cur : panned(cur, p.dx, p.dy);
+        if (p.spread !== 1) next = zoomed(next, p.spread);
+        if (p.dTurn !== 0) next = rotated(next, p.dTurn);
+        return next;
+      });
+    }
+  };
+  const schedule = (): void => {
+    if (frame.current === null) frame.current = requestAnimationFrame(flush);
+  };
+  useEffect(() => () => {
+    clearPending();
+    clearHold();
+  }, []);
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: (e) => {
       stopAnimation();
       const now = touchOf(e);
-      gesture.current = { last: now, start: { x: now.x, y: now.y, at: Date.now() }, maxCount: now.count, moved: 0, turn: 0, turning: false, fanStart: null };
+      clearHold();
+      clearPending();
+      gesture.current = { last: now, start: { x: now.x, y: now.y, at: Date.now() }, maxCount: now.count, moved: 0, turn: 0, turning: false, fanStart: null, hold: null, carrying: null };
+      // A single selected point held down for a moment is picked up.
+      const { mode: m, view: v, size: s, dragNodeId: only } = latest.current;
+      if (m === 'select' && only && now.count === 1 && v && s) {
+        const g = gesture.current;
+        g.hold = setTimeout(() => {
+          g.hold = null;
+          const cur = latest.current;
+          if (g.maxCount !== 1 || g.moved > TAP_PX || !cur.view || !cur.size || cur.dragNodeId !== only) return;
+          const hit = hitAt({ state: cur.state, scope: cur.scope, projection, view: cur.view, size: cur.size }, [g.start.x, g.start.y]);
+          if (hit?.kind !== 'node' || hit.id !== only) return;
+          g.carrying = only;
+          setBox(null);
+          setCarry({ id: only, xy: fromScreen(cur.view, cur.size, [g.last?.x ?? g.start.x, g.last?.y ?? g.start.y]) });
+        }, HOLD_MS);
+      }
     },
     onPanResponderMove: (e) => {
       const g = gesture.current;
@@ -198,12 +262,21 @@ export function MapCanvas({
       g.maxCount = Math.max(g.maxCount, now.count);
       g.moved = Math.max(g.moved, Math.hypot(now.x - g.start.x, now.y - g.start.y));
       // A finger was added or lifted: start measuring from here, or the map would jump.
+      if (g.hold !== null && g.moved > TAP_PX) clearHold();
       if (!before || before.count !== now.count || now.count === 0) {
         g.fanStart = null;
         if (now.count !== 1) setBox(null);
         return;
       }
       const { mode: m, view: v, size: s, heading: h } = latest.current;
+      if (g.carrying !== null) {
+        // The point follows the finger; no box and no map pan while it is carried.
+        if (now.count === 1 && v && s) {
+          pending.current.carry = { id: g.carrying, xy: fromScreen(v, s, [now.x, now.y]) };
+          schedule();
+        }
+        return;
+      }
       if (now.count === 1 && g.maxCount === 1) {
         if (m === 'select') {
           if (g.moved > TAP_PX) setBox({ x0: g.start.x, y0: g.start.y, x1: now.x, y1: now.y });
@@ -217,7 +290,9 @@ export function MapCanvas({
           h.onChange(wholeDegrees(dialHeading(g.fanStart.deg, g.fanStart.angle, angle)));
           return;
         }
-        setView((cur) => (cur ? panned(cur, now.x - before.x, now.y - before.y) : cur));
+        pending.current.dx += now.x - before.x;
+        pending.current.dy += now.y - before.y;
+        schedule();
         return;
       }
       if (now.count !== 2) return;
@@ -227,18 +302,32 @@ export function MapCanvas({
       if (dTurn < -180) dTurn += 360;
       g.turn += dTurn;
       if (!g.turning && Math.abs(g.turn) >= ROTATE_START_DEG) g.turning = true;
-      const keepCentre = m === 'heading'; // the photo's point stays put while its direction is set
-      setView((cur) => {
-        if (!cur) return cur;
-        let next = zoomed(keepCentre ? cur : panned(cur, now.x - before.x, now.y - before.y), spread);
-        if (g.turning) next = rotated(next, dTurn);
-        return next;
-      });
+      const p = pending.current;
+      p.keepCentre = m === 'heading'; // the photo's point stays put while its direction is set
+      if (!p.keepCentre) {
+        p.dx += now.x - before.x;
+        p.dy += now.y - before.y;
+      }
+      p.spread *= spread;
+      if (g.turning) p.dTurn += dTurn;
+      schedule();
     },
     onPanResponderRelease: () => {
       const g = gesture.current;
-      const { mode: m, view: v, size: s, state: st, scope: sc, onTapHit: tap, onBoxPick: pick } = latest.current;
+      const { mode: m, view: v, size: s, state: st, scope: sc, onTapHit: tap, onBoxPick: pick, onNodeMove: put } = latest.current;
       const quick = Date.now() - g.start.at <= TAP_MS;
+      clearHold();
+      // A carried point is put down where it was last drawn (or where the finger last was).
+      const dropped = g.carrying !== null && v && s && g.last ? { id: g.carrying, xy: pending.current.carry?.xy ?? fromScreen(v, s, [g.last.x, g.last.y]) } : null;
+      clearPending();
+      g.carrying = null;
+      if (dropped) {
+        setCarry(null);
+        setBox(null);
+        g.last = null;
+        put?.(dropped.id, projection.toPosition(dropped.xy));
+        return;
+      }
       if (m === 'select' && v && s && g.maxCount === 1) {
         if (g.moved <= TAP_PX && quick) tap?.(hitAt({ state: st, scope: sc, projection, view: v, size: s }, [g.start.x, g.start.y]));
         else if (g.last && g.moved > TAP_PX) pick?.(inBox({ state: st, scope: sc, projection, view: v, size: s }, { x0: g.start.x, y0: g.start.y, x1: g.last.x, y1: g.last.y }));
@@ -247,7 +336,11 @@ export function MapCanvas({
       g.last = null;
     },
     onPanResponderTerminate: () => {
+      clearHold();
+      clearPending();
+      gesture.current.carrying = null;
       gesture.current.last = null;
+      setCarry(null);
       setBox(null);
     },
     // The responder reads everything through refs.
@@ -326,6 +419,12 @@ export function MapCanvas({
                 return <Rect key={i} x={x - r} y={y - r} width={2 * r} height={2 * r} fill={m.tone === 'back' ? color.surface : color.accent} stroke={color.accent} strokeWidth={2 / view.scale} />;
               })}
               {movingId && state.nodes[movingId] && (() => { const [x, y] = projection.toXY(state.nodes[movingId]!.coord); return <Circle cx={x} cy={y} r={17 / view.scale} fill="none" stroke={color.accent} strokeWidth={3 / view.scale} strokeDasharray={[4 / view.scale, 3 / view.scale]} />; })()}
+              {carry && (
+                <>
+                  <Circle cx={carry.xy[0]} cy={carry.xy[1]} r={17 / view.scale} fill={color.accent} fillOpacity={0.25} stroke={color.accent} strokeWidth={3 / view.scale} />
+                  <Circle cx={carry.xy[0]} cy={carry.xy[1]} r={5 / view.scale} fill={color.accent} stroke={color.surface} strokeWidth={1.5 / view.scale} />
+                </>
+              )}
               {anchor && <Circle cx={anchor.xy[0]} cy={anchor.xy[1]} r={15 / view.scale} fill="none" stroke={color.anchor} strokeWidth={3.5 / view.scale} />}
               {snap && snap.id !== anchorId && mode !== 'select' && <Circle cx={snap.xy[0]} cy={snap.xy[1]} r={13 / view.scale} fill="none" stroke={color.ok} strokeWidth={3 / view.scale} />}
             </G>

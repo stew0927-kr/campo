@@ -711,6 +711,12 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           if (hit?.kind === 'building' && next.building) setSheet('buildingInfo');
         }}
         onBoxPick={(picked) => setSelection((s) => withBox(s, picked))}
+        dragNodeId={tool?.kind === 'select' && selection && selection.nodes.length === 1 && selection.edges.length === 0 && !selection.building ? selection.nodes[0]! : null}
+        onNodeMove={(id, coord) => {
+          const plan = planMoveNode(state, id, coord);
+          if ('error' in plan) notify(plan.error);
+          else apply(plan.action, plan.moved > 1 ? `연동된 ${plan.moved}개 층의 지점을 같이 옮겼습니다.` : '지점을 옮겼습니다.');
+        }}
         heading={headingEdit}
         highlightEdges={tool?.kind === 'strip' ? tool.edges : undefined}
         marks={marks}

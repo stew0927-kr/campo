@@ -23,6 +23,9 @@ export function storedHeading(deg: number): number {
   return rounded >= 360 ? 0 : rounded;
 }
 
+/** A photo's direction as stored: whole degrees, 0 up to 359 (the dial works in whole degrees). */
+export const storedPhotoHeading = (deg: number): number => Math.round(normalizeDeg(deg)) % 360;
+
 /** A pressure and when it was read (ISO 8601). */
 export interface PressureReading {
   hpa: number;

@@ -1,19 +1,40 @@
 // The bottom sheets of the record buttons. They only collect answers; SurveyScreen turns the answers into plans.
 import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, heightFromPressure, type AccessInfo, type AccessProp, type DoorRole, type EditBuilding } from '@campo/core';
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { defaultLevel, floorLabel, type Scope } from '../model/scope.ts';
 import { usePressure } from '../sensors/device.ts';
 import type { VerticalKind } from '../survey/plans.ts';
 import { BottomSheet } from './BottomSheet.tsx';
 import { BigButton, Choice, FieldLabel } from './controls.tsx';
+import { compassWord } from './dial.ts';
 import { STEP_FREE_CHOICES, type StepFree } from './stepFree.ts';
-import { TOUCH_LARGE, color, font, radius, space } from './theme.ts';
+import { TOUCH, TOUCH_LARGE, color, font, radius, space } from './theme.ts';
 
 // ---- shared ----
 
+/** The directions of the pictures taken for the record being made, and the button that sets one (SurveyScreen provides it). */
+export const ShotsContext = createContext<{ headings: readonly (number | null)[]; onEdit: (index: number) => void } | null>(null);
+
 function PhotoRow({ count, onPhoto }: { count: number; onPhoto: () => void }) {
-  return <BigButton tone="plain" label="사진 촬영" hint={count > 0 ? `${count}장 찍었습니다` : '기록과 함께 저장됩니다'} onPress={onPhoto} style={styles.gapTop} />;
+  const shots = useContext(ShotsContext);
+  return (
+    <View>
+      <BigButton tone="plain" label="사진 촬영" hint={count > 0 ? `${count}장 찍었습니다` : '기록과 함께 저장됩니다'} onPress={onPhoto} style={styles.gapTop} />
+      {shots && count > 0 && (
+        <View style={styles.shotRow}>
+          {Array.from({ length: count }, (_, i) => {
+            const h = shots.headings[i] ?? null;
+            return (
+              <Pressable key={i} onPress={() => shots.onEdit(i)} accessibilityRole="button" accessibilityLabel={`사진 ${i + 1} 방향 설정`} style={styles.shot}>
+                <Text style={styles.shotLabel}>사진 {i + 1} · {h === null ? '방향 설정' : `${h}° ${compassWord(h)}`}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
 }
 
 const levelOptions = (levels: readonly number[]) => [...levels].sort((a, b) => a - b).map((l) => ({ value: l, label: floorLabel(l) }));
@@ -226,7 +247,7 @@ export function ScopeSheet({ scope, buildings, onPick, onClose }: ScopeSheetProp
   return (
     <BottomSheet title="어디를 조사하나요?" onClose={onClose}>
       <BigButton tone={scope.kind === 'outdoor' ? 'primary' : 'plain'} label="바깥" onPress={() => onPick({ kind: 'outdoor' })} />
-      {buildings.length === 0 && <Text style={styles.note}>등록된 건물이 없습니다. 건물 외곽선은 PC 편집기에서 먼저 그려 주세요.</Text>}
+      {buildings.length === 0 && <Text style={styles.note}>등록된 건물이 없습니다. 아래 도구의 [건물 추가]로 OSM 건물을 가져오거나 외곽선을 그려 주세요.</Text>}
       {buildings.map((b) => (
         <View key={b.id}>
           <FieldLabel>{b.props.name}</FieldLabel>
@@ -338,6 +359,9 @@ const styles = StyleSheet.create({
   lead: { fontSize: font.body, lineHeight: 24, color: color.ink, marginTop: space.sm },
   note: { fontSize: font.small, lineHeight: 21, color: color.inkSoft, marginTop: space.md },
   gapTop: { marginTop: space.lg },
+  shotRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.sm },
+  shot: { minHeight: TOUCH, paddingHorizontal: space.lg, borderRadius: radius.pill, backgroundColor: color.surface, borderWidth: 1.5, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  shotLabel: { fontSize: font.small, fontWeight: '700', color: color.primary },
   gapTopWide: { marginTop: space.xl * 1.5 },
   readout: {
     minHeight: TOUCH_LARGE, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: space.md,

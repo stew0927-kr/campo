@@ -1,10 +1,11 @@
-// Sizes and colours of the survey screen. Everything that is pressed is at least TOUCH high and wide:
-// the phone is in one hand, the surveyor is walking, and a wrong press records a wrong point.
+// Sizes and colours of the survey screen. The controls are compact so the map keeps the screen, but everything that is
+// pressed is still at least TOUCH high (36 dp, a little under the 48 dp guideline, as asked for the compact layout):
+// the surveyor is walking, and a wrong press records a wrong point.
 
-/** Smallest touch target (dp). The accessibility minimum is 48. */
-export const TOUCH = 56;
+/** Smallest touch target (dp). */
+export const TOUCH = 38;
 /** The main action buttons. */
-export const TOUCH_LARGE = 64;
+export const TOUCH_LARGE = 42;
 
 export const color = {
   bg: '#F4F1EA',
@@ -30,6 +31,6 @@ export const color = {
   anchor: '#0B5FFF',
 } as const;
 
-export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
-export const radius = { sm: 10, md: 16, pill: 999 } as const;
-export const font = { small: 14, body: 16, label: 18, title: 22, display: 34 } as const;
+export const space = { xs: 3, sm: 5, md: 8, lg: 10, xl: 16 } as const;
+export const radius = { sm: 7, md: 10, pill: 999 } as const;
+export const font = { small: 12, body: 14, label: 15, title: 18, display: 26 } as const;

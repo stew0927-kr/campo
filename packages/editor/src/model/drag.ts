@@ -2,8 +2,11 @@
 //   start   perform(noop), no label
 //   move    replace(moveNode), no label     (the map only redraws a small temporary source meanwhile)
 //   finish  the last replace carries the label: moveNode, or mergeNodes (dropped on a node), or splitEdgeAt with the node (dropped on an edge)
+// A point with a sync_group (층 연동) moves together with its counterparts on the other floors of its building: the same
+// compose, so the preview, the drop and Ctrl+Z all treat them as one.
 // A drop that core refuses puts the node back where it was (undo of the whole drag), like iD's "nope".
-import { addNode, compose, freshId, mergeNodes, moveNode, noop, nodeIdPrefix, splitEdgeAt, type EditContext, type EditState, type History, type NodeProperties, type Position } from '@campo/core';
+import { addNode, compose, freshId, mergeNodes, moveNode, noop, nodeIdPrefix, splitEdgeAt, type Action, type EditContext, type EditState, type History, type NodeProperties, type Position } from '@campo/core';
+import { counterparts } from './sync.ts';
 
 export type DropTarget = { kind: 'node'; id: string } | { kind: 'edge'; id: string };
 
@@ -22,9 +25,17 @@ export class NodeDrag {
     this.history.perform(noop(), null);
   }
 
-  /** The state with the node (and its elevator mates) at `coord`. */
+  /** moveNode for the node, and for each point synced with it on another floor (same coordinate: a copy stands on the same spot). */
+  private place(coord: Position): Action {
+    const node = this.history.current().nodes[this.nodeId];
+    const mates = node ? [...counterparts(this.history.current(), node).values()] : [];
+    if (mates.length === 0) return moveNode(this.nodeId, coord);
+    return compose([moveNode(this.nodeId, coord), ...mates.map((m) => moveNode(m.id, coord))], '지점 이동');
+  }
+
+  /** The state with the node (and its elevator mates, and its synced points on other floors) at `coord`. */
   move(coord: Position): EditState {
-    return this.history.replace(moveNode(this.nodeId, coord), null);
+    return this.history.replace(this.place(coord), null);
   }
 
   /** Back to the state before start(); the drag leaves no entry. */
@@ -35,13 +46,13 @@ export class NodeDrag {
   finish(coord: Position, target: DropTarget | null): DragResult {
     const h = this.history;
     if (!target) {
-      h.replace(moveNode(this.nodeId, coord));
+      h.replace(this.place(coord));
       return { ok: true, kind: 'move', warnings: [] };
     }
     if (target.kind === 'node') {
       const there = h.current().nodes[target.id];
       if (!there) return this.refuse(`지점 "${target.id}"이(가) 없습니다.`);
-      const place = moveNode(this.nodeId, there.coord);
+      const place = this.place(there.coord);
       const merge = mergeNodes([this.nodeId, target.id], this.ctx);
       const reason = merge.disabled(place.apply(h.current()));
       if (reason !== false) return this.refuse(reason);
@@ -50,7 +61,7 @@ export class NodeDrag {
       h.replace(merge);
       return { ok: true, kind: 'merge', warnings };
     }
-    h.replace(moveNode(this.nodeId, coord), null);
+    h.replace(this.place(coord), null);
     const split = splitEdgeAt(target.id, coord, { nodeId: this.nodeId }, this.ctx);
     const reason = split.disabled(h.current());
     if (reason !== false) return this.refuse(reason);

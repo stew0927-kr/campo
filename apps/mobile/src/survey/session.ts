@@ -11,19 +11,22 @@ import {
   setProps,
   surveyId,
   type AccessInfo,
+  type Action,
   type Changeset,
   type EditContext,
   type EditState,
   type History,
   type IdGen,
+  type PhotoMeta,
   type Survey,
   type SurveyAttachment,
   type VerticalMeasurement,
 } from '@campo/core';
 import { OUTDOOR, type Scope } from '../model/scope.ts';
 import { dayOf } from '../time.ts';
+import { withSyncMirror } from './floors.ts';
 import type { PlanOk } from './plans.ts';
-import { recentPressure, storedHeading, storedPressure, verticalMeasurement, type PressureReading } from './readings.ts';
+import { recentPressure, storedHeading, storedPhotoHeading, storedPressure, verticalMeasurement, type PressureReading } from './readings.ts';
 
 export const SNAPSHOT_VERSION = 1;
 
@@ -70,6 +73,8 @@ export interface Readings {
   trip?: { startHpa: number | null; endHpa: number | null };
   /** Pictures taken for the record. */
   photos?: number;
+  /** The direction each picture looks (degrees, 0 up to 360), in the order of the pictures; null where none was set. */
+  photoHeadings?: (number | null)[];
 }
 
 export interface SessionInit {
@@ -192,7 +197,8 @@ export class SurveySession {
 
   /** Carry out a record plan: one history entry when it changes the map, and the walk moves on. */
   run(plan: PlanOk, pressure: PressureReading | null = null): void {
-    if (plan.action) this.history.perform(plan.action);
+    // Flat edges between synced points are repeated on the other floors, inside the same history entry.
+    if (plan.action) this.history.perform(withSyncMirror(this.state, this.ctx, plan.action));
     this.trail.push(this.step());
     this.place = { anchorId: plan.anchorId, scope: plan.scope, edited: plan.action !== null, pressure };
     this.changed();
@@ -224,9 +230,24 @@ export class SurveySession {
       if (plan.edgeId !== undefined && startHpa !== null && endHpa !== null) {
         this.addVertical(verticalMeasurement({ state: this.state, edgeId: plan.edgeId, reversed: plan.edgeReversed === true, startHpa, endHpa, at: r.at }));
       }
-      paths = this.addPhotos(plan.featureId, r.photos ?? 0, r.at);
+      paths = this.addPhotos(plan.featureId, r.photos ?? 0, r.at, r.photoHeadings);
     });
     return paths;
+  }
+
+  /**
+   * Carry out one action that is not a record of the walk (a new building, a floor copy, a move, 연동 해제): one history
+   * entry and one 되돌리기. The surveyor ends up in `scope`; the walk's last point is kept unless the action says otherwise.
+   */
+  edit(action: Action, scope: Scope = this.place.scope, anchorId: string | null = this.place.anchorId): { warnings: string[] } | { error: string } {
+    const reason = action.disabled(this.state);
+    if (reason !== false) return { error: reason };
+    const warnings = action.warnings?.(this.state) ?? [];
+    this.history.perform(action);
+    this.trail.push(this.step());
+    this.place = { anchorId: anchorId !== null && anchorId in this.state.nodes ? anchorId : null, scope, edited: true, pressure: null };
+    this.changed();
+    return { warnings };
   }
 
   /**
@@ -235,7 +256,7 @@ export class SurveySession {
    * with the note and the photos in the point's attachment as the record of where they came from. The walk stays where
    * it is; one 되돌리기 takes all of it back. Returns the paths reserved for the photos, or why nothing was written.
    */
-  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number }, at: string): { paths: string[] } | { error: string } {
+  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number; photoHeadings?: (number | null)[] }, at: string): { paths: string[] } | { error: string } {
     const node = this.state.nodes[nodeId];
     if (!node) return { error: '지점을 찾을 수 없습니다.' };
     const patch = accessPatch(node.props, edit.access);
@@ -261,7 +282,7 @@ export class SurveySession {
       if (kept !== undefined && kept !== '') next.note = kept;
       this.attachmentsById = { ...this.attachmentsById, [nodeId]: next };
       this.changed();
-      paths = this.addPhotos(nodeId, photos, at);
+      paths = this.addPhotos(nodeId, photos, at, edit.photoHeadings);
     });
     return { paths };
   }
@@ -293,13 +314,37 @@ export class SurveySession {
   }
 
   /** Reserve the paths of `count` new photos of `featureId` ("photos/<id>-<n>.jpg") and list them in the attachment. */
-  addPhotos(featureId: string, count: number, at: string): string[] {
+  addPhotos(featureId: string, count: number, at: string, headings: readonly (number | null)[] = []): string[] {
     const paths = Array.from({ length: count }, () => `photos/${featureId}-${++this.photoSeq}.jpg`);
     if (paths.length === 0) return paths;
     const old = this.attachmentsById[featureId];
-    this.attachmentsById = { ...this.attachmentsById, [featureId]: { ...old, recorded_at: old?.recorded_at ?? at, photos: [...(old?.photos ?? []), ...paths] } };
+    const meta: Record<string, PhotoMeta> = { ...old?.photo_meta };
+    paths.forEach((path, i) => {
+      const h = headings[i];
+      if (h !== null && h !== undefined) meta[path] = { heading_deg: storedPhotoHeading(h) };
+    });
+    this.attachmentsById = {
+      ...this.attachmentsById,
+      [featureId]: { ...old, recorded_at: old?.recorded_at ?? at, photos: [...(old?.photos ?? []), ...paths], ...(Object.keys(meta).length > 0 ? { photo_meta: meta } : {}) },
+    };
     this.changed();
     return paths;
+  }
+
+  /** Set (or clear, with null) the direction a saved photo looks. One 되돌리기 takes it back; the map is not touched. */
+  setPhotoHeading(featureId: string, path: string, headingDeg: number | null): boolean {
+    const old = this.attachmentsById[featureId];
+    if (!old?.photos?.includes(path)) return false;
+    const meta: Record<string, PhotoMeta> = { ...old.photo_meta };
+    if (headingDeg === null) delete meta[path];
+    else meta[path] = { heading_deg: storedPhotoHeading(headingDeg) };
+    if (meta[path]?.heading_deg === old.photo_meta?.[path]?.heading_deg) return true;
+    this.trail.push(this.step());
+    this.place = { ...this.place, edited: false };
+    const { photo_meta: _old, ...rest } = old;
+    this.attachmentsById = { ...this.attachmentsById, [featureId]: { ...rest, recorded_at: old.recorded_at, ...(Object.keys(meta).length > 0 ? { photo_meta: meta } : {}) } };
+    this.changed();
+    return true;
   }
 
   /** Keep one barometer measurement per edge: walking the same stairs again replaces the earlier reading. */

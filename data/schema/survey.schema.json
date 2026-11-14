@@ -61,6 +61,18 @@
           "uniqueItems": true,
           "items": { "type": "string", "pattern": "^photos/[A-Za-z0-9][A-Za-z0-9_-]*\\.(jpg|jpeg|png|heic)$" }
         },
+        "photo_meta": {
+          "description": "Per photo, by its path in `photos`: the direction the photo looks, so a route can show the picture that matches the way of walking.",
+          "type": "object",
+          "propertyNames": { "pattern": "^photos/[A-Za-z0-9][A-Za-z0-9_-]*\\.(jpg|jpeg|png|heic)$" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "heading_deg": { "description": "Direction the photo looks, degrees clockwise from north, 0 up to 360 (set on the compass dial, starting from the sensor).", "type": "number", "minimum": 0, "exclusiveMaximum": 360 }
+            }
+          }
+        },
         "heading_mag_deg": {
           "description": "Direction the surveyor faced, degrees clockwise from magnetic north (phone held flat).",
           "type": "number",

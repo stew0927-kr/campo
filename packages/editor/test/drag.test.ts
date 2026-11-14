@@ -5,6 +5,8 @@ import { NodeDrag } from '../src/model/drag.ts';
 import { dragGeoJSON, dragMembers } from '../src/map/layers.ts';
 import { footOnSegment, nearestWithin } from '../src/model/snap.ts';
 import { parseLevels } from '../src/model/building.ts';
+import { planCopyToFloors } from '../src/model/copy.ts';
+import { isError, runPlan } from '../src/model/plan.ts';
 
 const FAR: Position = [127.0004, 37.0012];
 
@@ -30,6 +32,27 @@ describe('지점 끌기 (NodeDrag, iD drag_node)', () => {
     expect(s.history.current()).toEqual(before);
     s.history.redo();
     expect(s.history.current()).toEqual(moved);
+  });
+
+  it('a point with a sync_group drags its counterparts on the other floors with it; one drag is one undo', () => {
+    const s = fixtureSession(3);
+    const copy = planCopyToFloors(s.history.current(), s.ctx, ['n_A_3_bridge'], [4]);
+    if (isError(copy)) throw new Error(copy.error);
+    expect(runPlan(s.history, copy)).toMatchObject({ ok: true });
+    const synced = s.history.current();
+    const mate = Object.values(synced.nodes).find((n) => n.props.sync_group === synced.nodes['n_A_3_bridge']!.props.sync_group && n.id !== 'n_A_3_bridge')!;
+    expect(mate.props.level).toBe(4);
+    const size = s.history.size();
+    const drag = new NodeDrag(s.history, s.ctx, 'n_A_3_bridge');
+    drag.start();
+    const to: Position = [synced.nodes['n_A_3_bridge']!.coord[0] + 0.00002, synced.nodes['n_A_3_bridge']!.coord[1]];
+    drag.move(to);
+    expect(s.history.current().nodes[mate.id]!.coord).toEqual(to); // the preview moves it too
+    expect(drag.finish(to, null)).toEqual({ ok: true, kind: 'move', warnings: [] });
+    expect(s.history.size()).toBe(size + 1);
+    expect(s.history.current().nodes[mate.id]!.coord).toEqual(to);
+    s.history.undo();
+    expect(s.history.current()).toEqual(synced);
   });
 
   it('shows the node and its edges in the temporary source', () => {

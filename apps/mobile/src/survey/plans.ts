@@ -35,8 +35,8 @@ export const PORTAL_SNAP_M = 15;
 
 export const NOT_CONNECTED_NOTICE = '아직 복도와 연결되지 않았어요. 복도를 기록한 뒤 편집기에서 이어 주세요.';
 
-type NodeProps = Omit<NodeProperties, 'rev'>;
-type EdgeProps = Omit<EdgeProperties, 'rev'>;
+export type NodeProps = Omit<NodeProperties, 'rev'>;
+export type EdgeProps = Omit<EdgeProperties, 'rev'>;
 
 export interface PlanInput {
   state: EditState;
@@ -75,7 +75,7 @@ export type Plan = PlanOk | { error: string };
 // ---- shared pieces ----
 
 /** Collects the steps of one plan and hands out ids that clash neither with the state nor with each other. */
-function builder(state: EditState, ctx: EditContext) {
+export function builder(state: EditState, ctx: EditContext) {
   const reserved = new Set<string>();
   const made = new Map<string, NodeProps>();
   const steps: ComposeStep[] = [];

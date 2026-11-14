@@ -9,12 +9,20 @@ export const SURVEY_PHOTOS_DIR = 'photos';
 export const SURVEY_FORMAT = 'campo-survey';
 export const SURVEY_VERSION = 1;
 
+/** What is known about one photo. */
+export interface PhotoMeta {
+  /** Direction the photo looks, degrees clockwise from north, 0 up to 360. */
+  heading_deg?: number;
+}
+
 /** Photos and readings taken at one Feature. */
 export interface SurveyAttachment {
   /** ISO 8601 date-time with a time zone. */
   recorded_at: string;
   /** "photos/<name>.jpg", inside the survey folder. */
   photos?: string[];
+  /** Per photo (key: its path in `photos`): the direction it looks. Older files have none. */
+  photo_meta?: Record<string, PhotoMeta>;
   /** Degrees clockwise from magnetic north, 0 up to 360 (phone held flat). */
   heading_mag_deg?: number;
   pressure_hpa?: number;

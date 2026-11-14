@@ -47,13 +47,13 @@ export interface Tile {
   height: number;
 }
 
-/** The tiles that cover the screen, each placed by projecting its north-west and south-east corners like any map point. */
-export function visibleTiles(view: View, size: Size, projection: Projection): Tile[] {
+/** The tiles that cover the screen at their natural zoom (or at `zoom`, drawn stretched or shrunk), each placed by projecting its north-west and south-east corners like any map point. */
+export function visibleTiles(view: View, size: Size, projection: Projection, zoom?: number): Tile[] {
   const halfW = size.width / 2 / view.scale;
   const halfH = size.height / 2 / view.scale;
   const nw = projection.toPosition([view.x - halfW, view.y + halfH]);
   const se = projection.toPosition([view.x + halfW, view.y - halfH]);
-  const z = tileZoom(view.scale, (nw[1] + se[1]) / 2);
+  const z = zoom ?? tileZoom(view.scale, (nw[1] + se[1]) / 2);
   const last = 2 ** z - 1;
   const clamp = (n: number) => Math.min(last, Math.max(0, Math.floor(n)));
   const [x0, x1] = [clamp(lonToTileX(nw[0], z)), clamp(lonToTileX(se[0], z))];

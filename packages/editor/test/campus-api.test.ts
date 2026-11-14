@@ -78,6 +78,44 @@ describe('campus API (dev server)', () => {
   });
 });
 
+describe('campus API: mobile bundling', () => {
+  it('writes the mobile bundle file after a successful PUT, but not when none is configured', async () => {
+    const outFile = join(root, 'mobile-assets', 'campus.generated.json');
+
+    expect((await put('c9', { 'campus.json': '{}\n' })).status).toBe(200); // default createCampusApi(root): no mobileBundleOutFile
+    await expect(readFile(outFile, 'utf8')).rejects.toThrow();
+
+    const bundledApi = createCampusApi(root, { mobileBundleOutFile: outFile });
+    const bundledServer = createServer((req, res) => void bundledApi(req, res, () => { res.statusCode = 404; res.end(); }));
+    await new Promise<void>((r) => bundledServer.listen(0, '127.0.0.1', r));
+    const bundledBase = `http://127.0.0.1:${(bundledServer.address() as AddressInfo).port}`;
+    const res = await fetch(`${bundledBase}/api/campuses/c9`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: { 'campus.json': '{"ok":true}\n', 'outdoor.geojson': 'A' } }),
+    });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(await readFile(outFile, 'utf8'))).toEqual({
+      campus: 'c9',
+      files: [{ path: 'campus.json', text: '{"ok":true}\n' }, { path: 'outdoor.geojson', text: 'A' }],
+    });
+    await new Promise((r) => bundledServer.close(r));
+  });
+
+  it('does not write a bundle while the campus has no campus.json yet', async () => {
+    const outFile = join(root, 'mobile-assets', 'campus.generated.json');
+    const bundledApi = createCampusApi(root, { mobileBundleOutFile: outFile });
+    const bundledServer = createServer((req, res) => void bundledApi(req, res, () => { res.statusCode = 404; res.end(); }));
+    await new Promise<void>((r) => bundledServer.listen(0, '127.0.0.1', r));
+    const bundledBase = `http://127.0.0.1:${(bundledServer.address() as AddressInfo).port}`;
+    // overrides.json alone is a writable path, but not a layout file campus.json depends on existing first.
+    const res = await fetch(`${bundledBase}/api/campuses/c10`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: { 'overrides.json': '[]\n' } }),
+    });
+    expect(res.status).toBe(200);
+    await expect(readFile(outFile, 'utf8')).rejects.toThrow();
+    await new Promise((r) => bundledServer.close(r));
+  });
+});
+
 describe('campus API: extras', () => {
   it('sends overrides, calibration and observations on GET; PUT writes observations/*.jsonl but refuses calibration.json', async () => {
     await mkdir(join(root, 'c3', 'observations'), { recursive: true });

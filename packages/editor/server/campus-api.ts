@@ -2,6 +2,7 @@
 //   GET /api/campuses/:id  → { files: [{ path, text }] }   (missing folder → no files)
 //   PUT /api/campuses/:id  ← { files: { [path]: text } }   writes the whole campus folder
 // Only dev-server, only paths of the SPEC §4.3 layout. People commit the result with Git.
+import { watch as watchDir } from 'node:fs';
 import { mkdir, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join, relative, sep } from 'node:path';
@@ -100,8 +101,29 @@ export class HttpError extends Error {
   }
 }
 
-/** Connect-style handler; exported for tests. */
-export function createCampusApi(campusesDir: string) {
+/** A path the mobile bundle wants: campus.json and the GeoJSON layers (SPEC 4.3), same set as apps/mobile/scripts/bundle-campus.mjs. */
+function isMobileBundlePath(path: string): boolean {
+  return path === 'campus.json' || path.endsWith('.geojson');
+}
+
+/**
+ * Regenerates the mobile app's bundled campus asset (the same file apps/mobile/scripts/bundle-campus.mjs
+ * produces, at `outFile`) from the campus folder on disk. Best-effort: a failure is logged, never thrown,
+ * since it must not stop a campus save from succeeding. No-op while the campus has no campus.json yet.
+ */
+export async function bundleForMobile(campusDir: string, campusId: string, outFile: string): Promise<void> {
+  try {
+    const files = (await readCampusFiles(campusDir)).filter((f) => isMobileBundlePath(f.path));
+    if (!files.some((f) => f.path === 'campus.json')) return;
+    await mkdir(dirname(outFile), { recursive: true });
+    await writeFile(outFile, `${JSON.stringify({ campus: campusId, files })}\n`, 'utf8');
+  } catch (err) {
+    console.error(`[campo] 모바일 번들 갱신 실패 (${campusId}): ${(err as Error).message}`);
+  }
+}
+
+/** Connect-style handler; exported for tests. `mobileBundleOutFile`, when given, re-bundles the campus for the mobile app after a successful PUT. */
+export function createCampusApi(campusesDir: string, options: { mobileBundleOutFile?: string | undefined } = {}) {
   return async (req: IncomingMessage, res: ServerResponse, next: () => void): Promise<void> => {
     const match = /^\/api\/campuses\/([^/?#]+)\/?(?:\?.*)?$/.exec(req.url ?? '');
     if (!match) return next();
@@ -119,7 +141,9 @@ export function createCampusApi(campusesDir: string) {
           !Object.values(body.files).every((t) => typeof t === 'string')) {
           throw new HttpError(400, '요청 본문은 { files: { 경로: 내용 } } 형식이어야 합니다.');
         }
-        return send(res, 200, await writeCampusFiles(dir, body.files as Record<string, string>));
+        const result = await writeCampusFiles(dir, body.files as Record<string, string>);
+        if (options.mobileBundleOutFile) await bundleForMobile(dir, id, options.mobileBundleOutFile);
+        return send(res, 200, result);
       }
       throw new HttpError(405, `${req.method ?? ''} 요청은 지원하지 않습니다.`);
     } catch (err) {
@@ -339,16 +363,45 @@ export interface ApiDirs {
   changesetsDir: string;
   /** Field surveys imported from the survey app (default data/surveys). Left out: the surveys API is not mounted. */
   surveysDir?: string;
+  /** apps/mobile/assets/campus.generated.json. Given: a save (PUT) or any other change under campusesDir re-bundles that campus for the mobile app. */
+  mobileBundleOutFile?: string | undefined;
+}
+
+/**
+ * Watches campusesDir for changes made outside a PUT (e.g. a git pull, or editing a file by hand) and
+ * re-bundles the affected campus for the mobile app. Debounced per campus id; failures are logged, not thrown.
+ */
+function watchForMobileBundle(campusesDir: string, outFile: string): { close(): void } {
+  const timers = new Map<string, NodeJS.Timeout>();
+  const onChange = (_event: string, path: string | Buffer | null) => {
+    const campusId = path?.toString().split(sep)[0];
+    if (!campusId || !CAMPUS_ID.test(campusId)) return;
+    clearTimeout(timers.get(campusId));
+    timers.set(campusId, setTimeout(() => void bundleForMobile(join(campusesDir, campusId), campusId, outFile), 300));
+  };
+  try {
+    const watcher = watchDir(campusesDir, { recursive: true }, onChange);
+    return {
+      close() {
+        for (const timer of timers.values()) clearTimeout(timer);
+        watcher.close();
+      },
+    };
+  } catch (err) {
+    console.error(`[campo] ${campusesDir} 감시를 시작하지 못했습니다: ${(err as Error).message}`);
+    return { close() {} };
+  }
 }
 
 /** Vite plugin: mounts the API on the dev server only. */
 export function campusApiPlugin(dirs: string | ApiDirs): Plugin {
   const campusesDir = typeof dirs === 'string' ? dirs : dirs.campusesDir;
+  const mobileBundleOutFile = typeof dirs === 'string' ? undefined : dirs.mobileBundleOutFile;
   return {
     name: 'campo-campus-api',
     apply: 'serve',
     configureServer(server) {
-      const handle = createCampusApi(campusesDir);
+      const handle = createCampusApi(campusesDir, { mobileBundleOutFile });
       server.middlewares.use((req, res, next) => void handle(req, res, next));
       if (typeof dirs !== 'string') {
         const handleReports = createReportsApi(dirs.reportsDir, dirs.changesetsDir);
@@ -357,6 +410,12 @@ export function campusApiPlugin(dirs: string | ApiDirs): Plugin {
           const handleSurveys = createSurveysApi(dirs.surveysDir);
           server.middlewares.use((req, res, next) => void handleSurveys(req, res, next));
         }
+      }
+      // server.httpServer is unset when Vite's dev-server pipeline runs without a real listening server
+      // (e.g. under Vitest, which reuses it for module transforms): skip the watcher there, nothing would ever close it.
+      if (mobileBundleOutFile && server.httpServer) {
+        const watcher = watchForMobileBundle(campusesDir, mobileBundleOutFile);
+        server.httpServer.once('close', () => watcher.close());
       }
     },
   };

@@ -11,7 +11,7 @@
 // the handle when a record is made), and the drawn Features are redrawn only when the data, the floor or the zoom step changes.
 import { buildingById, edgeCoords, isEscalator, type EditState, type Position } from '@campo/core';
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
-import { Image, PanResponder, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
+import { Image, PanResponder, Vibration, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, G, Line, Path, Polygon, Polyline, Rect, Text as SvgText } from 'react-native-svg';
 import { nodeInScope, type Scope } from '../model/scope.ts';
 import { SNAP_M } from '../survey/plans.ts';
@@ -249,6 +249,7 @@ export function MapCanvas({
           const hit = hitAt({ state: cur.state, scope: cur.scope, projection, view: cur.view, size: cur.size }, [g.start.x, g.start.y]);
           if (hit?.kind !== 'node' || hit.id !== only) return;
           g.carrying = only;
+          Vibration.vibrate(30);
           setBox(null);
           setCarry({ id: only, xy: fromScreen(cur.view, cur.size, [g.last?.x ?? g.start.x, g.last?.y ?? g.start.y]) });
         }, HOLD_MS);
@@ -397,6 +398,7 @@ export function MapCanvas({
     : '조사 지도. 끌어서 옮기고 두 손가락으로 확대하거나 돌립니다.';
 
   return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
     <View style={StyleSheet.absoluteFill} onLayout={onLayout} {...responder.panHandlers} accessibilityLabel={hint}>
       {size && view && (
         <>
@@ -432,9 +434,10 @@ export function MapCanvas({
             {box && <Rect x={Math.min(box.x0, box.x1)} y={Math.min(box.y0, box.y1)} width={Math.abs(box.x1 - box.x0)} height={Math.abs(box.y1 - box.y0)} fill={color.primary} fillOpacity={0.12} stroke={color.primary} strokeWidth={1.5} strokeDasharray="6 4" />}
           </Svg>
           {mode !== 'select' && <Crosshair size={size} snapped={snap !== null} />}
-          <ScaleAndCompass scale={view.scale} turn={turn} bottom={bottomInset + space.md} onNorth={turnNorth} />
         </>
       )}
+    </View>
+      {size && view && <ScaleAndCompass scale={view.scale} turn={turn} bottom={bottomInset + space.md} onNorth={turnNorth} />}
     </View>
   );
 }

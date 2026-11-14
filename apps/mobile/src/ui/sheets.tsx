@@ -355,19 +355,19 @@ interface RestroomSheetProps {
 
 export function RestroomSheet({ photos, onPhoto, onRecord, onClose }: RestroomSheetProps) {
   const [gender, setGender] = useState<RestroomGender | undefined>(undefined);
-  const [wheelchair, setWheelchair] = useState<Wheelchair | undefined>(undefined);
+  const [wheelchair, setWheelchair] = useState<Wheelchair>('unknown');
   const [changingTable, setChangingTable] = useState<boolean | null>(null);
   return (
     <BottomSheet title="화장실" onClose={onClose}>
       <Text style={styles.lead}>화장실 입구에 십자선을 맞춰 주세요. 가까운 복도에 이어집니다.</Text>
       <FieldLabel>누구를 위한 화장실인가요?</FieldLabel>
-      <Choice label="화장실 종류" value={gender} onChange={setGender} options={[{ value: 'male', label: '남' }, { value: 'female', label: '여' }, { value: 'unisex', label: '남+여' }]} />
+      <Choice label="화장실 종류" value={gender} onChange={setGender} options={[{ value: 'male', label: '남' }, { value: 'female', label: '여' }, { value: 'unisex', label: '남·여 모두' }]} />
       <FieldLabel>휠체어로 쓸 수 있나요?</FieldLabel>
-      <Choice label="휠체어" value={wheelchair} onChange={setWheelchair} options={[{ value: 'yes', label: '가능' }, { value: 'no', label: '불가능' }]} />
+      <Choice label="휠체어" value={wheelchair} onChange={setWheelchair} options={[{ value: 'yes', label: '가능' }, { value: 'no', label: '불가능' }, { value: 'unknown', label: '모름' }]} />
       <FieldLabel>기저귀 교환대</FieldLabel>
       <Choice label="기저귀 교환대" value={changingTable} onChange={setChangingTable} options={[{ value: null, label: '모름' }, { value: true, label: '있음' }, { value: false, label: '없음' }]} />
       <PhotoRow count={photos} onPhoto={onPhoto} />
-      <BigButton label="십자선 자리에 화장실 기록" disabled={gender === undefined || wheelchair === undefined} onPress={() => gender && wheelchair && onRecord({ gender, wheelchair, changingTable })} style={styles.gapTop} />
+      <BigButton label="십자선 자리에 화장실 기록" disabled={gender === undefined} onPress={() => gender && onRecord({ gender, wheelchair, changingTable })} style={styles.gapTop} />
     </BottomSheet>
   );
 }

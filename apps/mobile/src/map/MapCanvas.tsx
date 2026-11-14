@@ -71,6 +71,9 @@ interface Props {
   /** 선택 mode: the one point that is the whole selection. Held down for a moment, it can be dragged; it is put down where the finger lifts. */
   dragNodeId?: string | null;
   onNodeMove?: (nodeId: string, coord: Position) => void;
+  /** Plain (crosshair) mode: a short tap on a point, and whether a point held down from the first touch can be dragged. */
+  onNodeTap?: ((nodeId: string) => void) | undefined;
+  liftNodes?: boolean;
   heading?: HeadingEdit | null;
   /** Edges drawn highlighted (the corridor a row of rooms will line). */
   highlightEdges?: readonly string[] | undefined;
@@ -123,7 +126,7 @@ const unturned = (v: MapView): MapView => ({ x: v.x, y: v.y, scale: v.scale });
 
 export function MapCanvas({
   state, base, projection, center, scope, anchorId, handle, tileCache, draft = null, movingId = null, onSnap,
-  mode = 'pan', selection = null, onTapHit, onBoxPick, dragNodeId = null, onNodeMove, heading = null, highlightEdges, marks, bottomInset = 0,
+  mode = 'pan', selection = null, onTapHit, onBoxPick, dragNodeId = null, onNodeMove, onNodeTap, liftNodes = false, heading = null, highlightEdges, marks, bottomInset = 0,
 }: Props) {
   const [size, setSize] = useState<Size | null>(null);
   const [view, setView] = useState<MapView | null>(null);
@@ -131,8 +134,8 @@ export function MapCanvas({
   /** Where a held point is being carried, in map metres; null when none is. */
   const [carry, setCarry] = useState<{ id: string; xy: XY } | null>(null);
   // The responder and the handle are made once; they read the newest values through refs.
-  const latest = useRef({ view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove });
-  latest.current = { view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove };
+  const latest = useRef({ view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes });
+  latest.current = { view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes };
 
   /** A view that shows the scope, at the map's current turn. */
   const fit = (target: Scope, on: Size): MapView => {
@@ -239,19 +242,21 @@ export function MapCanvas({
       clearPending();
       gesture.current = { last: now, start: { x: now.x, y: now.y, at: Date.now() }, maxCount: now.count, moved: 0, turn: 0, turning: false, fanStart: null, hold: null, carrying: null };
       // A single selected point held down for a moment is picked up.
-      const { mode: m, view: v, size: s, dragNodeId: only } = latest.current;
-      if (m === 'select' && only && now.count === 1 && v && s) {
+      const { mode: m, view: v, size: s, dragNodeId: only, liftNodes: lift } = latest.current;
+      if (((m === 'select' && only) || (m === 'pan' && lift)) && now.count === 1 && v && s) {
         const g = gesture.current;
         g.hold = setTimeout(() => {
           g.hold = null;
           const cur = latest.current;
-          if (g.maxCount !== 1 || g.moved > TAP_PX || !cur.view || !cur.size || cur.dragNodeId !== only) return;
+          if (g.maxCount !== 1 || g.moved > TAP_PX || !cur.view || !cur.size || cur.mode !== m) return;
+          if (m === 'select' && cur.dragNodeId !== only) return;
+          if (m === 'pan' && !cur.liftNodes) return;
           const hit = hitAt({ state: cur.state, scope: cur.scope, projection, view: cur.view, size: cur.size }, [g.start.x, g.start.y]);
-          if (hit?.kind !== 'node' || hit.id !== only) return;
-          g.carrying = only;
+          if (hit?.kind !== 'node' || (m === 'select' && hit.id !== only)) return;
+          g.carrying = hit.id;
           Vibration.vibrate(30);
           setBox(null);
-          setCarry({ id: only, xy: fromScreen(cur.view, cur.size, [g.last?.x ?? g.start.x, g.last?.y ?? g.start.y]) });
+          setCarry({ id: hit.id, xy: fromScreen(cur.view, cur.size, [g.last?.x ?? g.start.x, g.last?.y ?? g.start.y]) });
         }, HOLD_MS);
       }
     },
@@ -332,6 +337,10 @@ export function MapCanvas({
       if (m === 'select' && v && s && g.maxCount === 1) {
         if (g.moved <= TAP_PX && quick) tap?.(hitAt({ state: st, scope: sc, projection, view: v, size: s }, [g.start.x, g.start.y]));
         else if (g.last && g.moved > TAP_PX) pick?.(inBox({ state: st, scope: sc, projection, view: v, size: s }, { x0: g.start.x, y0: g.start.y, x1: g.last.x, y1: g.last.y }));
+      }
+      if (m === 'pan' && v && s && g.maxCount === 1 && g.moved <= TAP_PX && quick) {
+        const hit = hitAt({ state: st, scope: sc, projection, view: v, size: s }, [g.start.x, g.start.y]);
+        if (hit?.kind === 'node') latest.current.onNodeTap?.(hit.id);
       }
       setBox(null);
       g.last = null;

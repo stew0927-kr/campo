@@ -118,6 +118,10 @@ export function ActionDock({ records, tools, open, onToggle, onClose, mode, onHe
     anim.start();
     return () => anim.stop();
   }, [open, rise]);
+  // A mode replaces the menu: the menu goes to rest at once, so no half-risen menu is left when the mode ends.
+  useEffect(() => {
+    if (mode) rise.setValue(0);
+  }, [mode, rise]);
   const bottom = insets.bottom + space.md;
 
   if (mode) {
@@ -138,7 +142,7 @@ export function ActionDock({ records, tools, open, onToggle, onClose, mode, onHe
       {open && <Pressable style={StyleSheet.absoluteFill} onPress={onToggle} accessibilityLabel="메뉴 닫기" />}
       <Animated.View
         pointerEvents={open ? 'auto' : 'none'}
-        style={[styles.menu, { bottom: bottom + FAB + space.md, maxHeight: height * 0.66, opacity: rise, transform: [{ translateY }] }]}
+        style={[styles.menu, { bottom: bottom + FAB + space.md, maxHeight: height * 0.66, opacity: open ? rise : 0, transform: [{ translateY }] }]}
         accessibilityViewIsModal={open}
       >
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.menuBody} showsVerticalScrollIndicator={false}>

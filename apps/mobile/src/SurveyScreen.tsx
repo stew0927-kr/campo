@@ -217,7 +217,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   /** Look at another floor (or the outdoors), then show `next` (the sheet that needed a floor). */
   const pickScope = (to: Scope, next: Sheet = null): void => {
     session.moveTo(to);
-    map.current?.show(to);
+    // The map's own re-fit is a second heavy redraw: it waits a frame so the sheet that follows can take touches at once.
+    requestAnimationFrame(() => map.current?.show(to));
     setSheet(next);
     if (next === null) clearShots();
   };
@@ -534,7 +535,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     { id: 'portal', label: '출입구', hint: scope.kind === 'building' ? '밖으로 나가기' : '건물로 들어가기', onPress: () => setSheet('portal') },
   ];
   const tools: DockAction[] = [
-    { id: 'select', label: '선택', hint: '지점·구간·건물을 눌러 고르고, 끌어서 여러 개 고르기', onPress: () => setTool({ kind: 'select' }) },
+    { id: 'select', label: '다중선택', hint: '여러 지점·구간을 연속으로 누르거나 끌어서 골라 복사·삭제', onPress: () => setTool({ kind: 'select' }) },
     { id: 'strip', label: '강의실 자동 연결', disabled: !indoor, hint: '복도를 따라 강의실 문을 한 번에 놓기', onPress: needFloor(() => setTool({ kind: 'strip', stage: 'corridor', edges: [], first: null })) },
     { id: 'osm', label: 'OSM 건물 가져오기', hint: '십자선 자리의 OSM 건물 가져오기', onPress: addOsmBuilding },
     { id: 'draw', label: '건물 그리기', hint: '외곽선을 점으로 찍어 건물 만들기', onPress: () => setDraft([]) },
@@ -692,6 +693,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         }
         : toolMode();
 
+  /** The plain crosshair state: no tool, drawing, move, photo direction or sheet is in the way of a tap on a point. */
+  const plain = tool === null && draft === null && moving === null && !heading && sheet === null;
   const mapMode: MapMode = heading ? 'heading' : tool?.kind === 'select' ? 'select' : 'pan';
   const marks = [
     ...(tool?.kind === 'strip' && tool.first ? [{ at: tool.first, tone: 'pin' as const }] : []),
@@ -721,6 +724,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           if ('error' in plan) notify(plan.error);
           else if (apply(plan.action, plan.moved > 1 ? `연동된 ${plan.moved}개 층의 지점을 같이 옮겼습니다.` : '지점을 옮겼습니다.')) setSelection(EMPTY_SELECTION);
         }}
+        liftNodes={plain}
+        onNodeTap={plain ? (id) => { setInfoId(id); setSheet('info'); } : undefined}
         heading={headingEdit}
         highlightEdges={tool?.kind === 'strip' ? tool.edges : undefined}
         marks={marks}

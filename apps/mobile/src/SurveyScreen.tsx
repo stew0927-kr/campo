@@ -435,7 +435,10 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     if (!selFloor || 'error' in selFloor) return;
     const plan = planCopyFloor(state, session.ctx, selFloor.buildingId, selFloor.level, levels, new Set(selFloor.nodeIds));
     if ('error' in plan) return notify(plan.error, 'error');
-    if (apply(plan.action, plan.notices.join(' '))) setSheet(null);
+    if (apply(plan.action, plan.notices.join(' '))) {
+      setSheet(null);
+      setSelection(EMPTY_SELECTION);
+    }
   };
   const saveBuilding = (b: EditBuilding, form: { name: string; code: string; levels: number[] }): void => {
     const plan = planBuildingEdit(state, session.ctx, b.id, form);
@@ -518,23 +521,24 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
 
   // ---- the panel ----
 
+  const indoor = scope.kind === 'building';
   const records: DockAction[] = [
     { id: 'start', label: '지점', hint: '십자선 자리에 지점 찍기(이미 있으면 그 지점에서 시작)', onPress: () => record(planStart(input())) },
     { id: 'link', label: '잇기', primary: true, hint: '지점과 지점을 구간으로 잇기', onPress: () => startLink(false) },
-    { id: 'outdoor', label: '외부 길', hint: '바깥 길·계단·경사로 찍기', onPress: () => startLink(true) },
-    { id: 'door', label: '문/호실', onPress: () => setSheet('door') },
-    { id: 'restroom', label: '화장실', hint: '화장실 입구 찍기', onPress: needFloor(() => setSheet('restroom')) },
-    { id: 'doorRun', label: '호실 연속', hint: '번호가 저절로 올라가는 문 찍기', onPress: needFloor(() => setTool({ kind: 'doorRun', run: { nextRef: lastRoom === '' ? '' : nextRoomRef(lastRoom), step: 1, lastRef: null } })) },
+    { id: 'outdoor', label: '외부 길', disabled: indoor, hint: '바깥 길·계단·경사로 찍기', onPress: () => startLink(true) },
+    { id: 'door', label: '문/호실', disabled: !indoor, onPress: () => setSheet('door') },
+    { id: 'restroom', label: '화장실', disabled: !indoor, hint: '화장실 입구 찍기', onPress: needFloor(() => setSheet('restroom')) },
+    { id: 'doorRun', label: '호실 연속', disabled: !indoor, hint: '번호가 저절로 올라가는 문 찍기', onPress: needFloor(() => setTool({ kind: 'doorRun', run: { nextRef: lastRoom === '' ? '' : nextRoomRef(lastRoom), step: 1, lastRef: null } })) },
     { id: 'floor', label: trip ? '도착 기록' : '계단/EV', ...(trip ? { hint: '층 이동 중입니다' } : {}), active: trip !== null, onPress: () => setSheet('floor') },
     { id: 'escalator', label: escTrip ? '에스컬 도착' : '에스컬레이터', ...(escTrip ? { hint: '에스컬레이터 이동 중입니다' } : {}), active: escTrip !== null, onPress: () => setSheet('escalator') },
     { id: 'portal', label: '출입구', hint: scope.kind === 'building' ? '밖으로 나가기' : '건물로 들어가기', onPress: () => setSheet('portal') },
   ];
   const tools: DockAction[] = [
     { id: 'select', label: '선택', hint: '지점·구간·건물을 눌러 고르고, 끌어서 여러 개 고르기', onPress: () => setTool({ kind: 'select' }) },
-    { id: 'strip', label: '강의실 자동 연결', hint: '복도를 따라 강의실 문을 한 번에 놓기', onPress: needFloor(() => setTool({ kind: 'strip', stage: 'corridor', edges: [], first: null })) },
+    { id: 'strip', label: '강의실 자동 연결', disabled: !indoor, hint: '복도를 따라 강의실 문을 한 번에 놓기', onPress: needFloor(() => setTool({ kind: 'strip', stage: 'corridor', edges: [], first: null })) },
     { id: 'osm', label: 'OSM 건물 가져오기', hint: '십자선 자리의 OSM 건물 가져오기', onPress: addOsmBuilding },
     { id: 'draw', label: '건물 그리기', hint: '외곽선을 점으로 찍어 건물 만들기', onPress: () => setDraft([]) },
-    { id: 'copy', label: '층 복사·연동', onPress: needFloor(() => setSheet('copy')) },
+    { id: 'copy', label: '층 복사·연동', disabled: !indoor, onPress: needFloor(() => setSheet('copy')) },
     { id: 'photo', label: '사진·방향', onPress: needPoint((node) => { setInfoId(node.id); setSheet('photos'); }) },
     { id: 'info', label: '개방 정보', onPress: needPoint((node) => { setInfoId(node.id); setSheet('info'); }) },
     { id: 'move', label: '옮기기', onPress: needPoint((node) => { setMoving(node.id); notify(`${pointTitle(node)}을(를) 옮길 자리에 십자선을 맞춰 주세요.`); }) },
@@ -715,7 +719,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         onNodeMove={(id, coord) => {
           const plan = planMoveNode(state, id, coord);
           if ('error' in plan) notify(plan.error);
-          else apply(plan.action, plan.moved > 1 ? `연동된 ${plan.moved}개 층의 지점을 같이 옮겼습니다.` : '지점을 옮겼습니다.');
+          else if (apply(plan.action, plan.moved > 1 ? `연동된 ${plan.moved}개 층의 지점을 같이 옮겼습니다.` : '지점을 옮겼습니다.')) setSelection(EMPTY_SELECTION);
         }}
         heading={headingEdit}
         highlightEdges={tool?.kind === 'strip' ? tool.edges : undefined}
@@ -764,7 +768,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         </View>
       )}
 
-      <ActionDock records={records} tools={tools} open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} mode={mode} onHeight={setDockHeight} />
+      <ActionDock records={records} tools={tools} open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} onClose={() => setMenuOpen(false)} mode={mode} onHeight={setDockHeight} />
 
       <View pointerEvents="box-none" style={sheetHidden ? styles.hidden : StyleSheet.absoluteFill}>
         <ShotsContext.Provider value={{ headings: shotHeadings, onEdit: editShot }}>

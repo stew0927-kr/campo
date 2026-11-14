@@ -35,6 +35,8 @@ interface Props {
   tools: readonly DockAction[];
   open: boolean;
   onToggle: () => void;
+  /** Closes the menu for good (an item was picked): the open state itself goes to false, not just the picture of it. */
+  onClose: () => void;
   mode: DockMode | null;
   /** The height the dock takes at the bottom of the screen, so what sits on the map above it (the scale bar) can keep clear. */
   onHeight?: (px: number) => void;
@@ -107,7 +109,7 @@ function Burger({ open }: { open: boolean }) {
   );
 }
 
-export function ActionDock({ records, tools, open, onToggle, mode, onHeight }: Props) {
+export function ActionDock({ records, tools, open, onToggle, onClose, mode, onHeight }: Props) {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const rise = useRef(new Animated.Value(open ? 1 : 0)).current;
@@ -141,9 +143,9 @@ export function ActionDock({ records, tools, open, onToggle, mode, onHeight }: P
       >
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.menuBody} showsVerticalScrollIndicator={false}>
           <Text style={styles.section}>기록</Text>
-          {records.map((a) => <MenuItem key={a.id} a={a} onPicked={onToggle} />)}
+          {records.map((a) => <MenuItem key={a.id} a={a} onPicked={onClose} />)}
           <Text style={[styles.section, styles.sectionGap]}>도구</Text>
-          {tools.map((a) => <MenuItem key={a.id} a={a} onPicked={onToggle} />)}
+          {tools.map((a) => <MenuItem key={a.id} a={a} onPicked={onClose} />)}
         </ScrollView>
       </Animated.View>
       <View pointerEvents="box-none" style={[styles.fabWrap, { bottom }]} onLayout={(e) => onHeight?.(e.nativeEvent.layout.height + space.md)}>

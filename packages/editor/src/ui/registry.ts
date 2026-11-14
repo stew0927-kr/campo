@@ -57,6 +57,11 @@ const TOOL_SPECS = [
     hint: '건물 외곽선을 클릭하며 그리고, 첫 점을 다시 누르면 끝납니다.',
   },
   {
+    id: 'osm-building', label: 'OSM 건물 가져오기', group: 'draw', scope: 'outdoor',
+    description: '지도에서 건물을 누르면 OpenStreetMap의 외곽선·이름·층수로 건물을 등록합니다.',
+    hint: '가져올 건물의 안쪽을 누르세요. OpenStreetMap(Overpass)에서 외곽선을 받아 건물로 등록합니다. 되돌리기로 취소할 수 있고, 이름·코드·층은 상세 정보에서 고칩니다.',
+  },
+  {
     id: 'add-node', label: '지점 추가', group: 'draw', placing: true,
     description: '출입구·문·복도·계단 같은 지점을 하나씩 찍습니다.',
     hint: '지도를 누르면 고른 종류의 지점이 생깁니다.',
@@ -157,6 +162,10 @@ const OPERATION_SPECS = [
     description: '현장 조사 앱에서 내보낸 zip 파일을 열어, 현장에서 기록한 지점·구간을 한 번에 반영합니다. 되돌리기 한 번으로 취소됩니다.',
   },
   {
+    id: 'find-broken', label: '끊긴 지점 찾기', group: 'macro',
+    description: '어떤 구간에도 이어지지 않은 지점, 다른 길과 끊긴 묶음, 길 바로 옆(1.5m 안)에 있는데 이어지지 않은 지점을 차례로 보여 줍니다.',
+  },
+  {
     id: 'attach-unattached', label: '연결 안 된 지점 잇기', group: 'macro',
     description: '이 층에서 복도와 떨어져 있는 문·화장실·엘리베이터를 가까운 복도에 한꺼번에 잇습니다.',
   },
@@ -205,7 +214,7 @@ const OTHER_KEYS: ShortcutRow[] = [
   { keys: 'Esc', label: '도구 끝내기, 선택 풀기' },
   { keys: '[ / ]', label: '층 내리기 / 올리기' },
   { keys: 'Ctrl+S', label: '저장' },
-  { keys: '지도에서 우클릭', label: '선택한 것의 메뉴 (속성, 다른 층에 복사, 삭제)' },
+  { keys: '지도에서 우클릭', label: '선택한 것의 메뉴 (속성, 다른 층에 복사, 층 연동 취소, 삭제)' },
   { keys: '?', label: '이 목록 열기' },
 ];
 

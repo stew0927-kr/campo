@@ -6,10 +6,11 @@
 //   app/toolClicks.ts   what a map click does in each tool          (one entry per tool)
 //   operations below    whether each operation can run now, and how (one entry per operation)
 //   panels below        what each side-panel tab shows              (one entry per tab)
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { buildingById, type EditEdge, type EditNode, type EditState, type Override, type Position, type Survey } from '@campo/core';
 import { fetchSurveyFiles, saveCampus, saveSurvey } from '../api.ts';
 import { MapView, type FocusRequest } from '../map/MapView.tsx';
+import { brokenByLevel, brokenIds, findBroken, nextBroken, planConnectNear, type BrokenItem } from '../model/broken.ts';
 import { NOT_CONNECTED_NOTICE, planAttachUnattached, planDrawnPath, unattachedNodes } from '../model/connect.ts';
 import { copyBlocked, copySource, copyTargets, planCopyToFloors } from '../model/copy.ts';
 import { doorPreview, planStrip, stripPreview, type StripInput } from '../model/doors.ts';
@@ -17,11 +18,13 @@ import { HandleDrag, NodeDrag, type DragResult } from '../model/drag.ts';
 import { featureCenter, featureScope } from '../model/locate.ts';
 import { makeObservation, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 import { menuFields, planMenuEdit, selectionSummary, type MenuEdits } from '../model/menu.ts';
+import { fetchOsmBuilding, osmCode, planOsmBuilding } from '../model/osm.ts';
 import { buildingsToDelete, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits } from '../model/ops.ts';
 import { isError, planReason, runPlan, type PlanResult } from '../model/plan.ts';
 import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong, sameScope, scopeLabel, type Scope } from '../model/scope.ts';
 import { propsOf, type Session } from '../model/session.ts';
 import { edgeMidpoint, planSplit } from '../model/split.ts';
+import { planUnsync, syncedIn, withSyncMirror } from '../model/sync.ts';
 import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, toBase64, withSurvey } from '../model/survey.ts';
 import type { PathVertex } from '../model/tools.ts';
 import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, renameBlocked } from '../model/buildingEdit.ts';
@@ -203,8 +206,18 @@ export function Workspace({ session }: { session: Session }) {
   };
 
   // ---- Map clicks: one handler per tool (toolClicks.ts). 길 그리기 and 건물 외곽선 그리기 draw with Terra Draw instead. ----
+  /** OSM 건물 가져오기: the outline under the click comes from OpenStreetMap; the building it becomes is one history entry. */
+  const importOsm = async (position: Position) => {
+    info('OpenStreetMap에서 건물 외곽선을 찾는 중입니다…');
+    const found = await fetchOsmBuilding(history.current(), position);
+    if ('error' in found) return fail(found.error);
+    if (perform(planOsmBuilding(history.current(), found.building)) !== undefined) return;
+    const id = `bldg_${osmCode(found.building.osmId)}`;
+    patchUi({ selection: [id], selectedBuildingId: id, panelTab: 'properties' });
+  };
   const onToolClick = toolClicks({
     state, ctx, ui, strip, perform, patchUi, setStrip, followScope, showFloor, info, fail,
+    importOsm: (position) => void importOsm(position),
     currentState: () => history.current(),
     openDialog: setDialog,
     clearNotice: () => setNotice(null),
@@ -216,8 +229,9 @@ export function Workspace({ session }: { session: Session }) {
   };
 
   const onPathDrawn = useCallback((vertices: PathVertex[], scope: Scope) => {
-    const plan = planDrawnPath(state, ctx, vertices, ui.outdoorKind, scope);
-    if (!plan) return setNotice(null);
+    const drawn = planDrawnPath(state, ctx, vertices, ui.outdoorKind, scope);
+    if (!drawn) return setNotice(null);
+    const plan = withSyncMirror(state, ctx, drawn);
     if (perform(plan) === undefined) followScope(scope);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, state, ui.outdoorKind, ui.scope]);
@@ -262,7 +276,8 @@ export function Workspace({ session }: { session: Session }) {
   }, [state, ui.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doDelete = (heal: boolean) => {
-    const plan = planDelete(state, ctx, ui.selection, heal);
+    // An edge deleted between two points linked to other floors goes on those floors too (sync.ts).
+    const plan = withSyncMirror(state, ctx, planDelete(state, ctx, ui.selection, heal), ui.selection.filter((id) => id in state.edges));
     if (isError(plan)) return fail(plan.error);
     const reason = planReason(state, plan);
     if (reason !== false) return fail(reason);
@@ -279,6 +294,29 @@ export function Workspace({ session }: { session: Session }) {
     else if (!plan) info('이 층에는 연결 안 된 지점이 없습니다.');
   };
 
+  // ---- 끊긴 지점 찾기: found on the state a moment behind (like the checks), ringed on the map, walked through one by one ----
+  const checkedState = useDeferredValue(state);
+  const broken = useMemo(() => findBroken(checkedState), [checkedState]);
+  const brokenSet = useMemo(() => brokenIds(broken), [broken]);
+  const brokenFloors = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const id of brokenSet) {
+      if (!(id in checkedState.nodes)) continue;
+      const label = scopeLabel(featureScope(checkedState, id), checkedState);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count || (a.label < b.label ? -1 : 1));
+  }, [brokenSet, checkedState]);
+  const showBroken = (item: BrokenItem) => {
+    locateFeature(item.nodeId);
+    patchUi({ panelTab: 'checks' });
+    info(`${scopeLabel(featureScope(state, item.nodeId), state)}: ${item.message}`);
+  };
+  const showNextBroken = () => {
+    const next = nextBroken(broken, ui.selection.length === 1 ? ui.selection[0]! : null);
+    if (next) showBroken(next);
+  };
+
   const { plans, blocked } = selectionOps;
   /** `soft`: being unable to run is not a mistake of the user's (nothing to undo), so the reason is shown as plain information. */
   const operations: Record<OperationId, OperationState & { run: () => void; soft?: true }> = {
@@ -293,6 +331,7 @@ export function Workspace({ session }: { session: Session }) {
     undo: { blocked: history.canUndo() ? false : '되돌릴 변경이 없습니다.', soft: true, run: () => stepHistory('undo') },
     redo: { blocked: history.canRedo() ? false : '다시 할 변경이 없습니다.', soft: true, run: () => stepHistory('redo') },
     'import-survey': { blocked: false, run: () => surveyInput.current?.click() },
+    'find-broken': { blocked: broken.length === 0 ? '끊긴 지점이 없습니다.' : false, count: broken.length, soft: true, run: showNextBroken },
     'attach-unattached': {
       blocked: ui.scope.kind !== 'building'
         ? `층을 먼저 보여 주세요(${toolLabel('select-building')}). 이 층의 연결 안 된 지점을 한 번에 잇습니다.`
@@ -328,7 +367,7 @@ export function Workspace({ session }: { session: Session }) {
     const read = readSurveyFile(new Uint8Array(await file.arrayBuffer()));
     const refused = (r: { error: string; reasons: string[] }) => (r.reasons.length > 0 ? setDialog({ kind: 'survey-refused', ...r }) : fail(r.error));
     if ('error' in read) return refused(read);
-    const planned = planSurveyImport(history.current(), session.campusId, read.survey);
+    const planned = planSurveyImport(history.current(), session.campusId, read.survey, ctx);
     if ('error' in planned) return refused(planned);
     try {
       await saveSurvey(read.survey.id, read.text, Object.fromEntries(Object.entries(read.photos).map(([name, bytes]) => [name, toBase64(bytes)])));
@@ -377,9 +416,9 @@ export function Workspace({ session }: { session: Session }) {
     perform(planMenuEdit(state, ui.selection, edits));
     setCtxMenu(null);
   };
-  const runCopy = (levels: number[]): string | undefined => {
+  const runCopy = (levels: number[], joinSync: boolean): string | undefined => {
     if (!copyPanel) return undefined;
-    const plan = planCopyToFloors(state, ctx, copyPanel.ids, levels);
+    const plan = planCopyToFloors(state, ctx, copyPanel.ids, levels, { joinSync });
     const err = perform(plan);
     if (err === undefined && !isError(plan)) setCopyPanel({ ...copyPanel, result: [`${plan.annotation}: 완료했습니다.`, ...(plan.notices ?? [])] });
     return err;
@@ -525,7 +564,7 @@ export function Workspace({ session }: { session: Session }) {
           />
         )}
         <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} />
-        {one && <SurveyNotes notes={surveyNotes(surveys, one.id)} />}
+        {one && <SurveyNotes notes={surveyNotes(surveys, one.id, state)} />}
         {measure && measureTarget && (
           <MeasurePanel
             summary={measure}
@@ -536,7 +575,17 @@ export function Workspace({ session }: { session: Session }) {
         )}
       </>
     ),
-    checks: () => <ChecksPanel result={checks} onLocate={locateFeature} />,
+    checks: () => (
+      <ChecksPanel
+        result={checks}
+        onLocate={locateFeature}
+        broken={broken}
+        brokenFloors={brokenFloors}
+        onBroken={showBroken}
+        onNextBroken={showNextBroken}
+        onConnectNear={(item) => perform(planConnectNear(state, ctx, item))}
+      />
+    ),
     routes: () => (
       <RoutePanel
         places={places}
@@ -598,6 +647,7 @@ export function Workspace({ session }: { session: Session }) {
           basemap={ui.basemap}
           scope={ui.scope}
           highlight={highlight}
+          broken={brokenSet}
           canPick={canPick}
           routes={routeLines}
           focus={focus}
@@ -646,6 +696,7 @@ export function Workspace({ session }: { session: Session }) {
             scope={ui.scope}
             onPick={(level) => showFloor({ kind: 'building', buildingId: floorBuilding.id, level }, toolDef(ui.tool).cross)}
             onOutdoor={() => showFloor(OUTDOOR)}
+            broken={brokenByLevel(checkedState, brokenSet, floorBuilding.id)}
           />
         )}
       </div>
@@ -669,6 +720,11 @@ export function Workspace({ session }: { session: Session }) {
           fields={menuFields(state, ui.selection)}
           copyBlocked={copyBlocked(state, ui.selection)}
           deleteBlocked={blocked.delete}
+          synced={syncedIn(state, ui.selection).length}
+          onUnsync={() => {
+            setCtxMenu(null);
+            perform(planUnsync(state, ui.selection));
+          }}
           onEdit={menuEdit}
           onCopy={() => {
             setCtxMenu(null);

@@ -12,13 +12,14 @@ interface Props {
   summary: string;
   /** Set after a copy ran: the lines to read (counts, what was skipped and why). */
   result: string[] | null;
-  /** Runs the copy; returns an error text or undefined. */
-  onRun: (levels: number[]) => string | undefined;
+  /** Runs the copy; returns an error text or undefined. `joinSync`: points reused on the target floor join the floor link. */
+  onRun: (levels: number[], joinSync: boolean) => string | undefined;
   onClose: () => void;
 }
 
 export function CopyPanel({ buildingName, fromLevel, levels, summary, result, onRun, onClose }: Props) {
   const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [joinSync, setJoinSync] = useState(true);
   const [error, setError] = useState<string>();
   const all = levels.length > 0 && levels.every((l) => checked.has(l));
   const toggle = (l: number) => setChecked((s) => {
@@ -30,7 +31,7 @@ export function CopyPanel({ buildingName, fromLevel, levels, summary, result, on
   return (
     <section className="copy-panel" aria-label="다른 층에 복사">
       <h2 className="copy-title">다른 층에 복사: {buildingName} {floorLabel(fromLevel)}</h2>
-      <p className="field-help">{summary}를 같은 자리에 복사합니다. 속성은 그대로이고 층만 바뀝니다.</p>
+      <p className="field-help">{summary}를 같은 자리에 복사합니다. 속성은 그대로이고 층만 바뀝니다. 원본과 복사본은 층 연동으로 묶여, 연동된 두 지점 사이에 구간을 만들거나 지우면 다른 층에도 똑같이 적용됩니다.</p>
       {result === null ? (
         <>
           <fieldset className="copy-floors">
@@ -46,11 +47,15 @@ export function CopyPanel({ buildingName, fromLevel, levels, summary, result, on
               </label>
             ))}
           </fieldset>
-          <p className="field-help">같은 자리(0.5m 안)에 같은 종류의 지점이 이미 있으면 새로 만들지 않고 그 지점을 씁니다. 엘리베이터·계단·에스컬레이터·연결통로는 복사하지 않습니다.</p>
+          <label className="copy-option">
+            <input type="checkbox" checked={joinSync} onChange={(e) => setJoinSync(e.target.checked)} />
+            같은 자리의 기존 지점도 층 연동에 넣기
+          </label>
+          <p className="field-help">같은 자리(1.5m 안)에 같은 종류의 지점이 이미 있으면 그 지점을 쓰고, 기존 복도 가까이(1.5m 안)에 놓이는 지점은 그 복도 위에 이어 줍니다. 계단참과 엘리베이터 정차 지점도 복사합니다(있으면 그대로 쓰고, 없으면 만듭니다). 층 사이 계단·에스컬레이터·연결통로 구간은 복사하지 않습니다.</p>
           {error && <p className="dialog-error" role="alert">{error}</p>}
           <div className="copy-actions">
             <button type="button" onClick={onClose}>취소 (Esc)</button>
-            <button type="button" className="primary" disabled={checked.size === 0} onClick={() => setError(onRun([...checked]))}>
+            <button type="button" className="primary" disabled={checked.size === 0} onClick={() => setError(onRun([...checked], joinSync))}>
               복사하기{checked.size > 0 ? ` (${checked.size}개 층)` : ''}
             </button>
           </div>

@@ -1,5 +1,6 @@
 // Operations on the selection (SPEC-v0.2 5.3): delete, delete and heal, merge, property edits. Each builds a Plan of core actions.
 import {
+  accessPatch,
   FLIGHT_SEC_MAX,
   FLIGHT_SEC_MIN,
   buildingById,
@@ -11,6 +12,7 @@ import {
   previewDeleteBuilding,
   reverseEdge,
   setProps,
+  type AccessInfo,
   type DeleteBuildingPreview,
   type EditContext,
   type EditState,
@@ -113,6 +115,8 @@ export interface CommonEdits {
   flight_sec?: number | null;
   needs_check?: boolean;
   source?: string;
+  /** Points only: 개방시간 / 폐쇄기간 / 개방조건. An empty value removes the property. */
+  access?: AccessInfo;
 }
 
 /** The setProps patch for `edits` on a Feature with `props`, or null when nothing would change. */
@@ -123,6 +127,7 @@ export function propsPatch(props: AnyProps, edits: CommonEdits): Record<string, 
   if (edits.needs_check !== undefined && (edits.needs_check ? cur['needs_check'] !== true : cur['needs_check'] !== undefined)) {
     patch['needs_check'] = edits.needs_check ? true : undefined; // absent means false; keeps files short
   }
+  if (props.kind === 'node' && edits.access) Object.assign(patch, accessPatch(props, edits.access) ?? {});
   if (props.kind === 'edge') {
     if (edits.step_free !== undefined && edits.step_free !== props.step_free) patch['step_free'] = edits.step_free;
     if (edits.flight_sec !== undefined && props.highway === 'steps' && props.edge_type === 'indoor') {

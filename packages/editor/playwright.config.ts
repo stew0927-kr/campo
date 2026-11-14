@@ -10,7 +10,11 @@ export default defineConfig({
   workers: 1,
   timeout: 120_000,
   reporter: [['list']],
-  use: { baseURL: `http://127.0.0.1:${PORT}`, viewport: { width: 1440, height: 900 }, browserName: 'chromium' },
+  use: {
+    baseURL: `http://127.0.0.1:${PORT}`, viewport: { width: 1440, height: 900 }, browserName: 'chromium',
+    // A machine that ships its own Chromium (another Playwright version's) names it here: CAMPO_CHROMIUM=/path/to/chrome
+    ...(process.env['CAMPO_CHROMIUM'] ? { launchOptions: { executablePath: process.env['CAMPO_CHROMIUM'] } } : {}),
+  },
   webServer: {
     command: `npx vite --port ${PORT} --strictPort`,
     cwd: '.',

@@ -1,7 +1,7 @@
 // What a click on the map does in each tool. One entry per tool of the registry (the Record type makes a new tool fill its own in).
 // A handler reads the screen state, builds a Plan (model/) and hands it to `perform`, or opens a form; it never edits the data itself.
 import type { Dispatch, SetStateAction } from 'react';
-import { buildingById, type EditContext, type EditNode, type EditState } from '@campo/core';
+import { buildingById, type EditContext, type EditNode, type EditState, type Position } from '@campo/core';
 import type { MapClick } from '../map/MapView.tsx';
 import { planBridge } from '../model/bridge.ts';
 import { buildingAt } from '../model/building.ts';
@@ -11,6 +11,7 @@ import { planEscalator } from '../model/escalator.ts';
 import { nextSelection } from '../model/ops.ts';
 import type { PlanResult } from '../model/plan.ts';
 import { levelStep, sameScope, scopeLabel, type Scope } from '../model/scope.ts';
+import { withSyncMirror } from '../model/sync.ts';
 import { planConnect, planIndoorNode, planOutdoorNode, planPortal } from '../model/tools.ts';
 import type { Tool } from '../ui/registry.ts';
 import { effectiveAddKind, stripStage, type StripState, type UiState } from '../ui/ui-state.ts';
@@ -33,6 +34,8 @@ export interface ToolEnv {
   /** Something was placed on this floor: show it from now on. */
   followScope: (scope: Scope) => void;
   showFloor: (scope: Scope, keepPick?: boolean) => void;
+  /** OSM 건물 가져오기: ask OpenStreetMap for the building at the position and add it (asynchronous). */
+  importOsm: (position: Position) => void;
   info: (text: string) => void;
   fail: (text: string) => void;
   clearNotice: () => void;
@@ -172,8 +175,10 @@ export function toolClicks(env: ToolEnv): Record<Tool, ToolClick | null> {
     'select-building': onSelectBuilding,
     path: null,
     building: null,
+    'osm-building': ({ position }) => env.importOsm(position),
     'add-node': onAddNode,
-    connect: pickPair((a, b) => planConnect(state, ctx, a, b), '이을 다른 지점을 눌러 주세요.'),
+    // An edge between two points linked to other floors is made on those floors too (sync.ts).
+    connect: pickPair((a, b) => withSyncMirror(state, ctx, planConnect(state, ctx, a, b)), '이을 다른 지점을 눌러 주세요.'),
     portal: pickPair((a, b) => planPortal(state, ctx, a, b), '이어질 바깥 지점을 눌러 주세요(흐리게 보이는 바깥 지점).'),
     bridge: onCross('bridge'),
     restroom: onRestroom,

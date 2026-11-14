@@ -35,7 +35,8 @@ function beltProps(conveying: string | undefined, pairOffset: number): Record<st
   };
 }
 
-export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: ReadonlySet<string> = new Set()): FeatureCollection {
+/** `broken`: points 끊긴 지점 찾기 reports; they get a ring. */
+export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: ReadonlySet<string> = new Set(), broken: ReadonlySet<string> = new Set()): FeatureCollection {
   const features: FeatureCollection['features'] = [];
   for (const b of Object.values(state.buildings)) {
     features.push({
@@ -84,7 +85,7 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       properties: {
         id: n.id, kind: 'node', highway: null, node_type: n.props.node_type, classroom: isClassroom(n),
         emphasis: nodeStrong(n, scope) ? 1 : 0, selected: false, highlight: highlight.has(n.id),
-        unattached: waiting.has(n.id), icon: restroomIcon(n),
+        unattached: waiting.has(n.id), icon: restroomIcon(n), synced: n.props.sync_group !== undefined, broken: broken.has(n.id),
       },
     });
   }
@@ -254,6 +255,11 @@ export const DATA_LAYERS: LayerSpecification[] = [
   },
 ];
 
+/** Ring of a point linked to other floors. Same value as the CSS token --sync. */
+export const SYNC_COLOR = '#0b7285';
+/** Ring of a broken point (끊긴 지점 찾기). Same value as the CSS token --broken. */
+export const BROKEN_COLOR = '#d6336c';
+
 /** Warning colour of the ring round an unattached point (SPEC-v0.2 6.5). Same value as the CSS token --warn-ring. */
 export const UNATTACHED_COLOR = '#e8590c';
 
@@ -264,6 +270,22 @@ DATA_LAYERS.push(
     source: DATA_SOURCE,
     filter: ['all', isNode, ['==', ['get', 'unattached'], true], strong],
     paint: { 'circle-radius': 17, 'circle-color': UNATTACHED_COLOR, 'circle-opacity': 0.12, 'circle-stroke-color': UNATTACHED_COLOR, 'circle-stroke-width': 3, 'circle-stroke-opacity': opacity },
+  },
+  {
+    // Linked to the same spot on other floors (sync_group): a thin ring round the point.
+    id: 'campo-nodes-synced',
+    type: 'circle',
+    source: DATA_SOURCE,
+    filter: ['all', isNode, ['==', ['get', 'synced'], true], strong],
+    paint: { 'circle-radius': 9, 'circle-color': SYNC_COLOR, 'circle-opacity': 0, 'circle-stroke-color': SYNC_COLOR, 'circle-stroke-width': 1.5 },
+  },
+  {
+    // 끊긴 지점 찾기: a route cannot use this point. Drawn on every floor that is shown strongly, and outdoors.
+    id: 'campo-nodes-broken',
+    type: 'circle',
+    source: DATA_SOURCE,
+    filter: ['all', isNode, ['==', ['get', 'broken'], true], strong],
+    paint: { 'circle-radius': 14, 'circle-color': BROKEN_COLOR, 'circle-opacity': 0.14, 'circle-stroke-color': BROKEN_COLOR, 'circle-stroke-width': 3.5 },
   },
   {
     id: 'campo-restrooms',

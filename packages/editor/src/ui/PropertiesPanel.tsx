@@ -1,4 +1,5 @@
-import { FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, FLOOR_FLIGHT_SEC } from '@campo/core';
+import { useEffect, useState } from 'react';
+import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, FLOOR_FLIGHT_SEC, type AccessProp } from '@campo/core';
 import type { CommonEdits } from '../model/ops.ts';
 import type { AnyProps } from '../model/session.ts';
 
@@ -7,6 +8,7 @@ const SOURCES = [
   { value: 'ngii-imagery', label: '영상지도 보고 그림' },
   { value: 'school-floorplan', label: '학교 안내도' },
   { value: 'estimate', label: '추정 (현장 확인 필요)' },
+  { value: 'osm', label: 'OpenStreetMap (© OSM 기여자)' },
 ];
 
 const KIND_LABELS: Record<string, string> = {
@@ -28,6 +30,45 @@ const STEP_FREE_OPTIONS = [
   { value: 'false', label: '없음: 계단이나 문턱이 있음' },
   { value: 'null', label: '모름 (확인 전)' },
 ];
+
+/**
+ * One of 개방시간 / 폐쇄기간 / 개방조건: the presets as one-press buttons, anything else typed in. Typing is kept here and
+ * written on Enter or when the field is left, so one value is one history entry.
+ */
+function AccessField({ name, value, onCommit }: { name: AccessProp; value: string | undefined; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value ?? '');
+  useEffect(() => setDraft(value ?? ''), [value]);
+  const label = ACCESS_LABELS[name];
+  const commit = () => {
+    if (draft.trim() !== (value ?? '')) onCommit(draft);
+  };
+  return (
+    <div className="field access-field" data-access={name}>
+      <label>{label} ({name})
+        <input
+          value={draft}
+          placeholder={ACCESS_PLACEHOLDERS[name]}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit();
+            }
+          }}
+        />
+      </label>
+      {(ACCESS_PRESETS[name].length > 0 || value !== undefined) && (
+        <div className="presets" role="group" aria-label={`${label} 빠른 선택`}>
+          {ACCESS_PRESETS[name].map((preset) => (
+            <button key={preset} type="button" className="preset" aria-pressed={value === preset} onClick={() => onCommit(value === preset ? '' : preset)}>{preset}</button>
+          ))}
+          {value !== undefined && <button type="button" className="preset preset-clear" onClick={() => onCommit('')}>지우기</button>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: { id: string; props: AnyProps } | undefined; selectedCount: number; onEdit: (edits: CommonEdits) => void }) {
   if (selectedCount > 1) return <p className="panel-empty">{selectedCount}개를 골랐습니다. 속성은 하나만 골랐을 때 고칠 수 있습니다.</p>;
@@ -70,6 +111,14 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
           )}
           <p className="field-help">계단 칸 수(step_count)를 모를 때만 쓰입니다. 내려갈 때는 올라갈 때의 3분의 2로 계산합니다.</p>
         </div>
+      )}
+      {p.kind === 'node' && (
+        <fieldset className="access" aria-label="출입 정보">
+          <legend>출입 정보</legend>
+          {ACCESS_PROPS.map((name) => <AccessField key={`${feature.id}:${name}`} name={name} value={p[name]} onCommit={(value) => onEdit({ access: { [name]: value } })} />)}
+          <p className="field-help">빠른 선택을 누르거나 직접 적고 Enter를 누르세요. 비우면 지워집니다. 길찾기에는 쓰이지 않고 안내에만 보입니다.</p>
+          {p.sync_group !== undefined && <p className="field-help sync-note">다른 층의 같은 자리 지점과 연동되어 있습니다({p.sync_group}). 우클릭 메뉴에서 연동을 취소할 수 있습니다.</p>}
+        </fieldset>
       )}
       <label className="check-field">
         <input type="checkbox" checked={p.needs_check === true} onChange={(e) => onEdit({ needs_check: e.target.checked })} />

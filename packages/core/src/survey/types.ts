@@ -19,6 +19,12 @@ export interface SurveyAttachment {
   heading_mag_deg?: number;
   pressure_hpa?: number;
   note?: string;
+  /** What the surveyor read on site (the same values go onto the point with setProps; this is the record of where they came from). */
+  hours?: string;
+  closed_period?: string;
+  access_condition?: string;
+  /** The point's floor-copy group when it was surveyed. */
+  sync_group?: string;
 }
 
 /** Height measured with the barometer along one edge. */

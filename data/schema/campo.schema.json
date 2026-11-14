@@ -211,7 +211,11 @@
         "door_role": { "enum": ["front", "back", "other"] },
         "restroom_gender": { "enum": ["male", "female", "unisex", "family"] },
         "wheelchair": { "enum": ["yes", "limited", "no", "unknown"] },
-        "changing_table": { "type": ["boolean", "null"] }
+        "changing_table": { "type": ["boolean", "null"] },
+        "hours": { "description": "When the point can be passed, e.g. 07:00-22:00, 24/7. Free text.", "type": "string", "minLength": 1 },
+        "closed_period": { "description": "A period it is closed, e.g. 2026-11-15~2026-11-30.", "type": "string", "minLength": 1 },
+        "access_condition": { "description": "What it takes to get through, e.g. 상시개방, 학생증 태깅, 관리실 문의.", "type": "string", "minLength": 1 },
+        "sync_group": { "description": "Points copied to other floors of one building share this id (the editor keeps the flat edges between them alike).", "type": "string", "minLength": 1 }
       },
       "allOf": [
         {

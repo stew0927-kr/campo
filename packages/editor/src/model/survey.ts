@@ -1,12 +1,18 @@
 // 현장 기록 불러오기 (docs/mobile/SPEC-mobile.md 5): the zip the survey app exports becomes one Plan. The map changes are
 // the survey's changeset run through core's applyChangeset (one history entry); photos and readings are only shown, never
 // written into the map data.
+//
+// The magnet (surveySnap.ts): what was walked along a way the map already has is not drawn a second time. Point by point,
+// a surveyed point within reach of an existing way of its floor (or of the outdoors) belongs to that way; a surveyed
+// stretch that follows existing ways all along is left out, and its photos and height reading are shown on the way it
+// follows. A stretch with no way in reach comes in as surveyed, and where it meets an existing way its end is put onto it.
 import {
   SURVEY_FILE, SURVEY_PHOTOS_DIR, applyChangeset, checkChangeset, featuresById, sameFeature, surveyDanglingIds, surveyPhotoPaths, validateSurvey,
-  type Changeset, type EditState, type Survey, type SurveyAttachment, type VerticalMeasurement,
+  type Changeset, type EditContext, type EditState, type Survey, type SurveyAttachment, type VerticalMeasurement,
 } from '@campo/core';
 import { strFromU8, unzipSync } from 'fflate';
 import type { Plan } from './plan.ts';
+import { joinStep, snapChangeset, snappedOnto } from './surveySnap.ts';
 
 export interface SurveyFile {
   survey: Survey;
@@ -79,28 +85,41 @@ export interface SurveyImport {
 
 /**
  * The import of `survey` into `state`. Every problem and conflict of its changeset is collected into the error, and
- * then nothing is applied (SPEC-v0.2 7.2: all or nothing).
+ * then nothing is applied (SPEC-v0.2 7.2: all or nothing). What follows an existing way is left out (see the top of this
+ * file); the rest is one Plan: the changeset, then each end that meets an existing way is put onto it.
  */
-export function planSurveyImport(state: EditState, campusId: string, survey: Survey): SurveyImport | SurveyRefusal {
+export function planSurveyImport(state: EditState, campusId: string, survey: Survey, ctx?: EditContext): SurveyImport | SurveyRefusal {
   if (survey.campus !== campusId) return refuse(`이 현장 기록은 다른 캠퍼스(${survey.campus})의 것입니다. 지금 연 캠퍼스는 ${campusId}입니다.`);
   const extras = `사진 ${surveyPhotoPaths(survey).length}장, 높이 측정 ${survey.vertical.length}건은 상세 정보 탭에서 볼 수 있습니다.`;
   const whole = survey.changeset;
   if (!whole) return { plan: null, lines: ['이 기록은 지도를 바꾸지 않습니다.', extras] };
 
-  const cs = remainingChanges(state, whole);
-  if (!cs) return { plan: null, lines: ['이미 지도에 반영된 기록입니다.', extras] };
+  const rest = remainingChanges(state, whole);
+  const snap = rest ? snapChangeset(state, rest) : null;
+  const cs = snap?.changeset ?? null;
+  const followed = snap && snap.droppedEdges.length + snap.droppedNodes.length > 0
+    ? [`기존 길을 따라 걸은 구간 ${snap.droppedEdges.length}개와 지점 ${snap.droppedNodes.length}개는 새로 만들지 않았습니다. 그 사진과 측정은 기존 길의 상세 정보에 보입니다.`]
+    : [];
+  if (!cs || !snap) return { plan: null, lines: [followed.length > 0 ? '새로 반영할 변경이 없습니다.' : '이미 지도에 반영된 기록입니다.', ...followed, extras] };
   const check = checkChangeset(state, cs);
   if (!check.ok) {
     const reasons = [...check.problems.map((p) => p.message), ...check.conflicts.map((c) => `[${c.code}] ${c.message}`)];
     return refuse('현장 기록을 적용할 수 없어 아무것도 바꾸지 않았습니다. 조사한 뒤에 같은 곳을 편집기에서 고쳤는지 확인해 주세요.', reasons);
   }
   const count = (op: string) => cs.changes.filter((c) => c.op === op).length;
-  const dangling = surveyDanglingIds(applyChangeset(cs).apply(state), survey);
+  const left = new Set([...snap.droppedEdges, ...snap.droppedNodes]);
+  const dangling = surveyDanglingIds(applyChangeset(cs).apply(state), survey).filter((id) => !left.has(id));
+  const joins = ctx ? snap.joins : [];
   return {
-    plan: { annotation: `현장 기록 불러오기(${survey.id})`, steps: [() => applyChangeset(cs)] },
+    plan: {
+      annotation: `현장 기록 불러오기(${survey.id})`,
+      steps: [() => applyChangeset(cs), ...joins.map((nodeId) => joinStep(nodeId, snap.createdEdgeIds, ctx!))],
+    },
     lines: [
-      ...(cs.changes.length < whole.changes.length ? [`이미 반영된 ${whole.changes.length - cs.changes.length}개는 건너뛰었습니다.`] : []),
+      ...(rest!.changes.length < whole.changes.length ? [`이미 반영된 ${whole.changes.length - rest!.changes.length}개는 건너뛰었습니다.`] : []),
       `추가 ${count('create')}개, 변경 ${count('modify')}개, 삭제 ${count('delete')}개를 반영했습니다. 저장(Ctrl+S)하면 캠퍼스 파일에 기록됩니다.`,
+      ...followed,
+      ...(joins.length > 0 ? [`새 길의 끝 ${joins.length}곳을 기존 길 위에 이었습니다.`] : []),
       extras,
       ...(dangling.length > 0 ? [`지도에 없는 Feature를 가리키는 첨부가 ${dangling.length}개 있습니다: ${dangling.join(', ')}`] : []),
     ],
@@ -110,12 +129,15 @@ export function planSurveyImport(state: EditState, campusId: string, survey: Sur
 /**
  * The changes of `cs` the map does not have yet, or null when it has them all. The survey app always exports a walk
  * against the campus it was built with, so a later export of the same walk repeats what an earlier import brought in.
+ * A Feature the walk made that is on the map already was brought in by that earlier import, also when the import put it
+ * onto an existing way (its coordinate is then not the surveyed one).
  */
 function remainingChanges(state: EditState, cs: Changeset): Changeset | null {
   const now = featuresById(state);
   const changes = cs.changes.filter((c) => {
     if (c.op === 'delete') return now.has(c.id);
     const have = now.get(c.feature.id);
+    if (c.op === 'create') return !have;
     return !have || !sameFeature(have, c.feature);
   });
   return changes.length > 0 ? { ...cs, changes } : null;
@@ -141,17 +163,27 @@ export interface SurveyNote {
   attachment?: SurveyAttachment;
   /** Edges only. */
   vertical?: VerticalMeasurement;
+  /** The surveyed Feature the record was made at, when it was left out of the map because it follows this way. */
+  recordedAt?: string;
 }
 
-/** Photos and readings of `featureId` across the imported surveys, oldest survey first. */
-export function surveyNotes(surveys: readonly Survey[], featureId: string): SurveyNote[] {
+/**
+ * Photos and readings of `featureId` across the imported surveys, oldest survey first. With `state`, the records of
+ * surveyed Features that were left out of the map (they follow an existing way) are shown on the way they follow.
+ */
+export function surveyNotes(surveys: readonly Survey[], featureId: string, state?: EditState): SurveyNote[] {
   return [...surveys]
     .sort((a, b) => (a.surveyed_at < b.surveyed_at ? -1 : 1))
     .flatMap((s) => {
+      const head = { surveyId: s.id, surveyedAt: s.surveyed_at };
+      const notes: SurveyNote[] = [];
       const attachment = s.attachments[featureId];
       const vertical = s.vertical.find((v) => v.edge_id === featureId);
-      if (!attachment && !vertical) return [];
-      return [{ surveyId: s.id, surveyedAt: s.surveyed_at, ...(attachment ? { attachment } : {}), ...(vertical ? { vertical } : {}) }];
+      if (attachment || vertical) notes.push({ ...head, ...(attachment ? { attachment } : {}), ...(vertical ? { vertical } : {}) });
+      if (state && featureId in state.edges) {
+        for (const moved of snappedOnto(state, s, featureId)) notes.push({ ...head, ...moved });
+      }
+      return notes;
     });
 }
 

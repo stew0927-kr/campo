@@ -437,3 +437,38 @@ button.check-item:hover { background: var(--chrome); }
 .level-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; padding: 0; list-style: none; }
 .level-chip { display: flex; align-items: center; gap: 2px; padding: 2px 4px 2px 8px; border: 1px solid var(--rule); border-radius: 12px; background: var(--chrome); color: var(--ink); }
 .level-chip button { padding: 0 6px; border: 0; background: transparent; font-size: var(--text-l); line-height: 1.2; }
+
+/* ---- 출입 정보 (개방시간 / 폐쇄기간 / 개방조건), 층 연동, 끊긴 지점 찾기 ---- */
+:root { --sync: #0b7285; --broken: #d6336c; }
+.access { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--rule); }
+.access legend { padding: 0; font-weight: 600; }
+.access-field { display: flex; flex-direction: column; gap: 5px; }
+.access-field label { display: flex; flex-direction: column; gap: 3px; }
+.access-field input { padding: 5px 7px; border: 1px solid var(--rule); border-radius: 5px; font: inherit; color: var(--ink); background: var(--surface); }
+.presets { display: flex; flex-wrap: wrap; gap: 4px; }
+.preset { padding: 2px 9px; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; font-size: var(--text-s); cursor: pointer; }
+.preset:hover { background: var(--chrome); }
+.preset[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: #fff; }
+.preset-clear { border-style: dashed; color: var(--muted); }
+.sync-note { padding-left: 8px; border-left: 3px solid var(--sync); }
+.copy-option { display: flex; align-items: center; gap: 6px; }
+.survey-note-moved { color: var(--muted); }
+
+.check-broken .check-item { border-left-color: var(--broken); }
+.broken-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.broken-head h3 { margin: 0; }
+.broken-next { padding: 4px 10px; border: 1px solid var(--broken); border-radius: 6px; background: var(--surface); color: var(--broken); font: inherit; font-weight: 600; cursor: pointer; }
+.broken-next:hover:not(:disabled) { background: var(--broken); color: #fff; }
+.broken-next:disabled { border-color: var(--rule); color: var(--muted); cursor: not-allowed; }
+.broken-ring { display: inline-block; width: 11px; height: 11px; margin-right: 6px; border: 2.5px solid var(--broken); border-radius: 50%; vertical-align: -1px; }
+.check-section ul.broken-floors { flex-direction: row; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.broken-floors li { padding: 1px 8px; border-radius: 999px; background: var(--chrome); font-size: var(--text-s); }
+.broken-floors b { margin-left: 2px; color: var(--broken); }
+.broken-row { display: flex; flex-direction: column; }
+.broken-row .check-item { width: 100%; }
+.broken-fix { align-self: flex-start; margin: 3px 0 4px 11px; padding: 3px 10px; border: 1px solid var(--footway); border-radius: 6px; background: var(--footway); color: #fff; font: inherit; font-size: var(--text-s); font-weight: 600; cursor: pointer; }
+.broken-fix:hover { filter: brightness(1.1); }
+.floor-broken {
+  position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: var(--broken); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+}

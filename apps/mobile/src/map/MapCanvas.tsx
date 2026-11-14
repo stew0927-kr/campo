@@ -1,17 +1,19 @@
-// The survey map: only campus data (building outlines, points, edges), drawn by the app itself. No background tiles, so it
-// works without a network and no third-party map is involved. The crosshair in the middle is where a record goes:
-// the surveyor drags the map under it instead of aiming a finger at a small point.
+// The survey map: campus data (building outlines, points, edges) drawn by the app itself, over OpenStreetMap tiles
+// (tiles.ts) laid out in the same projection. The tiles are plain images under the drawing: without a network they simply
+// do not appear and the map works as before; Google, Naver and Kakao maps are never involved (SPEC §3). The crosshair in
+// the middle is where a record goes: the surveyor drags the map under it instead of aiming a finger at a small point.
 //
 // The map keeps its own view. Dragging re-renders this component only (the screen around it reads the crosshair through
 // the handle when a record is made), and the drawn Features are redrawn only when the data, the floor or the zoom step changes.
 import { buildingById, edgeCoords, type EditState, type Position } from '@campo/core';
-import { memo, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
-import { PanResponder, StyleSheet, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
+import { memo, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
+import { Image, PanResponder, StyleSheet, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, G, Line, Polygon, Polyline } from 'react-native-svg';
 import { nodeInScope, type Scope } from '../model/scope.ts';
 import { SNAP_M } from '../survey/plans.ts';
 import { color } from '../ui/theme.ts';
 import { fitView, panned, zoomed, type Projection, type Size, type View as MapView, type XY } from './project.ts';
+import { TILE_HEADERS, visibleTiles, type Tile } from './tiles.ts';
 
 export interface MapHandle {
   /** The position under the crosshair. */
@@ -30,6 +32,8 @@ interface Props {
   scope: Scope;
   anchorId: string | null;
   handle: RefObject<MapHandle | null>;
+  /** The existing point the crosshair is on (within SNAP_M), or null: its information can be edited there. */
+  onSnap?: (nodeId: string | null) => void;
 }
 
 interface Touch {
@@ -51,7 +55,7 @@ function touchOf(e: GestureResponderEvent): Touch {
 const ZOOM_STEP = 1.25;
 const steppedScale = (scale: number): number => ZOOM_STEP ** Math.round(Math.log(scale) / Math.log(ZOOM_STEP));
 
-export function MapCanvas({ state, base, projection, center, scope, anchorId, handle }: Props) {
+export function MapCanvas({ state, base, projection, center, scope, anchorId, handle, onSnap }: Props) {
   const [size, setSize] = useState<Size | null>(null);
   const [view, setView] = useState<MapView | null>(null);
   // The responder and the handle are made once; they read the newest values through refs.
@@ -130,11 +134,24 @@ export function MapCanvas({ state, base, projection, center, scope, anchorId, ha
     return best;
   }, [points, view]);
   const anchor = useMemo(() => points.find((p) => p.id === anchorId) ?? null, [points, anchorId]);
+  const snapId = snap?.id ?? null;
+  const onSnapRef = useRef(onSnap);
+  onSnapRef.current = onSnap;
+  useEffect(() => onSnapRef.current?.(snapId), [snapId]);
+
+  // Tiles the server could not give (no network, no tile there) are left out: the plain background shows instead.
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  const tiles = useMemo(() => (size && view ? visibleTiles(view, size, projection) : []), [size, view, projection]);
 
   return (
     <View style={StyleSheet.absoluteFill} onLayout={onLayout} {...responder.panHandlers} accessibilityLabel="조사 지도. 끌어서 옮기고 두 손가락으로 확대합니다.">
       {size && view && (
         <>
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            {tiles.map((t) => !failed.has(t.key) && (
+              <TileImage key={t.key} tile={t} onFail={(key) => setFailed((old) => (old.has(key) ? old : new Set(old).add(key)))} />
+            ))}
+          </View>
           <Svg width={size.width} height={size.height}>
             {/* Metres → pixels: x east to the right, y north upwards. */}
             <G transform={`matrix(${view.scale} 0 0 ${-view.scale} ${size.width / 2 - view.x * view.scale} ${size.height / 2 + view.y * view.scale})`}>
@@ -175,6 +192,7 @@ const Features = memo(function Features({ state, base, projection, scope, px }: 
       key={b.id}
       points={pointsOf(projection, b.polygon[0] ?? [])}
       fill={b.id === here ? color.buildingHere : color.building}
+      fillOpacity={b.id === here ? 0.9 : 0.7}
       stroke={color.buildingLine}
       strokeWidth={(b.id === here ? 2.5 : 1.2) * px}
     />
@@ -217,6 +235,18 @@ const Features = memo(function Features({ state, base, projection, scope, px }: 
     </>
   );
 });
+
+/** One background tile. It takes no touches, fades in nothing, and reports a failed download once. */
+const TileImage = memo(function TileImage({ tile, onFail }: { tile: Tile; onFail: (key: string) => void }) {
+  return (
+    <Image
+      source={{ uri: tile.url, headers: TILE_HEADERS }}
+      fadeDuration={0}
+      onError={() => onFail(tile.key)}
+      style={{ position: 'absolute', left: tile.left, top: tile.top, width: tile.width, height: tile.height }}
+    />
+  );
+}, (a, b) => a.tile.key === b.tile.key && a.tile.left === b.tile.left && a.tile.top === b.tile.top && a.tile.width === b.tile.width);
 
 const Crosshair = memo(function Crosshair({ size, snapped }: { size: Size; snapped: boolean }) {
   const [cx, cy] = [size.width / 2, size.height / 2];

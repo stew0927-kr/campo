@@ -41,3 +41,16 @@ export function scopeLabel(scope: Scope, state: EditState): string {
 export function defaultLevel(b: EditBuilding): number {
   return b.props.ground_levels[0] ?? Math.min(...b.props.levels);
 }
+
+const POINT_WORDS: Record<string, string> = {
+  door: '문', entrance: '출입구', corridor: '복도 지점', outdoor: '바깥 지점', poi: '출발·도착 지점',
+  elevator_stop: '엘리베이터', stair_landing: '계단', restroom: '화장실',
+};
+
+/** "문 101호", "출입구 A동 1층 출입구", "복도 지점". */
+export function pointTitle(node: Pick<EditNode, 'props'>): string {
+  const p = node.props;
+  const word = POINT_WORDS[p.node_type] ?? '지점';
+  const name = p.room_ref !== undefined ? `${p.room_ref}호` : p.name ?? p.space_name;
+  return name !== undefined ? `${word} ${name}` : word;
+}

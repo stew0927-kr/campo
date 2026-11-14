@@ -1,7 +1,7 @@
 // The bottom sheets of the record buttons. They only collect answers; SurveyScreen turns the answers into plans.
-import { heightFromPressure, type DoorRole, type EditBuilding } from '@campo/core';
+import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, heightFromPressure, type AccessInfo, type AccessProp, type DoorRole, type EditBuilding } from '@campo/core';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { defaultLevel, floorLabel, type Scope } from '../model/scope.ts';
 import { usePressure } from '../sensors/device.ts';
 import type { VerticalKind } from '../survey/plans.ts';
@@ -242,6 +242,72 @@ export function ScopeSheet({ scope, buildings, onPick, onClose }: ScopeSheetProp
   );
 }
 
+// ---- 지점·문 정보 (개방시간 / 폐쇄기간 / 개방조건, 메모, 사진) ----
+
+interface PointInfoSheetProps {
+  /** "문 101호", "출입구 A동 1층 출입구". */
+  title: string;
+  /** What the point says now. */
+  access: AccessInfo;
+  note: string;
+  photos: number;
+  onPhoto: () => void;
+  onSave: (answer: { access: Required<AccessInfo>; note: string }) => void;
+  onClose: () => void;
+}
+
+/** One value: the usual answers as one-press chips, anything else typed in. Pressing the chosen chip again clears it. */
+function AccessInput({ name, value, onChange }: { name: AccessProp; value: string; onChange: (value: string) => void }) {
+  const presets = ACCESS_PRESETS[name];
+  return (
+    <View>
+      <FieldLabel>{ACCESS_LABELS[name]}</FieldLabel>
+      {presets.length > 0 && (
+        <Choice
+          label={`${ACCESS_LABELS[name]} 빠른 선택`}
+          value={presets.includes(value) ? value : undefined}
+          onChange={(preset) => onChange(preset === value ? '' : preset)}
+          options={presets.map((p) => ({ value: p, label: p }))}
+        />
+      )}
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={ACCESS_PLACEHOLDERS[name]}
+        placeholderTextColor={color.inkSoft}
+        accessibilityLabel={`${ACCESS_LABELS[name]} 직접 입력`}
+        autoCorrect={false}
+        style={[styles.input, presets.length > 0 && styles.inputBelow]}
+      />
+    </View>
+  );
+}
+
+export function PointInfoSheet({ title, access, note, photos, onPhoto, onSave, onClose }: PointInfoSheetProps) {
+  const [values, setValues] = useState<Required<AccessInfo>>({ hours: access.hours ?? '', closed_period: access.closed_period ?? '', access_condition: access.access_condition ?? '' });
+  const [memo, setMemo] = useState(note);
+  return (
+    <BottomSheet title={title} onClose={onClose}>
+      <Text style={styles.note}>현장에서 본 대로 적어 주세요. 비워 두면 지워집니다.</Text>
+      {ACCESS_PROPS.map((name) => (
+        <AccessInput key={name} name={name} value={values[name]} onChange={(value) => setValues((v) => ({ ...v, [name]: value }))} />
+      ))}
+      <FieldLabel>메모</FieldLabel>
+      <TextInput
+        value={memo}
+        onChangeText={setMemo}
+        placeholder="예: 경비실에서 열어 줍니다"
+        placeholderTextColor={color.inkSoft}
+        accessibilityLabel="메모"
+        multiline
+        style={[styles.input, styles.inputTall]}
+      />
+      <PhotoRow count={photos} onPhoto={onPhoto} />
+      <BigButton label="이 지점에 저장" onPress={() => onSave({ access: values, note: memo })} style={styles.gapTop} />
+    </BottomSheet>
+  );
+}
+
 // ---- 데이터 내보내기 ----
 
 interface ExportSheetProps {
@@ -287,4 +353,10 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: color.line,
   },
   keyLabel: { fontSize: font.title, fontWeight: '700', color: color.ink },
+  input: {
+    minHeight: TOUCH_LARGE, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: color.surface,
+    borderWidth: 1.5, borderColor: color.line, fontSize: font.label, color: color.ink,
+  },
+  inputBelow: { marginTop: space.sm },
+  inputTall: { minHeight: TOUCH_LARGE * 1.5, paddingVertical: space.md, textAlignVertical: 'top' },
 });

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 export const PORT = 5199;
 export const E2E_DIR = join(tmpdir(), 'campo-e2e');
-export const CAMPUS_IDS = ['e2e-floor', 'e2e-scope', 'e2e-escalator', 'e2e-copy', 'e2e-building'] as const;
+export const CAMPUS_IDS = ['e2e-floor', 'e2e-scope', 'e2e-escalator', 'e2e-copy', 'e2e-building', 'e2e-sync', 'e2e-osm'] as const;
 
 /** The map centre and the building outline (lng, lat). */
 export const CENTER: [number, number] = [127.0005, 37.0003];
@@ -107,7 +107,7 @@ export function seedCampus(id: string): void {
     },
   ]));
   if (id === 'e2e-escalator') seedEscalatorCampus(dir);
-  if (id === 'e2e-copy') seedCopyCampus(dir);
+  if (id === 'e2e-copy' || id === 'e2e-sync') seedCopyCampus(dir);
 }
 
 // ---- 제보 e2e: the fixture campus under its own id, and the 8 sample reports, all in temporary folders ----

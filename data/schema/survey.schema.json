@@ -68,7 +68,11 @@
           "exclusiveMaximum": 360
         },
         "pressure_hpa": { "$ref": "#/$defs/pressure" },
-        "note": { "type": "string" }
+        "note": { "type": "string" },
+        "hours": { "description": "What the surveyor read on site: when the point is open, e.g. 07:00-22:00, 24/7.", "type": "string", "minLength": 1 },
+        "closed_period": { "description": "A period it is closed, e.g. 2026-11-15~2026-11-30.", "type": "string", "minLength": 1 },
+        "access_condition": { "description": "What it takes to get through, e.g. 상시개방, 학생증 태깅, 관리실 문의.", "type": "string", "minLength": 1 },
+        "sync_group": { "description": "The floor-copy group of the point when it was surveyed (campo.schema.json nodeProperties.sync_group).", "type": "string", "minLength": 1 }
       }
     },
     "vertical": {

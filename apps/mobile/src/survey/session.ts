@@ -1,12 +1,16 @@
 // One survey walk: the edit history, where the surveyor is, and what was photographed and measured.
 // No React and no device API in here, so the whole walk can be tested in Node.
 import {
+  ACCESS_PROPS,
+  accessPatch,
   applyChangeset,
   buildSurvey,
   createHistory,
   findFeature,
   historyToChangeset,
+  setProps,
   surveyId,
+  type AccessInfo,
   type Changeset,
   type EditContext,
   type EditState,
@@ -223,6 +227,43 @@ export class SurveySession {
       paths = this.addPhotos(plan.featureId, r.photos ?? 0, r.at);
     });
     return paths;
+  }
+
+  /**
+   * Write what the surveyor read at an existing point or door: 개방시간 / 폐쇄기간 / 개방조건 go onto the point itself
+   * (setProps, so they travel in the survey's changeset and the editor gets them like any other change), and are kept
+   * with the note and the photos in the point's attachment as the record of where they came from. The walk stays where
+   * it is; one 되돌리기 takes all of it back. Returns the paths reserved for the photos, or why nothing was written.
+   */
+  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number }, at: string): { paths: string[] } | { error: string } {
+    const node = this.state.nodes[nodeId];
+    if (!node) return { error: '지점을 찾을 수 없습니다.' };
+    const patch = accessPatch(node.props, edit.access);
+    const old = this.attachmentsById[nodeId];
+    const note = edit.note?.trim();
+    const noteChanged = note !== undefined && note !== (old?.note ?? '');
+    const photos = edit.photos ?? 0;
+    if (!patch && !noteChanged && photos === 0) return { error: '바뀐 내용이 없습니다.' };
+    const action = patch ? setProps([nodeId], patch) : null;
+    const reason = action ? action.disabled(this.state) : false;
+    if (reason !== false) return { error: reason };
+    let paths: string[] = [];
+    this.batch(() => {
+      if (action) this.history.perform(action);
+      this.trail.push(this.step());
+      this.place = { ...this.place, edited: action !== null };
+      const props = this.state.nodes[nodeId]!.props;
+      const { hours: _h, closed_period: _c, access_condition: _a, sync_group: _s, note: _n, ...rest } = old ?? { recorded_at: at };
+      const next: SurveyAttachment = { ...rest, recorded_at: at };
+      for (const key of ACCESS_PROPS) if (props[key] !== undefined) next[key] = props[key];
+      if (props.sync_group !== undefined) next.sync_group = props.sync_group;
+      const kept = note ?? old?.note;
+      if (kept !== undefined && kept !== '') next.note = kept;
+      this.attachmentsById = { ...this.attachmentsById, [nodeId]: next };
+      this.changed();
+      paths = this.addPhotos(nodeId, photos, at);
+    });
+    return { paths };
   }
 
   /** Look at another floor (or the outdoors) by hand. The walk no longer continues from the last point. */

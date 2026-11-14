@@ -62,8 +62,21 @@ v0.1은 아래가 모두 되면 끝이다.
 | kind | geometry | 필수 속성 | 선택 속성 |
 |---|---|---|---|
 | `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m` |
-| `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check` |
+| `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check`, `hours`, `closed_period`, `access_condition`, `sync_group` |
 | `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check` |
+
+지점의 출입 정보와 층 연동(모두 선택 속성, 없는 예전 파일도 그대로 읽는다)
+
+| 속성 | 뜻 | 예 |
+|---|---|---|
+| `hours` | 개방시간. 사람이 읽는 글자 그대로 | `"07:00-22:00"`, `"24/7"` |
+| `closed_period` | 폐쇄기간 | `"2026-11-15~2026-11-30"` |
+| `access_condition` | 개방조건 | `"상시개방"`, `"학생증 태깅"`, `"관리실 문의"` |
+| `sync_group` | 층 복사로 묶인 지점들이 함께 갖는 id. 편집기가 같은 건물의 같은 `sync_group` 지점 사이 평지 구간을 층마다 똑같이 유지한다 | `"sg_k7x2qa"` |
+
+- 출입 정보는 안내에 보여 주는 값이다. 길찾기는 읽지 않는다(시간에 따라 막는 일은 `overrides.json`이 한다).
+- `sync_group`은 편집 도구용이다. 길찾기는 읽지 않고, 층 번호도 비교하지 않는다.
+- 건물을 OpenStreetMap에서 가져오면 `source`는 `osm`이다(ODbL, © OpenStreetMap 기여자).
 
 `node_type` 값
 
@@ -187,6 +200,7 @@ data/campuses/hanyang-seoul/
 |---|---|
 | 바깥 길 | 지도를 클릭하며 이어 그리면 지점과 구간이 자동으로 생긴다. 기존 지점 근처(5px)를 클릭하면 그 지점에 붙는다. 종류(평지 / 계단 / 경사로)는 도구 막대에서 고른다 |
 | 건물 | 외곽선을 그리고 이름·코드·층 목록·지면 층을 입력한다 |
+| OSM 건물 가져오기 | 건물 위를 누르면 OpenStreetMap(Overpass)의 외곽선·이름·층수로 건물을 등록한다. `needs_check`가 붙고 되돌릴 수 있다 |
 | 건물 선택 | 건물을 클릭하면 층 선택기가 나온다. 층을 고르면 건물 모드가 된다 |
 | 지점 추가 | 건물 모드에서 종류(출입구 / 문 / 강의실 문 / 복도 / 엘리베이터 / 계단)를 고르고 클릭한다 |
 | 엘리베이터 | 한 번 클릭하고 정차 층을 체크하면, 모든 정차 층에 지점과 구간이 같은 위치에 생긴다 |

@@ -60,6 +60,8 @@ interface Props {
   basemap: BasemapId;
   scope: Scope;
   highlight: ReadonlySet<string>;
+  /** Points 끊긴 지점 찾기 reports: ringed on the map. */
+  broken: ReadonlySet<string>;
   /** Which nodes a click may pick right now (e.g. outdoor points for the second click of 출입구 연결). */
   canPick: (node: EditNode) => boolean;
   routes: RouteLine[];
@@ -108,7 +110,7 @@ interface ActiveDrag {
 }
 
 export function MapView(props: Props) {
-  const { state, scope, tool, outdoorKind, basemap, highlight, routes, focus, limits } = props;
+  const { state, scope, tool, outdoorKind, basemap, highlight, broken, routes, focus, limits } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const drawRef = useRef<TerraDraw | null>(null);
@@ -466,7 +468,7 @@ export function MapView(props: Props) {
     window.addEventListener('blur', onBlur);
 
     map.on('load', () => {
-      map.addSource(DATA_SOURCE, { type: 'geojson', data: toDisplayGeoJSON(latest.current.state, latest.current.scope, latest.current.highlight) });
+      map.addSource(DATA_SOURCE, { type: 'geojson', data: toDisplayGeoJSON(latest.current.state, latest.current.scope, latest.current.highlight, latest.current.broken) });
       map.addSource(ROUTE_SOURCE, { type: 'geojson', data: routesGeoJSON(latest.current.routes) });
       map.addSource(DRAG_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
@@ -546,7 +548,7 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     whenReady((map) => {
-      (map.getSource(DATA_SOURCE) as GeoJSONSource).setData(toDisplayGeoJSON(state, scope, highlight));
+      (map.getSource(DATA_SOURCE) as GeoJSONSource).setData(toDisplayGeoJSON(state, scope, highlight, broken));
       if (clearDragAfterData.current) {
         // The new state is on its way to the main source: drop the temporary one once it has been drawn.
         map.once('idle', () => {
@@ -558,7 +560,7 @@ export function MapView(props: Props) {
         });
       }
     });
-  }, [state, scope, highlight]);
+  }, [state, scope, highlight, broken]);
 
   // Another campus brings its own area: the limits follow campus.json.
   useEffect(() => {

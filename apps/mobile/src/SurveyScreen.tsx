@@ -1,7 +1,7 @@
 // The one screen of the app: the map under a crosshair, the record menu at the thumb, and the sheets that ask the few
 // questions a record needs. Records are plans of core edit actions (survey/plans.ts); the session runs them and keeps what
 // the sensors read (survey/session.ts). This file only wires the pieces and holds what is on screen.
-import { buildingById, metres, surveySource, type EditBuilding, type Position } from '@campo/core';
+import { buildingById, metres, surveySource, type EditBuilding, type EditNode, type Position } from '@campo/core';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -10,7 +10,8 @@ import type { Campus } from './campus.ts';
 import { buildArchive } from './export/archive.ts';
 import { MapCanvas, type MapHandle } from './map/MapCanvas.tsx';
 import { projection } from './map/project.ts';
-import { scopeLabel, type Scope } from './model/scope.ts';
+import { TILE_ATTRIBUTION } from './map/tiles.ts';
+import { pointTitle, scopeLabel, type Scope } from './model/scope.ts';
 import { SURVEY_DIR, clearSnapshot, createSaver, type FileStore } from './storage/store.ts';
 import { planDoor, planFloorChange, planJunction, planPortal, planStart, type Plan, type PlanInput } from './survey/plans.ts';
 import { nextRoomRef } from './survey/readings.ts';
@@ -19,7 +20,7 @@ import { isoLocal } from './time.ts';
 import { ActionDock, type DockAction } from './ui/ActionDock.tsx';
 import { CameraCapture } from './ui/CameraCapture.tsx';
 import { SensorReadout, type SensorValues } from './ui/SensorReadout.tsx';
-import { DoorSheet, ExportSheet, FloorSheet, PortalSheet, ScopeSheet, type FloorTrip } from './ui/sheets.tsx';
+import { DoorSheet, ExportSheet, FloorSheet, PointInfoSheet, PortalSheet, ScopeSheet, type FloorTrip } from './ui/sheets.tsx';
 import type { StepFree } from './ui/stepFree.ts';
 import { TOUCH, color, font, radius, space } from './ui/theme.ts';
 
@@ -33,7 +34,7 @@ interface Props {
   onReset: () => void;
 }
 
-type Sheet = 'door' | 'floor' | 'portal' | 'scope' | 'export' | null;
+type Sheet = 'door' | 'floor' | 'portal' | 'scope' | 'export' | 'info' | null;
 interface Notice {
   text: string;
   tone: 'info' | 'error';
@@ -66,6 +67,9 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   const [stepFree, setStepFree] = useState<StepFree>(null);
   const [trip, setTrip] = useState<Trip | null>(null);
   const [lastRoom, setLastRoom] = useState('');
+  /** The existing point under the crosshair, and the one the 정보 sheet was opened for (the map cannot move while it is open). */
+  const [snappedId, setSnappedId] = useState<string | null>(null);
+  const [infoId, setInfoId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(greeting ? { text: greeting, tone: 'info' } : null);
 
@@ -176,10 +180,22 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   ];
 
   const here = scope.kind === 'building' ? buildingById(state, scope.buildingId) : undefined;
+  const snapped = snappedId !== null ? state.nodes[snappedId] : undefined;
+  const infoNode = infoId !== null ? state.nodes[infoId] : undefined;
+
+  /** 개방시간·폐쇄기간·개방조건, the note and the pictures of the point the crosshair is on. */
+  const saveInfo = (node: EditNode, answer: { access: { hours: string; closed_period: string; access_condition: string }; note: string }): void => {
+    const done = session.annotate(node.id, { ...answer, photos: shots.length }, isoLocal(new Date()));
+    if ('error' in done) return notify(done.error, 'error');
+    void Promise.all(done.paths.map((path, i) => store.importFile(shots[i]!, `${SURVEY_DIR}/${path}`)))
+      .catch((err: Error) => notify(`사진을 저장하지 못했습니다. ${err.message}`, 'error'));
+    notify(`${pointTitle(node)} 정보를 저장했습니다.`);
+    closeSheet();
+  };
 
   return (
     <View style={styles.root}>
-      <MapCanvas state={state} base={session.base} projection={proj} center={campus.center} scope={scope} anchorId={anchorId} handle={map} />
+      <MapCanvas state={state} base={session.base} projection={proj} center={campus.center} scope={scope} anchorId={anchorId} handle={map} onSnap={setSnappedId} />
 
       <View pointerEvents="box-none" style={[styles.top, { paddingTop: insets.top + space.sm }]}>
         <View pointerEvents="box-none" style={styles.topRow}>
@@ -197,12 +213,32 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           </Pressable>
         </View>
         <SensorReadout into={sensors} />
+        <Text style={styles.attribution} accessibilityLabel={`지도 배경 ${TILE_ATTRIBUTION}`}>지도 배경 {TILE_ATTRIBUTION}</Text>
         {notice && (
           <View style={[styles.notice, notice.tone === 'error' && styles.noticeError]} accessibilityLiveRegion="polite" accessibilityRole="alert">
             <Text style={styles.noticeText}>{notice.text}</Text>
           </View>
         )}
       </View>
+
+      {snapped && sheet === null && !camera && (
+        // Just under the crosshair: the point it is on can be filled in without making a record.
+        <View pointerEvents="box-none" style={styles.snapWrap}>
+          <Pressable
+            onPress={() => {
+              setInfoId(snapped.id);
+              setSheet('info');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${pointTitle(snapped)} 정보 입력`}
+            accessibilityHint="개방시간, 폐쇄기간, 개방조건, 메모와 사진을 적습니다"
+            style={({ pressed }) => [styles.snap, pressed && styles.pressed]}
+          >
+            <Text style={styles.snapTitle} numberOfLines={1}>{pointTitle(snapped)}</Text>
+            <Text style={styles.snapHint}>정보 입력</Text>
+          </Pressable>
+        </View>
+      )}
 
       <ActionDock
         actions={actions} open={menuOpen} onToggle={() => setMenuOpen((o) => !o)}
@@ -256,6 +292,16 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           }}
         />
       )}
+      {sheet === 'info' && infoNode && (
+        <PointInfoSheet
+          title={pointTitle(infoNode)}
+          access={infoNode.props}
+          note={session.attachments[infoNode.id]?.note ?? ''}
+          {...photo}
+          onClose={closeSheet}
+          onSave={(answer) => saveInfo(infoNode, answer)}
+        />
+      )}
       {sheet === 'export' && (
         <ExportSheet counts={session.counts()} busy={exporting} onExport={() => void exportData()} onReset={confirmReset} onClose={closeSheet} />
       )}
@@ -291,6 +337,14 @@ const styles = StyleSheet.create({
   scopeHint: { fontSize: font.small, fontWeight: '600', color: color.primary },
   export: { minHeight: TOUCH, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', ...shadow },
   exportLabel: { fontSize: font.body, fontWeight: '800', color: color.onPrimary },
+  attribution: { alignSelf: 'flex-start', paddingHorizontal: space.sm, paddingVertical: 2, borderRadius: radius.sm, backgroundColor: 'rgba(255,255,255,0.8)', fontSize: 11, color: color.inkSoft },
+  snapWrap: { position: 'absolute', left: 0, right: 0, top: '50%', marginTop: 44, alignItems: 'center' },
+  snap: {
+    minHeight: TOUCH, maxWidth: 280, flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.lg,
+    borderRadius: radius.pill, backgroundColor: color.ok, ...shadow,
+  },
+  snapTitle: { flexShrink: 1, fontSize: font.body, fontWeight: '800', color: color.onPrimary },
+  snapHint: { fontSize: font.small, fontWeight: '700', color: color.onPrimary, opacity: 0.9 },
   notice: { padding: space.md, borderRadius: radius.sm, backgroundColor: color.ink, ...shadow },
   noticeError: { backgroundColor: color.danger },
   noticeText: { fontSize: font.body, lineHeight: 22, fontWeight: '600', color: color.onPrimary },

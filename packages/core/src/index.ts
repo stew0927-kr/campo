@@ -4,6 +4,7 @@ import { enablePatches } from 'immer';
 enablePatches();
 
 export * from './types.ts';
+export * from './access.ts';
 export { CAMPUS_META_FILE, CALIBRATION_FILE, OBSERVATIONS_DIR, OVERRIDES_FILE, isCampusFile, parseCampus } from './load.ts';
 export { formatFeatureCollection, formatMeta } from './format.ts';
 export { migrateCampusFiles, type MigrateProblem, type MigrateResult, type MigrateSummary } from './migrate.ts';

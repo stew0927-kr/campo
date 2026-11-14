@@ -1,4 +1,4 @@
-// The right-click menu on the map: edit kind / name / step_free of the selection, copy to other floors, delete.
+// The right-click menu on the map: edit kind / name / step_free of the selection, copy to other floors, 층 연동 취소, delete.
 // It is not modal: Esc, a click anywhere outside, or choosing an item closes it. Every item only asks App for a Plan.
 import { useEffect, useRef, useState } from 'react';
 import type { MenuEdits, MenuFields } from '../model/menu.ts';
@@ -14,8 +14,11 @@ interface Props {
   /** Why 다른 층에 복사 cannot run, or false. */
   copyBlocked: string | false;
   deleteBlocked: string | false;
+  /** How many of the selected points are linked to other floors (sync_group); 층 연동 취소 is offered when there is one. */
+  synced: number;
   onEdit: (edits: MenuEdits) => void;
   onCopy: () => void;
+  onUnsync: () => void;
   onDelete: () => void;
   onClose: () => void;
 }
@@ -26,7 +29,7 @@ const STEP_FREE = [
   { value: 'false', label: '없음 (계단·문턱)' },
 ];
 
-export function ContextMenu({ x, y, summary, fields, copyBlocked, deleteBlocked, onEdit, onCopy, onDelete, onClose }: Props) {
+export function ContextMenu({ x, y, summary, fields, copyBlocked, deleteBlocked, synced, onEdit, onCopy, onUnsync, onDelete, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(fields.nameValue ?? '');
@@ -120,6 +123,8 @@ export function ContextMenu({ x, y, summary, fields, copyBlocked, deleteBlocked,
       )}
       {item('다른 층에 복사…', copyBlocked, onCopy, 'copy')}
       {copyBlocked !== false && <p className="ctx-reason">{copyBlocked}</p>}
+      {synced > 0 && item('층 연동 취소', false, onUnsync, 'unsync')}
+      {synced > 0 && <p className="ctx-reason">지점 {synced}개가 다른 층과 연동되어 있습니다. 취소하면 이 층의 지점만 따로 고칠 수 있습니다.</p>}
       {item('삭제', deleteBlocked, onDelete, 'delete')}
     </div>
   );

@@ -6,10 +6,12 @@ interface Props {
   scope: Scope;
   onPick: (level: number) => void;
   onOutdoor: () => void;
+  /** Broken points per level (끊긴 지점 찾기): shown as a count on the floor's button. */
+  broken?: ReadonlyMap<number, number>;
 }
 
 /** Floor buttons stacked top floor first, like the panel inside a lift. */
-export function FloorPicker({ building, scope, onPick, onOutdoor }: Props) {
+export function FloorPicker({ building, scope, onPick, onOutdoor, broken }: Props) {
   const { name, levels, ground_levels } = building.props;
   const current = scope.kind === 'building' && scope.buildingId === building.id ? scope.level : null;
   return (
@@ -22,11 +24,12 @@ export function FloorPicker({ building, scope, onPick, onOutdoor }: Props) {
               type="button"
               className="floor"
               aria-pressed={current === level}
-              aria-label={`${floorLabel(level)}${ground_levels.includes(level) ? ', 지면과 닿는 층' : ''}`}
+              aria-label={`${floorLabel(level)}${ground_levels.includes(level) ? ', 지면과 닿는 층' : ''}${broken?.get(level) ? `, 끊긴 지점 ${broken.get(level)}개` : ''}`}
               onClick={() => onPick(level)}
             >
               {level < 0 ? `B${-level}` : level}
               {ground_levels.includes(level) && <span className="floor-ground" aria-hidden="true" />}
+              {broken?.get(level) ? <span className="floor-broken" aria-hidden="true">{broken.get(level)}</span> : null}
             </button>
           </li>
         ))}

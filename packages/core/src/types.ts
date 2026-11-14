@@ -82,6 +82,14 @@ export interface NodeProperties extends CommonProperties {
   restroom_gender?: RestroomGender;
   wheelchair?: Wheelchair;
   changing_table?: boolean | null;
+  /** When the point can be passed, e.g. "07:00-22:00", "24/7" (SPEC 4.2). Free text: shown to people, not read by routing. */
+  hours?: string;
+  /** A period it is closed, e.g. "2026-11-15~2026-11-30". */
+  closed_period?: string;
+  /** What it takes to get through, e.g. "상시개방", "학생증 태깅", "관리실 문의". */
+  access_condition?: string;
+  /** Points copied to other floors of one building share this id; the editor keeps the flat edges between them alike (SPEC 4.2). */
+  sync_group?: string;
 }
 
 export const DOOR_ROLES = ['front', 'back', 'other'] as const;

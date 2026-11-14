@@ -27,6 +27,9 @@ interface Props {
   onHelp: () => void;
 }
 
+/** Operations drawn as a small icon: the curved arrows turn left (undo) and right (redo). The name stays in aria-label and the tooltip. */
+const ICON_OPS: Partial<Record<string, string>> = { undo: '↺', redo: '↻' };
+
 export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving, onTool, onOperation, onChange, onSave, onHelp }: Props) {
   const Options = TOOL_OPTIONS[ui.tool];
   return (
@@ -64,14 +67,15 @@ export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving,
                   <button
                     key={o.id}
                     type="button"
-                    className="tool op"
+                    className={`tool op${ICON_OPS[o.id] ? ' op-icon' : ''}`}
                     data-op={o.id}
+                    {...(ICON_OPS[o.id] ? { 'aria-label': o.label } : {})}
                     aria-disabled={blocked !== false}
                     aria-keyshortcuts={o.key?.replace('Ctrl', 'Control')}
                     title={tooltip(o, blocked)}
                     onClick={() => onOperation(o.id)}
                   >
-                    {count ? `${o.label} (${count})` : o.label}
+                    {ICON_OPS[o.id] ?? (count ? `${o.label} (${count})` : o.label)}
                   </button>
                 );
               })}

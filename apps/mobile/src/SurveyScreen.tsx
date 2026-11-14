@@ -540,9 +540,6 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     { id: 'osm', label: 'OSM 건물 가져오기', hint: '십자선 자리의 OSM 건물 가져오기', onPress: addOsmBuilding },
     { id: 'draw', label: '건물 그리기', hint: '외곽선을 점으로 찍어 건물 만들기', onPress: () => setDraft([]) },
     { id: 'copy', label: '층 복사·연동', disabled: !indoor, onPress: needFloor(() => setSheet('copy')) },
-    { id: 'photo', label: '사진·방향', onPress: needPoint((node) => { setInfoId(node.id); setSheet('photos'); }) },
-    { id: 'info', label: '개방 정보', onPress: needPoint((node) => { setInfoId(node.id); setSheet('info'); }) },
-    { id: 'move', label: '옮기기', onPress: needPoint((node) => { setMoving(node.id); notify(`${pointTitle(node)}을(를) 옮길 자리에 십자선을 맞춰 주세요.`); }) },
     { id: 'export', label: '내보내기', onPress: () => setSheet('export') },
     { id: 'settings', label: '설정', onPress: () => setSheet('settings') },
   ];

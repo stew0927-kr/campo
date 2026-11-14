@@ -59,6 +59,7 @@ button, select, input { font: inherit; color: inherit; }
 }
 /* One section per toolbar group (registry.ts TOOLBAR_GROUPS): a caption, then its buttons. Each group has its own accent. */
 .toolbar-section { display: flex; flex-direction: column; gap: 3px; min-width: 0; --group: var(--ink); }
+.tool.op-icon { min-width: 28px; padding-inline: 6px; font-size: 16px; line-height: 1; }
 .toolbar-section[data-group="draw"] { --group: var(--footway); }
 .toolbar-section[data-group="macro"] { --group: var(--elevator); }
 .toolbar-caption { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; }

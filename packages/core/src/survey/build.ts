@@ -1,7 +1,10 @@
 // Edit state -> survey file. The map changes are the same Feature-level diff the editor's changesets use.
 import { changesetId, historyToChangeset } from '../changeset/diff.ts';
 import { findFeature, type EditState } from '../edit/state.ts';
-import { SURVEY_FORMAT, SURVEY_VERSION, type Survey, type SurveyAttachment, type VerticalMeasurement } from './types.ts';
+import type { Observation } from '../types.ts';
+import { SURVEY_FORMAT, SURVEY_VERSION, type Survey, type SurveyAttachment, type SurveyTiming, type VerticalMeasurement } from './types.ts';
+
+const EDGE_TARGET = 'edge:';
 
 /** `source` of Features made or confirmed on site (SPEC 4.1): "field-survey-2026-11" from "2026-11-14…". */
 export function surveySource(isoDate: string): string {
@@ -27,6 +30,8 @@ export interface BuildSurveyInput {
   surveyedAt: string;
   attachments: Readonly<Record<string, SurveyAttachment>>;
   vertical: readonly VerticalMeasurement[];
+  /** Stopwatch times (escalator rides). */
+  timings?: readonly SurveyTiming[];
   /** Korean, one line, for the changeset. */
   summary: string;
 }
@@ -39,6 +44,10 @@ export function buildSurvey(input: BuildSurveyInput): Survey {
   const { base, current, campus, id } = input;
   if (!id.startsWith('sv-')) throw new Error(`buildSurvey: "${id}" is not sv-{yyyymmdd}-{slug}`);
   const changeset = historyToChangeset(base, current, { id: `cs${id.slice(2)}`, campus, source: 'editor', summary: input.summary });
+  const timings = (input.timings ?? []).filter((t) => {
+    const edgeId = timingEdgeId(t);
+    return edgeId !== undefined && edgeId in current.edges;
+  });
   const attachments: Record<string, SurveyAttachment> = {};
   for (const featureId of Object.keys(input.attachments).sort()) {
     if (findFeature(current, featureId)) attachments[featureId] = input.attachments[featureId]!;
@@ -52,7 +61,18 @@ export function buildSurvey(input: BuildSurveyInput): Survey {
     ...(changeset.changes.length > 0 ? { changeset } : {}),
     attachments,
     vertical: input.vertical.filter((v) => v.edge_id in current.edges),
+    ...(timings.length > 0 ? { timings } : {}),
   };
+}
+
+/** The edge id a timing is for ("edge:e_1" → "e_1"), or undefined for another kind of target. */
+export function timingEdgeId(t: Pick<SurveyTiming, 'target'>): string | undefined {
+  return t.target.startsWith(EDGE_TARGET) ? t.target.slice(EDGE_TARGET.length) : undefined;
+}
+
+/** A survey's stopwatch times as observation lines (observations/*.jsonl), all `source: "field"`. */
+export function surveyObservations(survey: Pick<Survey, 'timings'>): Observation[] {
+  return (survey.timings ?? []).map((t) => ({ ...t, source: 'field' as const }));
 }
 
 /** Survey file text: two-space indent, LF, trailing newline. */
@@ -67,6 +87,10 @@ export function surveyPhotoPaths(survey: Survey): string[] {
 
 /** Ids the attachments and measurements point at that `state` (with the changeset applied) does not have. */
 export function surveyDanglingIds(state: EditState, survey: Survey): string[] {
-  const ids = [...Object.keys(survey.attachments), ...survey.vertical.map((v) => v.edge_id)];
+  const ids = [
+    ...Object.keys(survey.attachments),
+    ...survey.vertical.map((v) => v.edge_id),
+    ...(survey.timings ?? []).flatMap((t) => timingEdgeId(t) ?? []),
+  ];
   return [...new Set(ids.filter((id) => !findFeature(state, id)))].sort();
 }

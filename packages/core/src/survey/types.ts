@@ -48,6 +48,20 @@ export interface VerticalMeasurement {
   measured_at: string;
 }
 
+/**
+ * A travel time timed on site with the app's stopwatch (an escalator ride). The same shape as an observations/*.jsonl line
+ * (SPEC-v0.2 3.9) without `source`: everything in a survey file is a field measurement, so it becomes `source: "field"`
+ * (surveyObservations) and the calibration counts it twice.
+ */
+export interface SurveyTiming {
+  /** "edge:<edge id>". */
+  target: string;
+  duration_sec: number;
+  /** Ridden as drawn (default) or against it. */
+  direction?: 'forward' | 'backward';
+  measured_at: string;
+}
+
 export interface Survey {
   format: typeof SURVEY_FORMAT;
   version: typeof SURVEY_VERSION;
@@ -60,4 +74,6 @@ export interface Survey {
   /** By Feature id. */
   attachments: Record<string, SurveyAttachment>;
   vertical: VerticalMeasurement[];
+  /** Stopwatch times; left out when none were taken (older files have none). */
+  timings?: SurveyTiming[];
 }

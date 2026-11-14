@@ -6,8 +6,23 @@ import {
 
 /** A grade is only written for edges at least this long: over a shorter run the barometer's noise (about a metre) is the whole answer. */
 export const MIN_GRADE_LENGTH_M = 5;
-/** A pressure read longer ago than this is not compared with a new one: the weather has moved by then. */
-export const MAX_PRESSURE_AGE_MS = 10 * 60_000;
+/**
+ * Two pressures are compared only when they were read within this time of each other, in the same walk (the readings are
+ * never kept across app starts): over half an hour the weather alone moves the pressure by about a metre's worth.
+ */
+export const MAX_PRESSURE_AGE_MS = 30 * 60_000;
+
+/** Whether a reading taken at `fromIso` may be compared with one taken at `toIso` (in order, within MAX_PRESSURE_AGE_MS). */
+export function withinPressureWindow(fromIso: string, toIso: string): boolean {
+  const age = Date.parse(toIso) - Date.parse(fromIso);
+  return Number.isFinite(age) && age >= 0 && age <= MAX_PRESSURE_AGE_MS;
+}
+
+/** The height (m) from `reference` up to `hpa` read at `nowIso`, or null when the reference is missing or too old. */
+export function relativeHeight(reference: PressureReading | null, hpa: number | null, nowIso: string): number | null {
+  if (!reference || hpa === null || !withinPressureWindow(reference.at, nowIso)) return null;
+  return heightFromPressure(reference.hpa, hpa);
+}
 
 const round = (value: number, digits: number): number => {
   const f = 10 ** digits;
@@ -34,9 +49,7 @@ export interface PressureReading {
 
 /** The reading's pressure, when it was read recently enough to compare with one read at `nowIso`. */
 export function recentPressure(reading: PressureReading | null, nowIso: string): number | null {
-  if (!reading) return null;
-  const age = Date.parse(nowIso) - Date.parse(reading.at);
-  return age >= 0 && age <= MAX_PRESSURE_AGE_MS ? reading.hpa : null;
+  return reading && withinPressureWindow(reading.at, nowIso) ? reading.hpa : null;
 }
 
 export interface WalkedEdge {

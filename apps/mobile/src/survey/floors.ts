@@ -136,14 +136,15 @@ export function floorCopyTargets(state: EditState, buildingId: string, level: nu
  * Copy the points and flat corridors of one floor (stair landings and elevator stops included) onto other floors of the
  * building, same coordinates. A point of the same kind within MAGNET_M on the target floor is reused (an elevator stop: the
  * elevator's own stop there), and a reused or new copy joins the source's sync group (a new group is made for a source that
- * has none). Entrances and the links between floors (stairs, rides, belts, bridges, portals) are not copied.
+ * has none). Entrances and the links between floors (stairs, rides, belts, bridges, portals) are not copied. With `only`,
+ * just those points of the floor and the flat corridors between them are copied (선택 → 다른 층에 복사).
  */
-export function planCopyFloor(state: EditState, ctx: EditContext, buildingId: string, level: number, targets: readonly number[]): FloorCopyPlan | { error: string } {
+export function planCopyFloor(state: EditState, ctx: EditContext, buildingId: string, level: number, targets: readonly number[], only?: ReadonlySet<string>): FloorCopyPlan | { error: string } {
   const b = buildingById(state, buildingId);
   if (!b) return { error: '건물 안의 층에서만 복사할 수 있습니다.' };
   const tos = [...new Set(targets)].filter((t) => t !== level && b.props.levels.includes(t));
   if (tos.length === 0) return { error: '복사할 다른 층을 골라 주세요.' };
-  const source = Object.values(state.nodes).filter((n) => n.props.building_id === buildingId && n.props.level === level && n.props.node_type !== 'entrance');
+  const source = Object.values(state.nodes).filter((n) => n.props.building_id === buildingId && n.props.level === level && n.props.node_type !== 'entrance' && (only === undefined || only.has(n.id)));
   if (source.length === 0) return { error: `${floorLabel(level)}에 복사할 지점이 없습니다.` };
   const ids = new Set(source.map((n) => n.id));
   const flat = Object.values(state.edges).filter((e) => ids.has(e.props.from) && ids.has(e.props.to) && isFlatIndoor(state, e));
@@ -197,7 +198,8 @@ export function planCopyFloor(state: EditState, ctx: EditContext, buildingId: st
     }
   }
   // The nodes were added by the builder's steps; keep the group setProps before them, then the additions in order.
-  const action = compose([...steps, ...bld.steps], `${floorLabel(level)}을(를) ${tos.length}개 층에 복사`);
+  const what = only === undefined ? floorLabel(level) : `선택한 지점 ${source.length}개`;
+  const action = compose([...steps, ...bld.steps], `${what}을(를) ${tos.length}개 층에 복사`);
   const notices = [`지점 ${summary.nodesCreated}개 만듦, ${summary.nodesReused}개 재사용, 구간 ${summary.edgesCreated}개 만듦.`];
   if (summary.landingsCreated > 0) notices.push(`계단참 ${summary.landingsCreated}개를 새로 만들었습니다. 계단 구간은 [계단/EV 층 변경]으로 이어 주세요.`);
   if (summary.stopsCreated > 0) notices.push(`엘리베이터 정차 지점 ${summary.stopsCreated}개를 새로 만들었습니다. 엘리베이터 구간은 [계단/EV 층 변경]으로 이어 주세요.`);

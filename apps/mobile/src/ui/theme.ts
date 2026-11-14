@@ -28,6 +28,7 @@ export const color = {
   edgeFaint: '#C3C9D1',
   node: '#3D4A5C',
   made: '#E8590C',
+  escalator: '#7048E8',
   anchor: '#0B5FFF',
 } as const;
 

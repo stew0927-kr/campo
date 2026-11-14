@@ -2,7 +2,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyChangeset, createHistory, createIdGen, setProps, surveyDanglingIds, validateSurvey, type EditState, type LoadedCampus } from '@campo/core';
 import { OUTDOOR } from '../src/model/scope.ts';
-import { planDoor, planFloorChange, planJunction, planPortal, planStart, type Plan, type PlanOk } from '../src/survey/plans.ts';
+import { planDoor, planFloorChange, planLink, planPortal, planStart, type Plan, type PlanOk } from '../src/survey/plans.ts';
 import { SurveySession } from '../src/survey/session.ts';
 import { AT, CAMPUS, SOURCE, campusErrors, fixture } from './helpers.ts';
 
@@ -23,10 +23,10 @@ const at = (s: SurveySession, coord: [number, number]) => ({ state: s.state, ctx
 /** Outside → into building B on floor 1 → a door → up new stairs to floor 2. Returns the ids the walk made. */
 function walk(s: SurveySession) {
   s.run(ok(planStart(at(s, [127.00105, 37.00052]))));
-  s.run(ok(planJunction(at(s, [127.00108, 37.00056]), { stepFree: true })));
+  s.run(ok(planLink(at(s, [127.00108, 37.00056]), { stepFree: true })));
   const portal = ok(planPortal(at(s, [127.0011, 37.00056]), { buildingId: 'bldg_B', level: 1, stepFree: true }));
   s.run(portal);
-  s.run(ok(planJunction(at(s, [127.00118, 37.00054]))));
+  s.run(ok(planLink(at(s, [127.00118, 37.00054]))));
   const door = ok(planDoor(at(s, [127.0012, 37.00058]), { roomRef: '101', doorRole: 'front' }));
   s.run(door);
   const stairs = ok(planFloorChange(at(s, [127.00122, 37.00053]), { kind: 'stairs', toLevel: 2, incline: 'up' }));
@@ -62,7 +62,7 @@ describe('SurveySession', () => {
   it('a record that only walks onto existing data is undone without touching the map', () => {
     const s = newSession();
     s.run(ok(planStart(at(s, [127.0002, 37.0004])))); // n_out_0002, nothing made
-    s.run(ok(planJunction(at(s, [127.00025, 37.00045]))));
+    s.run(ok(planLink(at(s, [127.00025, 37.00045]))));
     const made = s.state;
     s.moveTo({ kind: 'building', buildingId: 'bldg_A', level: 1 });
     expect(s.anchorId).toBeNull();
@@ -128,7 +128,7 @@ describe('SurveySession', () => {
     expect(r.canUndo).toBe(false);
 
     // more records after the restart still export against the bundled campus
-    r.run(ok(planJunction(at(r, [127.00128, 37.00056]))));
+    r.run(ok(planLink(at(r, [127.00128, 37.00056]))));
     const survey = r.toSurvey('b', AT);
     expect(createHistory(base).perform(applyChangeset(survey.changeset!))).toEqual(r.state);
     r.undo();
@@ -160,7 +160,7 @@ describe('SurveySession', () => {
     s.attach(s.anchorId!, { pressure_hpa: 1012 }, AT);
     expect(s.snapshot().changeset!.changes).toBe(first.changes);
     expect(s.toSurvey('b', AT).changeset!.changes).toEqual(first.changes);
-    s.run(ok(planJunction(at(s, [127.00108, 37.00056]))));
+    s.run(ok(planLink(at(s, [127.00108, 37.00056]))));
     expect(s.snapshot().changeset!.changes.length).toBeGreaterThan(first.changes.length);
   });
 
@@ -175,7 +175,7 @@ describe('SurveySession', () => {
       expect(s.vertical).toEqual([]);
 
       // along the existing ramp to n_out_0005: the stretch that is already drawn gets the measurement
-      const ramp = ok(planJunction(at(s, s.state.nodes['n_out_0005']!.coord)));
+      const ramp = ok(planLink(at(s, s.state.nodes['n_out_0005']!.coord)));
       expect(s.record(ramp, { ...readings(2, 1012.02), photos: 2 })).toEqual(['photos/n_out_0005-1.jpg', 'photos/n_out_0005-2.jpg']);
       expect(s.vertical).toHaveLength(1);
       expect(s.vertical[0]).toMatchObject({ edge_id: 'e_out_0004__out_0005', pressure_start_hpa: 1012.5, pressure_end_hpa: 1012.02 });
@@ -189,7 +189,7 @@ describe('SurveySession', () => {
       const before = { attachments: s.attachments, vertical: s.vertical };
       let calls = 0;
       s.subscribe(() => calls++);
-      s.record(ok(planJunction(at(s, s.state.nodes['n_out_0005']!.coord))), { ...readings(2, 1012.02), photos: 1 });
+      s.record(ok(planLink(at(s, s.state.nodes['n_out_0005']!.coord))), { ...readings(2, 1012.02), photos: 1 });
       expect(calls).toBe(1);
       s.undo();
       expect(s.attachments).toBe(before.attachments);
@@ -200,11 +200,11 @@ describe('SurveySession', () => {
     it('no height when the pressure at the point before is old, missing, or the walk was moved by hand', () => {
       const s = newSession();
       s.record(ok(planStart(at(s, [126.9998, 37.0008]))), readings(0, 1012.5));
-      s.record(ok(planJunction(at(s, s.state.nodes['n_out_0005']!.coord))), readings(30, 1012.0)); // half an hour later
+      s.record(ok(planLink(at(s, s.state.nodes['n_out_0005']!.coord))), readings(31, 1012.0)); // more than half an hour later
       expect(s.vertical).toEqual([]);
       // a record without a barometer reading leaves nothing to compare the next one with, however fresh the attachment looks
-      s.record(ok(planJunction(at(s, s.state.nodes['n_out_0003']!.coord))), readings(31, null));
-      s.record(ok(planJunction(at(s, s.state.nodes['n_out_0005']!.coord))), readings(32, 1011.5));
+      s.record(ok(planLink(at(s, s.state.nodes['n_out_0003']!.coord))), readings(31, null));
+      s.record(ok(planLink(at(s, s.state.nodes['n_out_0005']!.coord))), readings(32, 1011.5));
       expect(s.vertical).toEqual([]);
       s.moveTo(OUTDOOR);
       s.record(ok(planStart(at(s, s.state.nodes['n_out_0005']!.coord))), readings(33, 1011.5));
@@ -256,7 +256,7 @@ describe('SurveySession', () => {
   it('refuses a snapshot of another campus, and one whose changes no longer fit the bundled data', () => {
     const s = newSession();
     s.run(ok(planStart(at(s, [127.0002, 37.0004]))));
-    s.run(ok(planJunction(at(s, [127.00025, 37.00045]))));
+    s.run(ok(planLink(at(s, [127.00025, 37.00045]))));
     // The walk now also changes an existing Feature, so a newer bundled campus can disagree with it.
     const edited = createHistory(base).perform(setProps(['n_out_0002'], { name: '바뀐 이름' }));
     const init = { campus: CAMPUS, base, ids: createIdGen(1) };

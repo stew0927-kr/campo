@@ -1,4 +1,4 @@
-// The five record buttons (docs/mobile/SPEC-mobile.md 2) as plans of core edit actions. A plan is one history entry
+// The record buttons (docs/mobile/SPEC-mobile.md 2) as plans of core edit actions. A plan is one history entry
 // (compose), so one 되돌리기 takes a whole record back. Nothing here compares floor numbers to decide what connects:
 // a floor change joins exactly the two floors the surveyor walked between.
 import {
@@ -25,6 +25,8 @@ import {
   type NodeProperties,
   type NodeType,
   type Position,
+  type RestroomGender,
+  type Wheelchair,
 } from '@campo/core';
 import { OUTDOOR, floorLabel, nodeInScope, sameScope, scopeOfNode, scopeProps, type Scope } from '../model/scope.ts';
 
@@ -61,7 +63,7 @@ export interface PlanOk {
   /** The Feature that photos and readings of this record belong to. */
   featureId: string;
   /**
-   * The edge just walked (갈림길: the new stretch; 계단/EV: the edge between the two floors), for the barometer measurement,
+   * The edge just walked (잇기: the new stretch; 에스컬레이터: the belt ridden; 계단/EV: the edge between the two floors), for the barometer measurement,
    * and whether it runs against the walk (an existing edge drawn the other way). Left out when no single edge is the walk:
    * the first point of a walk, or an elevator ride between two stops joined through other stops.
    */
@@ -177,33 +179,178 @@ export function planStart(input: PlanInput): Plan {
   return { action: b.action('출발점 지정'), anchorId: id, scope, featureId: id, notices: [] };
 }
 
-// ---- 갈림길 기록 ----
+// ---- 잇기 · 외부 길 ----
 
-export interface JunctionOptions {
+/** What the stretch is: level ground, steps or a ramp. Indoors only level ground (a corridor) and ramps are linked here. */
+export type PathKind = 'flat' | 'steps' | 'ramp';
+
+export interface LinkOptions {
   /** true only when the surveyor saw no step or sill on the stretch just walked; null when not looked at. */
   stepFree: boolean | null;
+  /** Default 'flat'. */
+  kind?: PathKind;
 }
 
-/** A point at the crosshair, joined to the point recorded before it. */
-export function planJunction(input: PlanInput, opts: JunctionOptions = { stepFree: null }): Plan {
+/** A stretch between two points of one scope, of `kind`. */
+function pathEdge(scope: Scope, from: string, to: string, kind: PathKind, stepFree: boolean | null, source: string): EdgeProps {
+  if (kind === 'flat') return walkEdge(scope, from, to, stepFree, source);
+  const edgeType = scope.kind === 'outdoor' ? 'outdoor' : 'indoor';
+  if (kind === 'ramp') return { kind: 'edge', highway: 'ramp', edge_type: edgeType, from, to, bidirectional: true, step_free: stepFree, source };
+  return { kind: 'edge', highway: 'steps', edge_type: 'outdoor', from, to, bidirectional: true, step_free: false, source };
+}
+
+/** Node types that hang on a corridor and may be recorded before it (the editor's 작업 순서와 상관없이 잇기). */
+export const ATTACHABLE_TYPES: readonly NodeType[] = ['door', 'restroom', 'elevator_stop'];
+
+/** Points of a floor that have no way to walk to yet: only elevator edges (or none) at them. */
+export function unattachedOnFloor(state: EditState, buildingId: string, level: number): EditNode[] {
+  const walked = new Set<string>();
+  for (const e of Object.values(state.edges)) {
+    if (e.props.highway === 'elevator') continue;
+    walked.add(e.props.from);
+    walked.add(e.props.to);
+  }
+  return Object.values(state.nodes)
+    .filter((n) => ATTACHABLE_TYPES.includes(n.props.node_type) && n.props.building_id === buildingId && n.props.level === level && !walked.has(n.id))
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+/**
+ * Attach every waiting point of the floor that a corridor edge of `edgeIds` reaches, after `state`. Returns the actions
+ * (to run after the ones that made `state`) and the points attached. The pieces a split leaves join the set, as in the editor.
+ */
+export function attachWaiting(state: EditState, ctx: EditContext, scope: Extract<Scope, { kind: 'building' }>, edgeIds: readonly string[], source: string): { actions: Action[]; attached: string[] } {
+  const allowed = new Set(edgeIds);
+  const actions: Action[] = [];
+  const attached: string[] = [];
+  let s = state;
+  for (const n of unattachedOnFloor(state, scope.buildingId, scope.level)) {
+    const pv = previewAttachDoor(s, n.coord, { building_id: scope.buildingId, level: scope.level, edgeIds: allowed });
+    if (!pv.ok) continue;
+    const action = attachDoorAction(n.id, { source, edgeIds: new Set(allowed) }, ctx);
+    if (action.disabled(s) !== false) continue;
+    const next = action.apply(s);
+    for (const id of Object.keys(next.edges)) if (!(id in s.edges)) allowed.add(id);
+    s = next;
+    actions.push(action);
+    attached.push(n.id);
+  }
+  return { actions, attached };
+}
+
+/**
+ * 잇기 (and 외부 길 outdoors): a point at the crosshair — the existing one there, or a new one — joined to the point the
+ * chain is at (the walk's last point). With no point yet it only puts down the first one. A new corridor also picks
+ * up the doors, restrooms and elevator stops of the floor that were waiting for one, in the same history entry.
+ */
+export function planLink(input: PlanInput, opts: LinkOptions = { stepFree: null }): Plan {
   const { state, ctx, scope, coord, source } = input;
+  const kind = opts.kind ?? 'flat';
+  if (scope.kind === 'building' && kind === 'steps') return { error: '건물 안의 계단은 [계단/EV]로 층 사이를 기록해 주세요.' };
   const anchor = anchorIn(input, scope);
   if (anchor && 'error' in anchor) return anchor;
   const near = nearestNode(state, scope, coord, SNAP_M);
-  if (near && anchor && near.id === anchor.id) return { error: '직전 지점과 같은 자리입니다. 지도를 옮긴 뒤 기록해 주세요.' };
+  if (near && anchor && near.id === anchor.id) return { error: '시작 지점과 같은 자리입니다. 이을 지점으로 지도를 옮겨 주세요.' };
 
   const b = builder(state, ctx);
   const id = near?.id ?? b.node(coord, walkNode(scope, source));
   // The stretch from the point before: the edge that is already there, or a new one.
   const existing = anchor ? edgeBetween(state, anchor.id, id) : undefined;
-  const edgeId = existing?.id ?? (anchor ? b.edge(walkEdge(scope, anchor.id, id, opts.stepFree, source)) : undefined);
+  const edgeId = existing?.id ?? (anchor ? b.edge(pathEdge(scope, anchor.id, id, kind, opts.stepFree, source)) : undefined);
+  const notices: string[] = [];
+  if (!anchor) notices.push(near ? '이 지점에서 잇기 시작합니다.' : '시작 지점을 찍었습니다. 이을 곳에 십자선을 맞추고 다시 눌러 주세요.');
+  else if (existing) notices.push('이미 이어진 두 지점입니다. 다음 지점으로 이어 가세요.');
+  else if (near) notices.push('이미 있는 지점에 이었습니다.');
+
+  const what = scope.kind === 'outdoor' ? (kind === 'steps' ? '바깥 계단' : kind === 'ramp' ? '바깥 경사로' : '외부 길') : kind === 'ramp' ? '경사로' : '복도';
+  let action = b.action(anchor && !existing ? `${what} 잇기` : '지점 기록');
+  if (action && scope.kind === 'building' && kind === 'flat' && edgeId !== undefined && !existing) {
+    const waiting = attachWaiting(action.apply(state), ctx, scope, [edgeId], source);
+    if (waiting.actions.length > 0) {
+      action = compose([action, ...waiting.actions], `${what} 잇기, 지점 ${waiting.actions.length}개 연결`);
+      notices.push(`기다리던 문·화장실·엘리베이터 ${waiting.actions.length}개를 이 복도에 이었습니다.`);
+    }
+  }
   return {
-    action: b.action('갈림길 기록'),
+    action,
     anchorId: id,
     scope,
     featureId: id,
     ...(edgeId !== undefined ? { edgeId, edgeReversed: existing !== undefined && existing.props.from !== anchor?.id } : {}),
-    notices: near ? ['이미 있는 지점에 이었습니다.'] : [],
+    notices,
+  };
+}
+
+// ---- 에스컬레이터 ----
+
+/** One belt that runs the way it was ridden, the up and down pair side by side, or one that changes direction. */
+export type BeltKind = 'one' | 'pair' | 'reversible';
+
+export interface EscalatorOptions {
+  /** Where the ride ended: the crosshair on arriving, and the floor (or the outdoors) arrived on. */
+  arrive: { coord: Position; scope: Scope };
+  /** Whether the ride went up (the surveyor says so, or the barometer does). */
+  rodeUp: boolean;
+  belt: BeltKind;
+}
+
+const isWalkPoint = (n: EditNode): boolean => n.props.node_type === 'corridor' || n.props.node_type === 'outdoor';
+
+/**
+ * An escalator from where the ride began (the input's coord and scope) to where it ended: a walk point at each end (an
+ * existing one within SNAP_M, else a new one) and a steps edge with `conveying`, drawn from the lower end to the upper
+ * one (SPEC-v0.2 2.7). Which end is lower is what the surveyor rode, not a comparison of floor numbers.
+ */
+export function planEscalator(input: PlanInput, opts: EscalatorOptions): Plan {
+  const { state, ctx, scope, coord, source } = input;
+  const to = opts.arrive.scope;
+  if ((scope.kind === 'outdoor') !== (to.kind === 'outdoor')) return { error: '바깥과 건물 안은 에스컬레이터로 잇지 않습니다. 출입구로 기록해 주세요.' };
+  if (scope.kind === 'building' && to.kind === 'building') {
+    if (scope.buildingId !== to.buildingId) return { error: '에스컬레이터는 한 건물 안에서만 기록합니다.' };
+    if (scope.level === to.level) return { error: '도착한 층을 골라 주세요. 같은 층끼리는 [잇기]로 이어 주세요.' };
+    if (!buildingById(state, to.buildingId)?.props.levels.includes(to.level)) return { error: '이 건물의 층 목록에 없는 층입니다.' };
+  }
+  const anchor = anchorIn(input, scope);
+  if (anchor && 'error' in anchor) return anchor;
+
+  const b = builder(state, ctx);
+  const startId = nearestNode(state, scope, coord, SNAP_M, isWalkPoint)?.id ?? b.node(coord, walkNode(scope, source));
+  const endId = nearestNode(state, to, opts.arrive.coord, SNAP_M, isWalkPoint)?.id ?? b.node(opts.arrive.coord, walkNode(to, source));
+  if (startId === endId) return { error: '탄 곳과 내린 곳이 같은 지점입니다. 내린 자리에 십자선을 맞춰 주세요.' };
+
+  const [lower, upper] = opts.rodeUp ? [startId, endId] : [endId, startId];
+  const [lowerScope, upperScope] = opts.rodeUp ? [scope, to] : [to, scope];
+  const levels = lowerScope.kind === 'building' && upperScope.kind === 'building' ? { level_from: lowerScope.level, level_to: upperScope.level } : {};
+  const belt = (conveying: 'forward' | 'backward' | 'reversible'): EdgeProps => ({
+    kind: 'edge', highway: 'steps', edge_type: scope.kind === 'outdoor' ? 'outdoor' : 'indoor', from: lower, to: upper,
+    bidirectional: conveying === 'reversible', step_free: false, conveying, ...levels, source,
+  });
+  const already = Object.values(state.edges).filter((e) => e.props.conveying !== undefined
+    && ((e.props.from === lower && e.props.to === upper) || (e.props.from === upper && e.props.to === lower)));
+
+  // The belt the surveyor rode: up = forward (lower → upper as drawn), down = backward.
+  let rideId: string | undefined;
+  if (already.length > 0) {
+    // A belt carries the surveyor from start to end when it runs along its drawing that way, or against it the other way.
+    rideId = already.find((e) => e.props.conveying === 'reversible' || e.props.conveying === (e.props.from === startId ? 'forward' : 'backward'))?.id;
+  } else if (opts.belt === 'reversible') {
+    rideId = b.edge(belt('reversible'));
+  } else {
+    const up = opts.belt === 'pair' || opts.rodeUp ? b.edge(belt('forward')) : undefined;
+    const down = opts.belt === 'pair' || !opts.rodeUp ? b.edge(belt('backward')) : undefined;
+    rideId = opts.rodeUp ? up : down;
+  }
+  if (anchor && anchor.id !== startId && !edgeBetween(state, anchor.id, startId)) b.edge(walkEdge(scope, anchor.id, startId, null, source));
+
+  const where = to.kind === 'building' && scope.kind === 'building' ? ` ${floorLabel(scope.level)} → ${floorLabel(to.level)}` : '';
+  const ridden = rideId !== undefined ? state.edges[rideId] : undefined;
+  return {
+    action: b.action(`에스컬레이터${where} 기록`),
+    anchorId: endId,
+    scope: to,
+    featureId: startId,
+    ...(rideId !== undefined ? { edgeId: rideId, edgeReversed: ridden ? ridden.props.from !== startId : !opts.rodeUp } : {}),
+    notices: already.length > 0 ? ['이미 있는 에스컬레이터를 따라 이동했습니다.'] : [],
   };
 }
 
@@ -231,6 +378,31 @@ export function planDoor(input: PlanInput, opts: DoorOptions): Plan {
   if (corridor.ok) b.steps.push(() => attachDoorAction(id, { source }, ctx));
   else notices.push(NOT_CONNECTED_NOTICE);
   return { action: b.action(roomRef !== '' ? `${roomRef}호 문 기록` : '문 기록'), anchorId: input.anchorId ?? id, scope, featureId: id, notices };
+}
+
+// ---- 화장실 ----
+
+export interface RestroomOptions {
+  gender: RestroomGender;
+  /** 'unknown' until it was checked on site (the schema requires a value). */
+  wheelchair: Wheelchair;
+  /** null: not looked at. */
+  changingTable: boolean | null;
+}
+
+/** A restroom point at the crosshair, joined to the nearest corridor when there is one (the editor's compose([addNode, attachDoorAction])). */
+export function planRestroom(input: PlanInput, opts: RestroomOptions): Plan {
+  const { state, ctx, scope, coord, source } = input;
+  if (scope.kind !== 'building') return { error: '화장실은 건물 안에서 기록합니다. 위쪽에서 건물과 층을 먼저 골라 주세요.' };
+  const b = builder(state, ctx);
+  const id = b.node(coord, {
+    kind: 'node', node_type: 'restroom', building_id: scope.buildingId, level: scope.level,
+    restroom_gender: opts.gender, wheelchair: opts.wheelchair, changing_table: opts.changingTable, source,
+  });
+  const notices: string[] = [];
+  if (previewAttachDoor(state, coord, { building_id: scope.buildingId, level: scope.level }).ok) b.steps.push(() => attachDoorAction(id, { source }, ctx));
+  else notices.push(NOT_CONNECTED_NOTICE);
+  return { action: b.action(`화장실 기록(${floorLabel(scope.level)})`), anchorId: input.anchorId ?? id, scope, featureId: id, notices };
 }
 
 // ---- 계단/EV 층 변경 ----

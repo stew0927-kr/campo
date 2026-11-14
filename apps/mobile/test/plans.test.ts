@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { checkInvariants, createHistory, edgesAt, type EditState, type LoadedCampus, type Position } from '@campo/core';
 import { OUTDOOR, type Scope } from '../src/model/scope.ts';
 import {
-  NOT_CONNECTED_NOTICE, planDoor, planFloorChange, planJunction, planPortal, planStart, type Plan, type PlanInput, type PlanOk,
+  NOT_CONNECTED_NOTICE, planDoor, planFloorChange, planLink, planPortal, planStart, type Plan, type PlanInput, type PlanOk,
 } from '../src/survey/plans.ts';
 import { SOURCE, campusErrors, ctx, fixture } from './helpers.ts';
 
@@ -57,9 +57,9 @@ describe('출발점 지정', () => {
   });
 });
 
-describe('갈림길 기록', () => {
+describe('잇기', () => {
   it('adds a point and joins it to the point recorded before', () => {
-    const plan = ok(planJunction(input(OUTDOOR, [126.9997, 37.0006], 'n_out_0004'), { stepFree: true }));
+    const plan = ok(planLink(input(OUTDOOR, [126.9997, 37.0006], 'n_out_0004'), { stepFree: true }));
     const after = run(plan);
     const [edgeId] = added(after, 'edges');
     expect(after.edges[edgeId!]!.props).toMatchObject({
@@ -68,27 +68,27 @@ describe('갈림길 기록', () => {
   });
 
   it('indoors the stretch is a corridor of that floor, with step_free not known unless it was looked at', () => {
-    const plan = ok(planJunction(input(floor('bldg_B', 2), [127.00135, 37.00055], 'n_B_2_hall')));
+    const plan = ok(planLink(input(floor('bldg_B', 2), [127.00135, 37.00055], 'n_B_2_hall')));
     const after = run(plan);
     expect(after.nodes[plan.anchorId]!.props).toMatchObject({ node_type: 'corridor', building_id: 'bldg_B', level: 2 });
     expect(after.edges[added(after, 'edges')[0]!]!.props).toMatchObject({ highway: 'corridor', edge_type: 'indoor', step_free: null });
   });
 
   it('joins onto an existing point, and adds no second edge where one is already there', () => {
-    const joined = ok(planJunction(input(OUTDOOR, [127.0003, 37.0007], 'n_out_0004')));
+    const joined = ok(planLink(input(OUTDOOR, [127.0003, 37.0007], 'n_out_0004')));
     expect(joined.anchorId).toBe('n_out_0003');
     expect(added(run(joined), 'nodes')).toEqual([]);
     expect(added(run(joined), 'edges')).toHaveLength(1);
 
-    const walked = ok(planJunction(input(OUTDOOR, [127.0002, 37.0004], 'n_out_0004')));
+    const walked = ok(planLink(input(OUTDOOR, [127.0002, 37.0004], 'n_out_0004')));
     expect(walked.action).toBeNull();
     expect(walked.anchorId).toBe('n_out_0002');
   });
 
   it('refuses the same spot twice, and a previous point on another floor', () => {
-    expect(errorOf(planJunction(input(OUTDOOR, [127.0002, 37.0004], 'n_out_0002')))).toContain('같은 자리');
-    expect(errorOf(planJunction(input(floor('bldg_A', 2), [127.0005, 37.0005], 'n_A_1_hall')))).toContain('다른 층');
-    expect(errorOf(planJunction(input(OUTDOOR, [127.0003, 37.0004], 'n_A_1_main')))).toContain('포탈');
+    expect(errorOf(planLink(input(OUTDOOR, [127.0002, 37.0004], 'n_out_0002')))).toContain('같은 자리');
+    expect(errorOf(planLink(input(floor('bldg_A', 2), [127.0005, 37.0005], 'n_A_1_hall')))).toContain('다른 층');
+    expect(errorOf(planLink(input(OUTDOOR, [127.0003, 37.0004], 'n_A_1_main')))).toContain('포탈');
   });
 });
 

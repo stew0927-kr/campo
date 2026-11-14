@@ -32,6 +32,13 @@
           "motionPermission": "층 사이 높이를 재기 위해 기압계를 사용합니다."
         }
       ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "휴대폰을 기울여도 정확한 나침반 방향을 읽기 위해 위치 권한을 사용합니다. 위치(좌표)는 읽거나 저장하지 않습니다.",
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
       "expo-sharing"
     ]
   }

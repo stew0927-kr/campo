@@ -1,5 +1,5 @@
 // The bottom sheets of the record buttons. They only collect answers; SurveyScreen turns the answers into plans.
-import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, heightFromPressure, type AccessInfo, type AccessProp, type DoorRole, type EditBuilding } from '@campo/core';
+import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, heightFromPressure, type AccessInfo, type AccessProp, type DoorRole, type EditBuilding, type RestroomGender, type Wheelchair } from '@campo/core';
 import { createContext, useContext, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { defaultLevel, floorLabel, type Scope } from '../model/scope.ts';
@@ -268,12 +268,14 @@ export function ScopeSheet({ scope, buildings, onPick, onClose }: ScopeSheetProp
 interface PointInfoSheetProps {
   /** "문 101호", "출입구 A동 1층 출입구". */
   title: string;
+  /** The edges at the point that can have a sill (not steps): how many, and what they say when they agree. Left out when there are none. */
+  sill?: { count: number; value: StepFree | undefined };
   /** What the point says now. */
   access: AccessInfo;
   note: string;
   photos: number;
   onPhoto: () => void;
-  onSave: (answer: { access: Required<AccessInfo>; note: string }) => void;
+  onSave: (answer: { access: Required<AccessInfo>; note: string; stepFree?: StepFree }) => void;
   onClose: () => void;
 }
 
@@ -304,7 +306,8 @@ function AccessInput({ name, value, onChange }: { name: AccessProp; value: strin
   );
 }
 
-export function PointInfoSheet({ title, access, note, photos, onPhoto, onSave, onClose }: PointInfoSheetProps) {
+export function PointInfoSheet({ title, sill, access, note, photos, onPhoto, onSave, onClose }: PointInfoSheetProps) {
+  const [stepFree, setStepFree] = useState<StepFree | undefined>(sill?.value);
   const [values, setValues] = useState<Required<AccessInfo>>({ hours: access.hours ?? '', closed_period: access.closed_period ?? '', access_condition: access.access_condition ?? '' });
   const [memo, setMemo] = useState(note);
   return (
@@ -323,8 +326,48 @@ export function PointInfoSheet({ title, access, note, photos, onPhoto, onSave, o
         multiline
         style={[styles.input, styles.inputTall]}
       />
+      {sill && (
+        <>
+          <FieldLabel>이 지점에 닿는 길의 문턱·턱 (구간 {sill.count}개)</FieldLabel>
+          <Choice label="문턱" value={stepFree} onChange={setStepFree} options={STEP_FREE_CHOICES} />
+        </>
+      )}
       <PhotoRow count={photos} onPhoto={onPhoto} />
-      <BigButton label="이 지점에 저장" onPress={() => onSave({ access: values, note: memo })} style={styles.gapTop} />
+      <BigButton label="이 지점에 저장" onPress={() => onSave({ access: values, note: memo, ...(stepFree !== undefined && stepFree !== sill?.value ? { stepFree } : {}) })} style={styles.gapTop} />
+    </BottomSheet>
+  );
+}
+
+// ---- 화장실 ----
+
+export interface RestroomAnswer {
+  gender: RestroomGender;
+  wheelchair: Wheelchair;
+  changingTable: boolean | null;
+}
+
+interface RestroomSheetProps {
+  photos: number;
+  onPhoto: () => void;
+  onRecord: (answer: RestroomAnswer) => void;
+  onClose: () => void;
+}
+
+export function RestroomSheet({ photos, onPhoto, onRecord, onClose }: RestroomSheetProps) {
+  const [gender, setGender] = useState<RestroomGender | undefined>(undefined);
+  const [wheelchair, setWheelchair] = useState<Wheelchair>('unknown');
+  const [changingTable, setChangingTable] = useState<boolean | null>(null);
+  return (
+    <BottomSheet title="화장실" onClose={onClose}>
+      <Text style={styles.lead}>화장실 입구에 십자선을 맞춰 주세요. 가까운 복도에 이어집니다.</Text>
+      <FieldLabel>누구를 위한 화장실인가요?</FieldLabel>
+      <Choice label="화장실 종류" value={gender} onChange={setGender} options={[{ value: 'male', label: '남자' }, { value: 'female', label: '여자' }, { value: 'unisex', label: '성별 구분 없음' }, { value: 'family', label: '가족' }]} />
+      <FieldLabel>휠체어로 쓸 수 있나요?</FieldLabel>
+      <Choice label="휠체어" value={wheelchair} onChange={setWheelchair} options={[{ value: 'unknown', label: '확인 안 함' }, { value: 'yes', label: '쓸 수 있음' }, { value: 'limited', label: '일부만' }, { value: 'no', label: '쓸 수 없음' }]} />
+      <FieldLabel>기저귀 교환대</FieldLabel>
+      <Choice label="기저귀 교환대" value={changingTable} onChange={setChangingTable} options={[{ value: null, label: '모름' }, { value: true, label: '있음' }, { value: false, label: '없음' }]} />
+      <PhotoRow count={photos} onPhoto={onPhoto} />
+      <BigButton label="십자선 자리에 화장실 기록" disabled={gender === undefined} onPress={() => gender && onRecord({ gender, wheelchair, changingTable })} style={styles.gapTop} />
     </BottomSheet>
   );
 }
@@ -332,7 +375,7 @@ export function PointInfoSheet({ title, access, note, photos, onPhoto, onSave, o
 // ---- 데이터 내보내기 ----
 
 interface ExportSheetProps {
-  counts: { nodes: number; edges: number; photos: number; measurements: number };
+  counts: { nodes: number; edges: number; photos: number; measurements: number; timings: number };
   busy: boolean;
   onExport: () => void;
   onReset: () => void;
@@ -340,11 +383,11 @@ interface ExportSheetProps {
 }
 
 export function ExportSheet({ counts, busy, onExport, onReset, onClose }: ExportSheetProps) {
-  const empty = counts.nodes + counts.edges + counts.photos + counts.measurements === 0;
+  const empty = counts.nodes + counts.edges + counts.photos + counts.measurements + counts.timings === 0;
   return (
     <BottomSheet title="데이터 내보내기" onClose={onClose}>
       <Text style={styles.lead}>
-        지점 {counts.nodes}개, 구간 {counts.edges}개, 사진 {counts.photos}장, 높이 측정 {counts.measurements}건을 기록했습니다.
+        지점 {counts.nodes}개, 구간 {counts.edges}개, 사진 {counts.photos}장, 높이 측정 {counts.measurements}건, 시간 측정 {counts.timings}건을 기록했습니다.
       </Text>
       <Text style={styles.note}>
         기록은 이 기기에 저장되어 있습니다. 내보낸 zip 파일을 PC로 옮긴 뒤 편집기의 “현장 기록 불러오기”에서 열어 주세요. 사진에 사람 얼굴이 찍혔는지 확인해 주세요.

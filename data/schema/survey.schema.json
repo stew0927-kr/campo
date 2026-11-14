@@ -34,6 +34,11 @@
       "description": "Height measured with the barometer along one edge (stairs, elevator, ramp).",
       "type": "array",
       "items": { "$ref": "#/$defs/vertical" }
+    },
+    "timings": {
+      "description": "Travel times timed on site with the app's stopwatch (escalator rides). Same fields as an observations/*.jsonl line without source: they are field measurements. Left out when none were taken.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/timing" }
     }
   },
   "$defs": {
@@ -85,6 +90,17 @@
         "closed_period": { "description": "A period it is closed, e.g. 2026-11-15~2026-11-30.", "type": "string", "minLength": 1 },
         "access_condition": { "description": "What it takes to get through, e.g. 상시개방, 학생증 태깅, 관리실 문의.", "type": "string", "minLength": 1 },
         "sync_group": { "description": "The floor-copy group of the point when it was surveyed (campo.schema.json nodeProperties.sync_group).", "type": "string", "minLength": 1 }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["target", "duration_sec", "measured_at"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "description": "edge:<edge id>", "type": "string", "pattern": "^edge:.+" },
+        "duration_sec": { "type": "number", "exclusiveMinimum": 0 },
+        "direction": { "description": "Ridden as the edge is drawn (forward, the default) or against it.", "enum": ["forward", "backward"] },
+        "measured_at": { "$ref": "#/$defs/dateTime" }
       }
     },
     "vertical": {

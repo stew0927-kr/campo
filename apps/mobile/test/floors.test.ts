@@ -2,7 +2,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyChangeset, createIdGen, metres, validateSurvey, type EditState } from '@campo/core';
 import { MAGNET_M, counterparts, floorCopyTargets, isFlatIndoor, planCopyFloor, planMoveNode, planUnsync, syncedOnFloor } from '../src/survey/floors.ts';
-import { planJunction } from '../src/survey/plans.ts';
+import { planLink } from '../src/survey/plans.ts';
 import { SurveySession } from '../src/survey/session.ts';
 import { AT, CAMPUS, SOURCE, campusErrors, fixture } from './helpers.ts';
 
@@ -83,7 +83,7 @@ describe('층 연동', () => {
     expect(joined(before, bridge.id, north.id)).toHaveLength(0);
     expect(joined(before, bridge4.id, north4.id)).toHaveLength(0);
     const scope3 = { kind: 'building' as const, buildingId: 'bldg_A', level: 3 };
-    const plan = planJunction({ state: before, ctx: s.ctx, scope: scope3, coord: north.coord, anchorId: bridge.id, source: SOURCE }, { stepFree: true });
+    const plan = planLink({ state: before, ctx: s.ctx, scope: scope3, coord: north.coord, anchorId: bridge.id, source: SOURCE }, { stepFree: true });
     if ('error' in plan) throw new Error(plan.error);
     s.run(plan);
     expect(joined(s.state, bridge.id, north.id)).toHaveLength(1);

@@ -5,6 +5,7 @@ import {
   accessPatch,
   applyChangeset,
   buildSurvey,
+  compose,
   createHistory,
   findFeature,
   historyToChangeset,
@@ -20,15 +21,18 @@ import {
   type PhotoMeta,
   type Survey,
   type SurveyAttachment,
+  type SurveyTiming,
   type VerticalMeasurement,
 } from '@campo/core';
 import { OUTDOOR, type Scope } from '../model/scope.ts';
 import { dayOf } from '../time.ts';
 import { withSyncMirror } from './floors.ts';
 import type { PlanOk } from './plans.ts';
-import { recentPressure, storedHeading, storedPhotoHeading, storedPressure, verticalMeasurement, type PressureReading } from './readings.ts';
+import { recentPressure, withinPressureWindow, storedHeading, storedPhotoHeading, storedPressure, verticalMeasurement, type PressureReading } from './readings.ts';
 
 export const SNAPSHOT_VERSION = 1;
+/** A stopwatch time shorter than this is a slip of the finger, not a ride. */
+export const MIN_TIMING_SEC = 1;
 
 /** What is kept on the phone between app starts. The map changes are a changeset against the bundled campus. */
 export interface SessionSnapshot {
@@ -41,6 +45,8 @@ export interface SessionSnapshot {
   scope: Scope;
   attachments: Record<string, SurveyAttachment>;
   vertical: VerticalMeasurement[];
+  /** Stopwatch times (escalator rides). Older snapshots have none. */
+  timings?: SurveyTiming[];
   /** Photos taken so far (their names are numbered, and a number is never used twice). */
   photoSeq: number;
 }
@@ -59,6 +65,7 @@ interface Step {
   place: Place;
   attachments: Record<string, SurveyAttachment>;
   measurements: VerticalMeasurement[];
+  timings: SurveyTiming[];
 }
 
 /** What the sensors and the camera gave for one record. */
@@ -70,7 +77,7 @@ export interface Readings {
   /** Compass heading now; null without one. */
   headingDeg: number | null;
   /** 계단/EV: the pressures read on purpose when leaving and on arriving. */
-  trip?: { startHpa: number | null; endHpa: number | null };
+  trip?: { startHpa: number | null; endHpa: number | null; /** When the start was read; a trip longer than the pressure window gives no height. */ startAt?: string };
   /** Pictures taken for the record. */
   photos?: number;
   /** The direction each picture looks (degrees, 0 up to 360), in the order of the pictures; null where none was set. */
@@ -93,9 +100,12 @@ export class SurveySession {
   private history: History;
   /** Where the surveyor was before each record of this run, oldest first. */
   private trail: Step[] = [];
+  /** What 되돌리기 took back, newest last, for 복원. */
+  private future: Step[] = [];
   private place: Place = { anchorId: null, scope: OUTDOOR, edited: false, pressure: null };
   private attachmentsById: Record<string, SurveyAttachment> = {};
   private measurements: VerticalMeasurement[] = [];
+  private timed: SurveyTiming[] = [];
   private photoSeq = 0;
   private listeners = new Set<() => void>();
   private revision = 0;
@@ -132,6 +142,7 @@ export class SurveySession {
     session.place = { anchorId, scope: snapshot.scope, edited: false, pressure: null };
     session.attachmentsById = { ...snapshot.attachments };
     session.measurements = [...snapshot.vertical];
+    session.timed = [...(snapshot.timings ?? [])];
     session.photoSeq = snapshot.photoSeq;
     return { session };
   }
@@ -153,8 +164,18 @@ export class SurveySession {
   get vertical(): readonly VerticalMeasurement[] {
     return this.measurements;
   }
+  get timings(): readonly SurveyTiming[] {
+    return this.timed;
+  }
   get canUndo(): boolean {
     return this.trail.length > 0;
+  }
+  /** The pressure read where the surveyor last recorded a point (this walk only), the base of the relative height shown. */
+  get pressureReference(): PressureReading | null {
+    return this.place.pressure;
+  }
+  get canRedo(): boolean {
+    return this.future.length > 0;
   }
 
   /** For useSyncExternalStore: changes on every change of the session. */
@@ -192,14 +213,14 @@ export class SurveySession {
   // ---- recording ----
 
   private step(): Step {
-    return { place: this.place, attachments: this.attachmentsById, measurements: this.measurements };
+    return { place: this.place, attachments: this.attachmentsById, measurements: this.measurements, timings: this.timed };
   }
 
   /** Carry out a record plan: one history entry when it changes the map, and the walk moves on. */
   run(plan: PlanOk, pressure: PressureReading | null = null): void {
     // Flat edges between synced points are repeated on the other floors, inside the same history entry.
     if (plan.action) this.history.perform(withSyncMirror(this.state, this.ctx, plan.action));
-    this.trail.push(this.step());
+    this.remember();
     this.place = { anchorId: plan.anchorId, scope: plan.scope, edited: plan.action !== null, pressure };
     this.changed();
   }
@@ -215,7 +236,8 @@ export class SurveySession {
    * Returns the paths reserved for the record's photos.
    */
   record(plan: PlanOk, r: Readings): string[] {
-    const startHpa = r.trip ? r.trip.startHpa : recentPressure(this.place.pressure, r.at);
+    const tripFresh = !r.trip?.startAt || withinPressureWindow(r.trip.startAt, r.at);
+    const startHpa = r.trip ? (tripFresh ? r.trip.startHpa : null) : recentPressure(this.place.pressure, r.at);
     const endHpa = r.trip ? r.trip.endHpa : r.pressureHpa;
     const atFeature = r.trip ? r.trip.startHpa : r.pressureHpa;
     let paths: string[] = [];
@@ -244,7 +266,7 @@ export class SurveySession {
     if (reason !== false) return { error: reason };
     const warnings = action.warnings?.(this.state) ?? [];
     this.history.perform(action);
-    this.trail.push(this.step());
+    this.remember();
     this.place = { anchorId: anchorId !== null && anchorId in this.state.nodes ? anchorId : null, scope, edited: true, pressure: null };
     this.changed();
     return { warnings };
@@ -256,7 +278,7 @@ export class SurveySession {
    * with the note and the photos in the point's attachment as the record of where they came from. The walk stays where
    * it is; one 되돌리기 takes all of it back. Returns the paths reserved for the photos, or why nothing was written.
    */
-  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number; photoHeadings?: (number | null)[] }, at: string): { paths: string[] } | { error: string } {
+  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number; photoHeadings?: (number | null)[]; extra?: Action }, at: string): { paths: string[] } | { error: string } {
     const node = this.state.nodes[nodeId];
     if (!node) return { error: '지점을 찾을 수 없습니다.' };
     const patch = accessPatch(node.props, edit.access);
@@ -264,14 +286,16 @@ export class SurveySession {
     const note = edit.note?.trim();
     const noteChanged = note !== undefined && note !== (old?.note ?? '');
     const photos = edit.photos ?? 0;
-    if (!patch && !noteChanged && photos === 0) return { error: '바뀐 내용이 없습니다.' };
-    const action = patch ? setProps([nodeId], patch) : null;
+    if (!patch && !noteChanged && photos === 0 && !edit.extra) return { error: '바뀐 내용이 없습니다.' };
+    // extra (the sill of the edges at the point) goes in the same history entry: one 되돌리기.
+    const own = patch ? setProps([nodeId], patch) : null;
+    const action = own && edit.extra ? compose([own, edit.extra], '지점 정보 저장') : own ?? edit.extra ?? null;
     const reason = action ? action.disabled(this.state) : false;
     if (reason !== false) return { error: reason };
     let paths: string[] = [];
     this.batch(() => {
       if (action) this.history.perform(action);
-      this.trail.push(this.step());
+      this.remember();
       this.place = { ...this.place, edited: action !== null };
       const props = this.state.nodes[nodeId]!.props;
       const { hours: _h, closed_period: _c, access_condition: _a, sync_group: _s, note: _n, ...rest } = old ?? { recorded_at: at };
@@ -289,19 +313,41 @@ export class SurveySession {
 
   /** Look at another floor (or the outdoors) by hand. The walk no longer continues from the last point. */
   moveTo(scope: Scope): void {
-    this.trail.push(this.step());
+    this.remember();
     this.place = { anchorId: null, scope, edited: false, pressure: null };
     this.changed();
+  }
+
+  /** Keep where the walk is before a change (for 되돌리기); a new change drops what was undone (복원 has nothing left to bring back). */
+  private remember(): void {
+    this.trail.push(this.step());
+    this.future = [];
   }
 
   /** Take the last record (or move) back, with the readings and photo entries it added, also on Features that were already there. */
   undo(): boolean {
     const before = this.trail.pop();
     if (!before) return false;
+    this.future.push(this.step());
     if (this.place.edited) this.history.undo();
     this.place = before.place;
     this.attachmentsById = before.attachments;
     this.measurements = before.measurements;
+    this.timed = before.timings;
+    this.changed();
+    return true;
+  }
+
+  /** 복원: bring back what the last 되돌리기 took, with its readings and photos. Nothing once a new change was made. */
+  redo(): boolean {
+    const next = this.future.pop();
+    if (!next) return false;
+    this.trail.push(this.step());
+    if (next.place.edited) this.history.redo();
+    this.place = next.place;
+    this.attachmentsById = next.attachments;
+    this.measurements = next.measurements;
+    this.timed = next.timings;
     this.changed();
     return true;
   }
@@ -339,12 +385,37 @@ export class SurveySession {
     if (headingDeg === null) delete meta[path];
     else meta[path] = { heading_deg: storedPhotoHeading(headingDeg) };
     if (meta[path]?.heading_deg === old.photo_meta?.[path]?.heading_deg) return true;
-    this.trail.push(this.step());
+    this.remember();
     this.place = { ...this.place, edited: false };
     const { photo_meta: _old, ...rest } = old;
     this.attachmentsById = { ...this.attachmentsById, [featureId]: { ...rest, recorded_at: old.recorded_at, ...(Object.keys(meta).length > 0 ? { photo_meta: meta } : {}) } };
     this.changed();
     return true;
+  }
+
+  /**
+   * Add a stopwatch time for an edge (an escalator ride). Every ride is kept: the times add up to the median the
+   * calibration blends with the prediction. One 되돌리기 takes the last one back; the map is not touched.
+   */
+  addTiming(edgeId: string, seconds: number, direction: 'forward' | 'backward', at: string): { timing: SurveyTiming } | { error: string } {
+    if (!(edgeId in this.state.edges)) return { error: '구간을 찾을 수 없습니다.' };
+    if (!Number.isFinite(seconds) || seconds < MIN_TIMING_SEC) return { error: `${MIN_TIMING_SEC}초보다 짧은 기록은 저장하지 않습니다. 다시 재어 주세요.` };
+    const timing: SurveyTiming = {
+      target: `edge:${edgeId}`,
+      duration_sec: Math.round(seconds * 10) / 10,
+      ...(direction === 'backward' ? { direction } : {}),
+      measured_at: at,
+    };
+    this.remember();
+    this.place = { ...this.place, edited: false };
+    this.timed = [...this.timed, timing];
+    this.changed();
+    return { timing };
+  }
+
+  /** The stopwatch times of one edge (both directions), oldest first. */
+  timingsOf(edgeId: string): SurveyTiming[] {
+    return this.timed.filter((t) => t.target === `edge:${edgeId}`);
   }
 
   /** Keep one barometer measurement per edge: walking the same stairs again replaces the earlier reading. */
@@ -373,6 +444,7 @@ export class SurveySession {
       scope: this.place.scope,
       attachments: this.attachmentsById,
       vertical: this.measurements,
+      ...(this.timed.length > 0 ? { timings: this.timed } : {}),
       photoSeq: this.photoSeq,
     };
   }
@@ -387,12 +459,13 @@ export class SurveySession {
       surveyedAt,
       attachments: this.attachmentsById,
       vertical: this.measurements,
+      timings: this.timed,
       summary: `현장 조사 ${slug}`,
     });
   }
 
   /** How much the walk has recorded so far, for the export sheet. */
-  counts(): { nodes: number; edges: number; photos: number; measurements: number } {
+  counts(): { nodes: number; edges: number; photos: number; measurements: number; timings: number } {
     const added = (now: Record<string, unknown>, was: Record<string, unknown>) => Object.keys(now).filter((id) => !(id in was)).length;
     // The same test buildSurvey uses for what is exported.
     const live = Object.entries(this.attachmentsById).filter(([id]) => findFeature(this.state, id) !== undefined);
@@ -401,6 +474,7 @@ export class SurveySession {
       edges: added(this.state.edges, this.base.edges),
       photos: live.reduce((n, [, a]) => n + (a.photos?.length ?? 0), 0),
       measurements: this.measurements.length,
+      timings: this.timed.filter((t) => t.target.slice(5) in this.state.edges).length,
     };
   }
 }

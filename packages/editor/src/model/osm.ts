@@ -6,12 +6,19 @@ import { addBuilding, setProps, type EditState, type Position } from '@campo/cor
 import { buildingAt, pointInRing, ringArea } from './building.ts';
 import type { PlanResult } from './plan.ts';
 
-export const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+/** Overpass servers, tried in this order until one answers. */
+export const OVERPASS_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+] as const;
+export const OVERPASS_URL = OVERPASS_URLS[0];
 /** `source` of a building read from OpenStreetMap. */
 export const OSM_SOURCE = 'osm';
 /** Buildings whose outline comes within this many metres of the click are asked for; the one that holds the click is taken. */
 export const OSM_SEARCH_M = 120;
-const TIMEOUT_MS = 20_000;
+/** Per server. */
+const TIMEOUT_MS = 12_000;
 const MAX_LEVELS = 150;
 const MAX_UNDERGROUND = 20;
 
@@ -128,28 +135,40 @@ export type OsmLookup = { building: OsmBuilding } | { error: string };
 export async function fetchOsmBuilding(state: EditState, position: Position, fetchFn: typeof fetch = fetch): Promise<OsmLookup> {
   const here = buildingAt(state, position);
   if (here) return { error: `여기에는 이미 건물(${here.props.name})이 있습니다. 건물이 없는 자리를 눌러 주세요.` };
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
   let json: unknown;
-  try {
-    const res = await fetchFn(OVERPASS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `data=${encodeURIComponent(overpassQuery(position))}`,
-      signal: abort.signal,
-    });
-    if (res.status === 429 || res.status === 504) return { error: 'OSM 서버(Overpass)가 바쁩니다. 잠시 뒤에 다시 눌러 주세요.' };
-    if (!res.ok) return { error: `OSM 서버(Overpass)가 오류를 돌려주었습니다(HTTP ${res.status}). 잠시 뒤에 다시 해 보시거나 건물 외곽선 그리기로 직접 그려 주세요.` };
-    json = await res.json();
-  } catch (err) {
-    return {
-      error: (err as Error).name === 'AbortError'
+  let lastError = 'OSM 서버(Overpass)에 닿지 못했습니다. 인터넷 연결을 확인하시거나 건물 외곽선 그리기로 직접 그려 주세요.';
+  let ok = false;
+  // Mirrors are tried in order; the first one that answers wins, and the last failure is what the user reads.
+  for (const url of OVERPASS_URLS) {
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetchFn(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(overpassQuery(position))}`,
+        signal: abort.signal,
+      });
+      if (res.status === 429 || res.status === 504) {
+        lastError = 'OSM 서버(Overpass)가 바쁩니다. 잠시 뒤에 다시 눌러 주세요.';
+        continue;
+      }
+      if (!res.ok) {
+        lastError = `OSM 서버(Overpass)가 오류를 돌려주었습니다(HTTP ${res.status}). 잠시 뒤에 다시 해 보시거나 건물 외곽선 그리기로 직접 그려 주세요.`;
+        continue;
+      }
+      json = await res.json();
+      ok = true;
+      break;
+    } catch (err) {
+      lastError = (err as Error).name === 'AbortError'
         ? `OSM 서버(Overpass)가 ${TIMEOUT_MS / 1000}초 안에 답하지 않았습니다. 잠시 뒤에 다시 눌러 주세요.`
-        : 'OSM 서버(Overpass)에 닿지 못했습니다. 인터넷 연결을 확인하시거나 건물 외곽선 그리기로 직접 그려 주세요.',
-    };
-  } finally {
-    clearTimeout(timer);
+        : 'OSM 서버(Overpass)에 닿지 못했습니다. 인터넷 연결을 확인하시거나 건물 외곽선 그리기로 직접 그려 주세요.';
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  if (!ok) return { error: lastError };
   const building = pickBuilding(parseOverpass(json), position);
   return building ? { building } : { error: '누른 자리에 OSM 건물이 없습니다. 건물 안쪽을 눌러 주시거나 건물 외곽선 그리기로 직접 그려 주세요.' };
 }

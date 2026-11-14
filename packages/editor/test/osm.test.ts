@@ -1,7 +1,7 @@
 // OSM 건물 가져오기 (osm.ts): the Overpass query, reading its answer, and the building it becomes.
 import { describe, expect, it } from 'vitest';
 import type { Position } from '@campo/core';
-import { OSM_SOURCE, OVERPASS_URL, fetchOsmBuilding, osmLevels, overpassQuery, parseOverpass, pickBuilding, planOsmBuilding } from '../src/model/osm.ts';
+import { OSM_SOURCE, OVERPASS_URL, OVERPASS_URLS,fetchOsmBuilding, osmLevels, overpassQuery, parseOverpass, pickBuilding, planOsmBuilding } from '../src/model/osm.ts';
 import { isError, runPlan } from '../src/model/plan.ts';
 import { fixtureSession } from './fixture.ts';
 
@@ -97,6 +97,17 @@ describe('fetchOsmBuilding', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(OVERPASS_URL);
     expect(decodeURIComponent(calls[0]!.body)).toBe(`data=${overpassQuery(HERE)}`);
+  });
+
+  it('falls back to the next mirror when a server fails', async () => {
+    const urls: string[] = [];
+    const fetchFn = (async (url: string) => {
+      urls.push(url);
+      if (urls.length < 3) throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify({ elements: [hall] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    expect(await fetchOsmBuilding(state, HERE, fetchFn)).toMatchObject({ building: { osmId: 'w101' } });
+    expect(urls).toEqual([...OVERPASS_URLS]);
   });
 
   it('explains every failure in Korean and never throws', async () => {

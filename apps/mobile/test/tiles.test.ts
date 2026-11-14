@@ -28,8 +28,8 @@ describe('Web Mercator', () => {
   });
 
   it('only OpenStreetMap is asked, with a User-Agent that names the app', () => {
-    expect(TILE_URL).toBe('https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png');
-    expect(tileUrl(17, 111791, 50762)).toBe('https://basemaps.cartocdn.com/rastertiles/voyager/17/111791/50762.png');
+    expect(TILE_URL).toBe('https://tile.openstreetmap.de/{z}/{x}/{y}.png');
+    expect(tileUrl(17, 111791, 50762)).toBe('https://tile.openstreetmap.de/17/111791/50762.png');
     expect(TILE_URL).not.toMatch(/google|naver|kakao|daum/);
     expect(TILE_HEADERS['User-Agent']).toMatch(/Campo/);
   });

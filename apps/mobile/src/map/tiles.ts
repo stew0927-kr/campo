@@ -6,8 +6,8 @@ import type { Position } from '@campo/core';
 import { toScreen, type Projection, type Size, type View } from './project.ts';
 
 /** OSM's standard tile server. {z}/{x}/{y} are filled by tileUrl. */
-export const TILE_URL = 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png';
-export const TILE_ATTRIBUTION = '© OpenStreetMap · © CARTO';
+export const TILE_URL = 'https://tile.openstreetmap.de/{z}/{x}/{y}.png';
+export const TILE_ATTRIBUTION = '© OpenStreetMap 기여자';
 /** The tile server asks every app to say who it is (https://operations.osmfoundation.org/policies/tiles/). */
 export const TILE_HEADERS = { 'User-Agent': 'CampoSurvey/0.0 (campus field survey app)' } as const;
 /** Pixels of a tile at its own zoom. */

@@ -18,7 +18,9 @@ import { HandleDrag, NodeDrag, type DragResult } from '../model/drag.ts';
 import { featureCenter, featureScope } from '../model/locate.ts';
 import { makeObservation, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 import { menuFields, planMenuEdit, selectionSummary, type MenuEdits } from '../model/menu.ts';
+import { buildingAt } from '../model/building.ts';
 import { fetchOsmBuilding, osmCode, planOsmBuilding } from '../model/osm.ts';
+import { embeddedOsmBuilding } from '../model/osmCampusData.ts';
 import { buildingsToDelete, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits } from '../model/ops.ts';
 import { isError, planReason, runPlan, type PlanResult } from '../model/plan.ts';
 import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong, sameScope, scopeLabel, type Scope } from '../model/scope.ts';
@@ -208,8 +210,12 @@ export function Workspace({ session }: { session: Session }) {
   // ---- Map clicks: one handler per tool (toolClicks.ts). 길 그리기 and 건물 외곽선 그리기 draw with Terra Draw instead. ----
   /** OSM 건물 가져오기: the outline under the click comes from OpenStreetMap; the building it becomes is one history entry. */
   const importOsm = async (position: Position) => {
-    info('OpenStreetMap에서 건물 외곽선을 찾는 중입니다…');
-    const found = await fetchOsmBuilding(history.current(), position);
+    // The embedded campus files answer at once; only a click outside every file asks the Overpass servers.
+    // (A click on a campo building goes to fetchOsmBuilding too: it refuses that without any network.)
+    const here = buildingAt(history.current(), position);
+    const local = here ? null : await embeddedOsmBuilding(position);
+    if (!local || 'outside' in local) info('OpenStreetMap에서 건물 외곽선을 찾는 중입니다…');
+    const found = local && !('outside' in local) ? local : await fetchOsmBuilding(history.current(), position);
     if ('error' in found) return fail(found.error);
     if (perform(planOsmBuilding(history.current(), found.building)) !== undefined) return;
     const id = `bldg_${osmCode(found.building.osmId)}`;

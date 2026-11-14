@@ -1,7 +1,7 @@
 // OSM 건물 가져오기 (osm.ts): the Overpass query, reading its answer, and the building it becomes.
 import { describe, expect, it } from 'vitest';
 import type { Position } from '@campo/core';
-import { OSM_SOURCE, OVERPASS_URL, OVERPASS_URLS,fetchOsmBuilding, osmLevels, overpassQuery, parseOverpass, pickBuilding, planOsmBuilding } from '../src/model/osm.ts';
+import { OSM_SOURCE, OVERPASS_URL, OVERPASS_URLS, fetchOsmBuilding, osmLevels, overpassQuery, parseOverpass, pickBuilding, planOsmBuilding } from '../src/model/osm.ts';
 import { isError, runPlan } from '../src/model/plan.ts';
 import { fixtureSession } from './fixture.ts';
 

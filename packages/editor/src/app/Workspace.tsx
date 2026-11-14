@@ -36,6 +36,7 @@ import { ContextMenu } from '../ui/ContextMenu.tsx';
 import { CopyPanel } from '../ui/CopyPanel.tsx';
 import { CrossPicker } from '../ui/CrossPicker.tsx';
 import { FloorPicker } from '../ui/FloorPicker.tsx';
+import { HistoryButtons } from '../ui/HistoryButtons.tsx';
 import { HelpDialog } from '../ui/HelpDialog.tsx';
 import { MeasurePanel } from '../ui/MeasurePanel.tsx';
 import { PropertiesPanel } from '../ui/PropertiesPanel.tsx';
@@ -696,6 +697,7 @@ export function Workspace({ session }: { session: Session }) {
               onClose={() => setCopyPanel(null)}
             />
           ))}
+        <HistoryButtons blocked={{ undo: operations.undo.blocked, redo: operations.redo.blocked }} onRun={runOperation} />
         {floorBuilding && !crossFrom && (
           <FloorPicker
             building={floorBuilding}

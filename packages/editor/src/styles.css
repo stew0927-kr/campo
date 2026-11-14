@@ -59,7 +59,6 @@ button, select, input { font: inherit; color: inherit; }
 }
 /* One section per toolbar group (registry.ts TOOLBAR_GROUPS): a caption, then its buttons. Each group has its own accent. */
 .toolbar-section { display: flex; flex-direction: column; gap: 3px; min-width: 0; --group: var(--ink); }
-.tool.op-icon { min-width: 28px; padding-inline: 6px; font-size: 16px; line-height: 1; }
 .toolbar-section[data-group="draw"] { --group: var(--footway); }
 .toolbar-section[data-group="macro"] { --group: var(--elevator); }
 .toolbar-caption { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; }
@@ -473,3 +472,15 @@ button.check-item:hover { background: var(--chrome); }
   position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
   background: var(--broken); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
 }
+
+/* 되돌리기 / 다시 하기: two floating round buttons at the map's upper left, right of the zoom control. */
+.history { position: absolute; top: 10px; left: 52px; z-index: 2; display: flex; gap: 8px; }
+.history-btn {
+  width: 36px; height: 36px; padding: 0; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--rule); cursor: pointer;
+  box-shadow: 0 2px 8px rgb(30 41 51 / 0.18); transition: box-shadow 0.12s, opacity 0.12s, transform 0.12s;
+}
+.history-btn:hover { box-shadow: 0 3px 12px rgb(30 41 51 / 0.26); }
+.history-btn:active { transform: scale(0.95); }
+.history-btn:focus-visible { outline: 2px solid #0b5fff; outline-offset: 2px; }
+.history-btn[aria-disabled="true"] { opacity: 0.38; box-shadow: none; cursor: default; }

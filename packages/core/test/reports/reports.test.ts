@@ -351,8 +351,12 @@ describe('permanent reports: pre-filled edit actions', () => {
   });
 
   it('stairs_unmarked: an outdoor footway becomes steps with the reported step count', () => {
-    const { after } = perform(plan(sample('rp-20261111-0004')));
+    const p = plan(sample('rp-20261111-0004'));
+    const { after } = perform(p);
     expect(after.edges['e_out_0001__out_0006']!.props).toMatchObject({ highway: 'steps', step_free: false, step_count: 3, needs_check: true, source: 'report-rp-20261111-0004' });
+    // campus-basic marks this footway flat_exact: a stairs report drops that (not allowed on steps) and says so.
+    expect('flat_exact' in after.edges['e_out_0001__out_0006']!.props).toBe(false);
+    expect(p.type === 'edit' && p.warnings).toContain('계단·턱이 있다는 제보라서 평지 확인(flat_exact)을 지웁니다.');
   });
 
   it('wrong_room_location: the door moves to the reported spot and is linked to the nearest corridor again', () => {

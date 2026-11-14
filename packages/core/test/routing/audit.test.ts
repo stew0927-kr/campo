@@ -623,7 +623,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     for (const profile of PROFILES) {
       expect(findRoute(g, TOWER.hall(3), TOWER.hall(3), profile)).toEqual({
         found: true, profile, nodes: [TOWER.hall(3)], edgeIds: [], cost: 0, timeSec: 0, distanceM: 0, stairsCount: 0,
-        escalatorCount: 0, steps: [], uncertainSegments: [], fallback: null,
+        escalatorCount: 0, steps: [], uncertainSegments: [], slopeSegments: [], fallback: null,
       });
     }
     const missing = findRoute(g, 'n_nowhere', TOWER.hall(1), 'shortest');

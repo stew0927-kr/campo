@@ -63,7 +63,7 @@ v0.1은 아래가 모두 되면 끝이다.
 |---|---|---|---|
 | `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m` |
 | `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check`, `hours`, `closed_period`, `access_condition`, `sync_group` |
-| `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check` |
+| `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check`, `flat_exact`, `is_breakline`, `elev_diff_m`, `elev_sigma_m`, `grade_pct` |
 
 지점의 출입 정보와 층 연동(모두 선택 속성, 없는 예전 파일도 그대로 읽는다)
 
@@ -76,6 +76,19 @@ v0.1은 아래가 모두 되면 끝이다.
 
 - 출입 정보는 안내에 보여 주는 값이다. 길찾기는 읽지 않는다(시간에 따라 막는 일은 `overrides.json`이 한다).
 - `sync_group`은 편집 도구용이다. 길찾기는 읽지 않고, 층 번호도 비교하지 않는다.
+
+구간의 높이 정보(모두 선택 속성, 없는 예전 파일도 그대로 읽고 길찾기도 예전과 같다. 자세한 규칙은 docs/ELEVATION_INTEGRATION.md)
+
+| 속성 | 누가 | 뜻 | 쓸 수 있는 곳 |
+|---|---|---|---|
+| `flat_exact` | 사람 | 현장에서 평지로 확인함. 높이 계산은 높이 차 0으로 고정하고 길찾기는 경사 0으로 본다 | footway, corridor |
+| `is_breakline` | 사람 | 지형이 끊기는 곳(연석, 옹벽, 바깥 계단). 높이 보간이 이 선을 넘지 않는다. 없으면 바깥 계단이 해당, `false`로 끔 | footway, steps, ramp. `flat_exact: true`와 함께 `true` 불가 |
+| `elev_diff_m` | 고도 재계산 | `to` 높이 − `from` 높이(m) | −200~200 |
+| `elev_sigma_m` | 고도 재계산 | `elev_diff_m`의 표준편차(m) | 0 초과, `elev_diff_m`과 함께 |
+| `grade_pct` | 고도 재계산 | from → to 경사(%), 오르막이 양수 | `elev_diff_m`과 함께 |
+
+- 계산 값 셋은 편집 동작 `setEdgeElevation`만 쓴다. 구간을 뒤집으면 `elev_diff_m`·`grade_pct`의 부호가 바뀌고, 나누거나 합치면 지워졌다가 다음 재계산이 다시 쓴다.
+- 길찾기는 이 값들을 구간 자신의 속성으로만 읽는다(층 번호는 여전히 비교하지 않음). 경사가 오르막·내리막 시간과 프로필 벌점에 들어간다.
 - 건물을 OpenStreetMap에서 가져오면 `source`는 `osm`이다(ODbL, © OpenStreetMap 기여자).
 
 `node_type` 값
@@ -144,6 +157,7 @@ data/campuses/hanyang-seoul/
 ## 5. 고도·건물 높이 결합 (v0.1에서는 키만)
 
 - 원본 데이터는 고치지 않는다. 나중에 빌드 스크립트가 `derived/elevation.json`(`{ node_id: { z_ground_m, z_floor_m } }`)을 만든다.
+  - 2026-11-15 갱신: `tools/elevation/campo_height_solver.py --derived-out`이 `derived/elevation.json`(`campo-derived-elevation/1`: 지점별 `z_m`·`sigma_m`, 구간별 `elev_diff_m`·`elev_sigma_m`)을 만들고, 사람이 재계산을 누를 때 편집 동작 `setEdgeElevation`이 구간의 계산 값(4.2)만 고친다. DEM 원본은 읽기 전용이다(docs/ELEVATION_INTEGRATION.md).
 - 결합 키: 건물은 `ext.moct_bldg_id`(국토교통부 GIS건물통합정보 고유번호), 지점은 좌표. 건물 높이는 층수 × 층고로 계산한다.
 - 외부 원본은 `data/ref/`에 두고 Git에 올리지 않는다(.gitignore).
 

@@ -10,12 +10,14 @@ import {
   ELEVATOR_HOP_SEC,
   WALK_SPEED_MPS,
   conveyingOf,
+  edgeGradePct,
   isClosedFor,
   penaltySec,
   perProfile,
   portalSec,
   stairsTimeSec,
   walkTimeSec,
+  type LinkGrade,
   type Profile,
 } from './costs.ts';
 import { edgeTargetKey, elevatorTargetKey, measuredTimes } from './routing/measured.ts';
@@ -43,6 +45,8 @@ export interface WalkLinkData extends LinkCosts {
   edge: EdgeFeature;
   /** Geodesic distance between the edge's from / to node positions. */
   lengthM: number;
+  /** Grade in percent in link direction (edgeGradePct), null when the edge has none. */
+  gradePct: number | null;
 }
 /** Stop → its car: waiting and getting in. Paid once per ride. */
 export interface BoardLinkData extends LinkCosts {
@@ -75,8 +79,9 @@ export interface CampusGraph {
   /**
    * The A* heuristic is straight-line distance / this: the larger of
    * WALK_SPEED_MPS and the fastest plan speed (plan distance / timeSec) of any
-   * link. Stairs can beat walking speed (24 steps over 34.5 m take 13.2 s), and
-   * so can a hop between elevator stops that are apart in plan (an I5 error).
+   * link. Stairs can beat walking speed (24 steps over 34.5 m take 13.2 s), so
+   * can a gentle downhill walk with a known grade (slopeTimeFactor < 1), and so
+   * can a hop between elevator stops that are apart in plan (an I5 error).
    * Using the fastest link keeps the heuristic admissible and consistent.
    * Costs are not changed.
    */
@@ -143,9 +148,9 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
   const at = (id: string): Position => nodes.get(id)!.geometry.coordinates;
 
   /** One directed link. `edge` is null for board / alight (no step_free of their own). */
-  const costs = (timeSec: number, edge: EdgeProperties | null, isClosed: boolean): LinkCosts => ({
+  const costs = (timeSec: number, edge: EdgeProperties | null, isClosed: boolean, grade: LinkGrade | null = null): LinkCosts => ({
     timeSec,
-    cost: perProfile((p) => timeSec + penaltySec(edge, p)),
+    cost: perProfile((p) => timeSec + penaltySec(edge, p, grade)),
     blocked: perProfile((p) => isClosed || isClosedFor(edge, p)),
   });
 
@@ -178,10 +183,15 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     link(ensureCar(fromStop), ensureCar(toStop), { kind: 'hop', edge, ...costs(ELEVATOR_HOP_SEC, edge.properties, closed.has(edge.id)) });
   };
 
-  /** A measured time replaces the predicted one (SPEC-v0.2 3.9); penalties are added on top by costs(). */
+  /**
+   * A measured time replaces the predicted one (SPEC-v0.2 3.9); penalties are added on top by costs().
+   * The grade (edge properties only, docs/ELEVATION_INTEGRATION.md) scales the predicted walking time and adds the
+   * profile's grade penalty; a measured time already contains the slope, so only the penalty stays.
+   */
   const walk = (from: string, to: string, edge: EdgeFeature) => {
     const lengthM = straight(at(from), at(to));
     const traversal = from === edge.properties.from ? 'along' : 'against';
+    const gradePct = edgeGradePct(edge.properties, lengthM, traversal);
     const predicted = edge.properties.highway === 'steps'
       ? stairsTimeSec({
         edge: edge.properties,
@@ -189,10 +199,11 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
         planLengthM: lengthM,
         traversal,
       }) + portalSec(edge.properties)
-      : walkTimeSec(edge.properties, lengthM);
+      : walkTimeSec(edge.properties, lengthM, gradePct);
     const timeSec = measured.get(edgeTargetKey(edge.id, traversal)) ?? predicted;
     const isClosed = closed.has(edge.id) || closed.has(from) || closed.has(to);
-    link(from, to, { kind: 'walk', edge, lengthM, ...costs(timeSec, edge.properties, isClosed) });
+    const grade = gradePct === null ? null : { gradePct, lengthM };
+    link(from, to, { kind: 'walk', edge, lengthM, gradePct, ...costs(timeSec, edge.properties, isClosed, grade) });
   };
 
   for (const edge of edges) {

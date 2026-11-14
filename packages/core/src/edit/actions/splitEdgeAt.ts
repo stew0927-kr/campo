@@ -5,6 +5,7 @@ import { edgeFileScope, edgeIdPrefix, freshId, nodeIdPrefix } from '../ids.ts';
 import { footOnLine, lineLength, metres } from '../geo.ts';
 import { clone, copy, edgeCoords, edgesAt, isPosition, scopeOfNode, type EditState } from '../state.ts';
 import { SNAP_VERTEX_M } from '../tolerances.ts';
+import { dropDerivedElevation } from './setEdgeElevation.ts';
 
 export interface SplitOptions {
   /** Insert this existing node (the node being dragged) at the split point instead of making a new one. */
@@ -102,6 +103,8 @@ function newNodeType(buildingId: string | null, highway: string): NodeType {
 /**
  * Split an edge in two at the foot of `coord` (SPEC-v0.2 4.1.1). The longer piece keeps the id with rev+1,
  * the other gets a new id at rev 1 (equal length: the from side keeps the id). Parallel edges are left alone.
+ * Derived elevation values (elev_diff_m, elev_sigma_m, grade_pct) are dropped from both pieces: they belonged to the whole
+ * edge, and the next elevation recompute writes them again. flat_exact and is_breakline are facts and stay on both.
  */
 export function splitEdgeAt(edgeId: string, coord: Position, options: SplitOptions, ctx: EditContext): Action {
   const memo = idMemo();
@@ -120,6 +123,7 @@ export function splitEdgeAt(edgeId: string, coord: Position, options: SplitOptio
     recipe(draft) {
       const plan = splitPlan(draft, edgeId, coord, options.nodeId) as SplitPlan;
       const edge = draft.edges[edgeId]!;
+      dropDerivedElevation(edge.props);
       const base = clone(edge.props);
       const fromNode = draft.nodes[base.from]!;
 

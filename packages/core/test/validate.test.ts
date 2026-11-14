@@ -291,6 +291,24 @@ describe('schema v0.2 (SPEC-v0.2 §2)', () => {
     expect(result.errors).toEqual([]);
   });
 
+  it('elevation fields: accepted on the right edges, flat_exact and is_breakline limited by highway and never both true', () => {
+    const ok = broken(({ get }) => {
+      Object.assign(get('e_out_0001__out_0002').properties, { elev_diff_m: 1.2, elev_sigma_m: 0.2, grade_pct: 2.6 });
+      Object.assign(get('e_out_0002__out_0004').properties, { flat_exact: false, is_breakline: true });
+      get('e_out_0004__out_0005').properties.is_breakline = false;
+    });
+    expect(ok.errors).toEqual([]);
+    const bad = broken(({ get }) => {
+      get('e_out_0002__out_0003').properties.flat_exact = true; // steps
+      get('e_out_0002__out_0004').properties.grade_pct = 3; // without elev_diff_m
+      Object.assign(get('e_out_0005__out_0003').properties, { flat_exact: true, is_breakline: true });
+      Object.assign(get('e_out_0001__out_0002').properties, { elev_diff_m: 0, elev_sigma_m: 0 });
+    });
+    expect(codes(schemaErrors(bad)).sort()).toEqual([
+      [E.schema, 'e_out_0001__out_0002'], [E.schema, 'e_out_0002__out_0003'], [E.schema, 'e_out_0002__out_0004'], [E.schema, 'e_out_0005__out_0003'],
+    ]);
+  });
+
   it('rejects other step_free values', () => {
     const result = broken(({ get }) => {
       get('e_out_0001__out_0002').properties.step_free = 'maybe';

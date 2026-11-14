@@ -171,6 +171,11 @@ function planPermanent(report: Report, state: EditState, options: PlanOptions, b
       if (edge.props.highway === 'steps') return { ...base, type: 'already_fixed', reason: `구간 "${edge.id}"은(는) 이미 계단입니다.` };
       const patch: Record<string, unknown> = { step_free: false, needs_check: true, source };
       const warnings: string[] = [];
+      if (edge.props.flat_exact !== undefined) {
+        // A step or a sill means the edge is not level any more (and flat_exact is not allowed on steps).
+        patch['flat_exact'] = undefined;
+        warnings.push('계단·턱이 있다는 제보라서 평지 확인(flat_exact)을 지웁니다.');
+      }
       if (edge.props.edge_type === 'outdoor' && (edge.props.highway === 'footway' || edge.props.highway === 'ramp')) {
         patch['highway'] = 'steps';
         if (report.details?.step_count !== undefined) patch['step_count'] = report.details.step_count;

@@ -1,0 +1,341 @@
+"""
+CAMPO DEM 전처리 — 국토지리정보원 자료 → 캠퍼스 클립 → COG + campo-grid(앱/백엔드 샘플링용)
+
+두 가지 입력 경로
+  A) raster   : 국토정보플랫폼 '공개DEM'(.img, 90 m) 또는 보안심사로 받은 5 m/1 m DEM(.img/.tif)
+  B) contours : 1:5,000 수치지형도 v2.0(SHP)의 등고선(N3L_F0010000, 5 m 간격) + 표고점(N3P_F0020000)
+                → 선형 TIN 보간으로 1 m 격자 생성 (공개 90 m DEM보다 국소 지형을 훨씬 잘 담음)
+                --fallback-raster로 등고선이 없는 구역(도심 건물 밀집지)을 90 m DEM으로 채울 수 있음
+
+높이 기준: NGII DEM·수치지형도 높이는 국가 수직기준(인천만 평균해수면) 정표고.
+           GNSS/스마트폰 GPS 고도(타원체고)와 섞지 말 것. 필요하면 H = h − N (KNGeoid24 등).
+           CAMPO는 Δh(상대)만 쓰고 절대 기준을 이 DEM에서 가져오므로, 지오이드 보정은 필요 없다.
+
+예시
+  # A) 공개 DEM 2도엽 병합 → 한양대 서울캠퍼스 경계로 자르기 → 1 m
+  python dem_prep.py raster --src 37612.img 37613.img --boundary campus.geojson \
+      --res 1.0 --out out/hy_seoul_dem
+
+  # B) 수치지형도 등고선 + 표고점 → 1 m TIN, 빈 곳은 90 m DEM으로
+  python dem_prep.py contours --contours */N3L_F0010000.shp --spots */N3P_F0020000.shp \
+      --boundary campus.geojson --fallback-raster 37612.img --res 1.0 --out out/hy_seoul_tin
+
+  # 샘플링 확인
+  python dem_prep.py sample --grid out/hy_seoul_dem.json --lonlat 127.0450 37.5570
+
+경계 대신 --bbox lon_min lat_min lon_max lat_max 도 가능.
+의존성: rasterio, pyproj, numpy, scipy, (contours 모드) geopandas, shapely
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import rasterio
+import rasterio.shutil
+from rasterio.crs import CRS
+from rasterio.enums import Resampling
+from rasterio.features import geometry_mask
+from rasterio.merge import merge
+from rasterio.transform import from_origin
+from rasterio.warp import reproject, transform_geom
+
+sys.path.insert(0, str(Path(__file__).parent))
+from campo_grid import Grid  # noqa: E402
+
+DST_CRS_DEFAULT = "EPSG:5186"  # GRS80 중부원점(경기·서울) TM — 국내 1:5,000 수치지형도 계열과 동일 계열
+NODATA = -9999.0
+Z_FIELD_CANDIDATES = ["등고수치", "표고수치", "CONT", "CONT_VAL", "HEIGHT", "ELEV", "ELEVATION", "Z", "NUME", "HGT"]
+
+
+# ------------------------------------------------------------------ #
+# 공통: 영역(경계) 처리
+# ------------------------------------------------------------------ #
+
+def load_boundary(path: str | None, bbox: list[float] | None, dst_crs: str) -> dict:
+    """GeoJSON(기본 EPSG:4326) 또는 bbox → 목표 CRS의 단일 geometry(dict)."""
+    if path:
+        gj = json.loads(Path(path).read_text(encoding="utf-8"))
+        src_crs = "EPSG:4326"
+        if gj.get("crs", {}).get("properties", {}).get("name"):
+            src_crs = gj["crs"]["properties"]["name"]
+        geoms = []
+        feats = gj["features"] if gj.get("type") == "FeatureCollection" else [gj if gj.get("type") == "Feature" else {"geometry": gj}]
+        for f in feats:
+            geoms.append(f["geometry"])
+        if len(geoms) == 1:
+            geom = geoms[0]
+        else:
+            polys = []
+            for g in geoms:
+                polys += [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"]
+            geom = {"type": "MultiPolygon", "coordinates": polys}
+        return transform_geom(src_crs, dst_crs, geom)
+    if bbox:
+        x0, y0, x1, y1 = bbox
+        ring = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
+        return transform_geom("EPSG:4326", dst_crs, {"type": "Polygon", "coordinates": [ring]})
+    raise SystemExit("--boundary 또는 --bbox 가 필요합니다")
+
+
+def geom_bounds(geom: dict) -> tuple[float, float, float, float]:
+    xs, ys = [], []
+
+    def walk(c):
+        if isinstance(c[0], (int, float)):
+            xs.append(c[0]); ys.append(c[1])
+        else:
+            for cc in c:
+                walk(cc)
+
+    walk(geom["coordinates"])
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def target_grid(geom: dict, res: float, buffer_m: float):
+    """해상도 배수에 정렬(snap)된 목표 격자 — 재처리해도 셀 경계가 흔들리지 않게."""
+    x0, y0, x1, y1 = geom_bounds(geom)
+    x0 = math.floor((x0 - buffer_m) / res) * res
+    y0 = math.floor((y0 - buffer_m) / res) * res
+    x1 = math.ceil((x1 + buffer_m) / res) * res
+    y1 = math.ceil((y1 + buffer_m) / res) * res
+    w, h = int(round((x1 - x0) / res)), int(round((y1 - y0) / res))
+    return from_origin(x0, y1, res, res), w, h
+
+
+def boundary_mask(geom: dict, transform, w: int, h: int, buffer_m: float, res: float) -> np.ndarray:
+    """True = 경계(+버퍼) 바깥. 버퍼는 셀 단위 팽창으로 근사."""
+    outside = geometry_mask([geom], out_shape=(h, w), transform=transform, invert=False)
+    k = int(math.ceil(buffer_m / res))
+    if k > 0:
+        from scipy.ndimage import binary_dilation
+        inside = binary_dilation(~outside, iterations=k)
+        outside = ~inside
+    return outside
+
+
+# ------------------------------------------------------------------ #
+# A) raster
+# ------------------------------------------------------------------ #
+
+def read_merged(srcs: list[str], src_crs: str | None):
+    dss = [rasterio.open(s) for s in srcs]
+    try:
+        crs = dss[0].crs
+        if src_crs:
+            crs = CRS.from_user_input(src_crs)
+        elif crs is None:
+            raise SystemExit(f"{srcs[0]}에 좌표계 정보가 없습니다. --src-crs EPSG:5186(또는 5179/5174 등)을 지정하세요")
+        for d in dss[1:]:
+            if not src_crs and d.crs != dss[0].crs:
+                raise SystemExit("입력 도엽 간 좌표계가 다릅니다. 먼저 통일하거나 --src-crs로 강제하세요")
+        nod = dss[0].nodata
+        arr, tr = merge(dss, nodata=nod if nod is not None else NODATA)
+        a = arr[0].astype("float64")
+        if nod is not None:
+            a[a == nod] = np.nan
+        # NGII 자료에 흔한 결측 표기(-9999, -99999 등)와 비현실적 값 정리
+        a[(a < -500) | (a > 9000)] = np.nan
+        return a, tr, crs, dss[0].res
+    finally:
+        for d in dss:
+            d.close()
+
+
+def resample_to(a, src_tr, src_crs, dst_tr, dst_crs, w, h, method: str) -> np.ndarray:
+    dst = np.full((h, w), np.nan)
+    reproject(source=a, destination=dst, src_transform=src_tr, src_crs=src_crs,
+              src_nodata=np.nan, dst_transform=dst_tr, dst_crs=CRS.from_user_input(dst_crs),
+              dst_nodata=np.nan, resampling=getattr(Resampling, method))
+    return dst
+
+
+def cmd_raster(a):
+    geom = load_boundary(a.boundary, a.bbox, a.dst_crs)
+    tr, w, h = target_grid(geom, a.res, a.buffer)
+    src, src_tr, src_crs, src_res = read_merged(a.src, a.src_crs)
+    print(f"source: {len(a.src)} file(s), crs={src_crs.to_string()}, res={src_res}")
+    if a.res < min(src_res) / 2:
+        print(f"note: {min(src_res):.0f} m → {a.res} m 업샘플링은 보간일 뿐 새 지형 정보를 만들지 않습니다(2단계 잔차장이 그 역할)")
+    dst = resample_to(src, src_tr, src_crs, tr, a.dst_crs, w, h, a.resampling)
+    finish(a, dst, tr, w, h, geom, source=f"NGII raster DEM {','.join(Path(s).name for s in a.src)}")
+
+
+# ------------------------------------------------------------------ #
+# B) contours (+ spot heights) → TIN
+# ------------------------------------------------------------------ #
+
+def pick_z_field(gdf, forced: str | None) -> str | None:
+    if forced:
+        if forced not in gdf.columns:
+            raise SystemExit(f"--z-field {forced} 없음. 열 목록: {list(gdf.columns)}")
+        return forced
+    for c in Z_FIELD_CANDIDATES:
+        if c in gdf.columns:
+            return c
+    num = [c for c in gdf.columns if c != "geometry" and np.issubdtype(gdf[c].dtype, np.number)]
+    plausible = [c for c in num if gdf[c].notna().any() and -50 <= gdf[c].min() and gdf[c].max() <= 2000 and gdf[c].nunique() > 1]
+    if len(plausible) == 1:
+        return plausible[0]
+    if gdf.geometry.has_z.any():
+        return None  # geometry Z 사용
+    raise SystemExit(f"높이 필드를 찾지 못했습니다. --z-field 로 지정하세요. 열 목록: {list(gdf.columns)}")
+
+
+def read_xyz(paths: list[str], dst_crs: str, encoding: str, z_field: str | None, densify_m: float) -> np.ndarray:
+    import geopandas as gpd
+    from shapely import get_coordinates, segmentize
+
+    pts = []
+    for p in paths:
+        g = gpd.read_file(p, encoding=encoding)
+        if g.crs is None:
+            raise SystemExit(f"{p}: .prj 없음 — 수치지형도 도엽 좌표계를 확인해 --src-crs 대신 .prj를 넣어 주세요")
+        g = g.to_crs(dst_crs)
+        zf = pick_z_field(g, z_field)
+        for geom, z in zip(g.geometry, (g[zf] if zf else [None] * len(g))):
+            if geom is None or geom.is_empty:
+                continue
+            if geom.geom_type in ("LineString", "MultiLineString") and densify_m > 0:
+                geom = segmentize(geom, densify_m)
+            xyz = get_coordinates(geom, include_z=zf is None)
+            if zf is None:
+                pts.append(xyz)
+            elif z is not None and np.isfinite(z):
+                pts.append(np.column_stack([xyz[:, :2], np.full(len(xyz), float(z))]))
+    if not pts:
+        raise SystemExit("등고선/표고점에서 좌표를 하나도 읽지 못했습니다")
+    xyz = np.vstack(pts)
+    # 같은 좌표 중복 제거(도엽 경계)
+    _, ui = np.unique(np.round(xyz[:, :2], 2), axis=0, return_index=True)
+    return xyz[np.sort(ui)]
+
+
+def cmd_contours(a):
+    from scipy.interpolate import griddata
+
+    geom = load_boundary(a.boundary, a.bbox, a.dst_crs)
+    tr, w, h = target_grid(geom, a.res, a.buffer)
+    xyz = read_xyz(a.contours + (a.spots or []), a.dst_crs, a.encoding, a.z_field, a.densify)
+    # 경계 + 넉넉한 여유(보간 안정용)만 사용
+    x0, y1 = tr.c, tr.f
+    x1, y0 = x0 + w * a.res, y1 - h * a.res
+    m = 200.0
+    sel = (xyz[:, 0] > x0 - m) & (xyz[:, 0] < x1 + m) & (xyz[:, 1] > y0 - m) & (xyz[:, 1] < y1 + m)
+    xyz = xyz[sel]
+    print(f"TIN points: {len(xyz):,}")
+    if len(xyz) < 3:
+        raise SystemExit("영역 안에 등고선/표고점이 너무 적습니다(도심은 등고선이 끊긴 경우가 많음 → --fallback-raster)")
+    xs = x0 + (np.arange(w) + 0.5) * a.res
+    ys = y1 - (np.arange(h) + 0.5) * a.res
+    X, Y = np.meshgrid(xs, ys)
+    dst = griddata(xyz[:, :2], xyz[:, 2], (X, Y), method="linear")  # Delaunay 선형 = TIN
+    holes = ~np.isfinite(dst)
+    if holes.any() and a.fallback_raster:
+        src, src_tr, src_crs, _ = read_merged(a.fallback_raster, a.src_crs)
+        fb = resample_to(src, src_tr, src_crs, tr, a.dst_crs, w, h, "bilinear")
+        dst = np.where(holes, fb, dst)
+        print(f"fallback raster filled {int(holes.sum()):,} cells")
+    finish(a, dst, tr, w, h, geom, source=f"NGII 1:5000 contours/spots TIN ({len(xyz)} pts)")
+
+
+# ------------------------------------------------------------------ #
+# 출력: COG + campo-grid
+# ------------------------------------------------------------------ #
+
+def write_cog(path: Path, data: np.ndarray, transform, crs: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    arr = np.where(np.isfinite(data), data, NODATA).astype("float32")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td) / "tmp.tif"
+        with rasterio.open(tmp, "w", driver="GTiff", width=arr.shape[1], height=arr.shape[0], count=1,
+                           dtype="float32", crs=crs, transform=transform, nodata=NODATA) as ds:
+            ds.write(arr, 1)
+            ds.update_tags(VERTICAL_DATUM="KVD_INCHEON_MSL (orthometric)", UNITS="metre")
+        rasterio.shutil.copy(tmp, path, driver="COG", COMPRESS="DEFLATE", PREDICTOR="YES",
+                             BLOCKSIZE=256, OVERVIEWS="AUTO", RESAMPLING="BILINEAR")
+
+
+def finish(a, dst, tr, w, h, geom, source: str):
+    outside = boundary_mask(geom, tr, w, h, a.buffer, a.res)
+    dst = np.where(outside, np.nan, dst)
+    valid = np.isfinite(dst)
+    if not valid.any():
+        raise SystemExit("결과가 전부 결측입니다 — 입력 도엽이 캠퍼스 영역을 덮는지, 좌표계가 맞는지 확인하세요")
+    out = Path(a.out)
+    write_cog(out.with_suffix(".tif"), dst, tr, a.dst_crs)
+    g = Grid(dst, tr.c, tr.f, a.res, a.dst_crs)
+    jp, bp = g.save(out, dtype=a.grid_dtype, source=source)
+    print(f"grid {w}×{h} @ {a.res} m, valid {valid.mean() * 100:.1f}%, "
+          f"h=[{np.nanmin(dst):.2f}, {np.nanmax(dst):.2f}] m")
+    print(f"wrote {out.with_suffix('.tif')} (COG), {jp}, {bp} ({bp.stat().st_size / 1e6:.2f} MB)")
+
+
+# ------------------------------------------------------------------ #
+# sample
+# ------------------------------------------------------------------ #
+
+def cmd_sample(a):
+    from pyproj import Transformer
+
+    g = Grid.load(a.grid)
+    tf = Transformer.from_crs("EPSG:4326", g.crs, always_xy=True)
+    x, y = tf.transform(a.lonlat[0], a.lonlat[1])
+    v = g.sample_bilinear(x, y)[0]
+    print(json.dumps({"lon": a.lonlat[0], "lat": a.lonlat[1], "x": x, "y": y,
+                      "h_m": None if not np.isfinite(v) else round(float(v), 3),
+                      "vertical_datum": g.vertical_datum}, ensure_ascii=False))
+
+
+# ------------------------------------------------------------------ #
+
+def build_parser():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def common(p):
+        p.add_argument("--boundary", help="캠퍼스 경계 GeoJSON(EPSG:4326 기본)")
+        p.add_argument("--bbox", nargs=4, type=float, metavar=("LON0", "LAT0", "LON1", "LAT1"))
+        p.add_argument("--buffer", type=float, default=20.0, help="경계 바깥 여유(m)")
+        p.add_argument("--res", type=float, default=1.0, help="출력 해상도(m) 0.5~1 권장")
+        p.add_argument("--dst-crs", default=DST_CRS_DEFAULT)
+        p.add_argument("--src-crs", help="입력 래스터에 좌표계가 없거나 틀릴 때 강제")
+        p.add_argument("--grid-dtype", choices=["float32", "uint16"], default="float32",
+                       help="uint16 = 1 cm 양자화(용량 절반)")
+        p.add_argument("--out", required=True, help="출력 경로(확장자 없이)")
+
+    r = sub.add_parser("raster", help="NGII DEM(.img/.tif) 클립·재투영·리샘플")
+    r.add_argument("--src", nargs="+", required=True)
+    r.add_argument("--resampling", default="bilinear", choices=["bilinear", "cubic", "nearest"])
+    common(r)
+    r.set_defaults(fn=cmd_raster)
+
+    c = sub.add_parser("contours", help="1:5000 수치지형도 등고선/표고점 → TIN 격자")
+    c.add_argument("--contours", nargs="+", required=True, help="N3L_F0010000.shp 등")
+    c.add_argument("--spots", nargs="*", help="N3P_F0020000.shp 등")
+    c.add_argument("--z-field", help="높이 속성명(자동 탐지 실패 시)")
+    c.add_argument("--encoding", default="cp949", help="DBF 인코딩(.cpg 없으면 cp949)")
+    c.add_argument("--densify", type=float, default=2.0, help="등고선 정점 보강 간격(m)")
+    c.add_argument("--fallback-raster", nargs="*", help="TIN 빈 곳을 채울 DEM")
+    common(c)
+    c.set_defaults(fn=cmd_contours)
+
+    s = sub.add_parser("sample", help="격자에서 위경도 지점 높이 조회")
+    s.add_argument("--grid", required=True)
+    s.add_argument("--lonlat", nargs=2, type=float, required=True)
+    s.set_defaults(fn=cmd_sample)
+    return ap
+
+
+def main(argv=None):
+    a = build_parser().parse_args(argv)
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

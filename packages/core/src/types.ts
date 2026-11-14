@@ -130,7 +130,25 @@ export interface EdgeProperties extends CommonProperties {
   hours?: string;
   building_from?: string;
   building_to?: string;
+  // ---- Elevation (docs/ELEVATION_INTEGRATION.md). All optional: data without them routes as before. ----
+  /** footway / corridor only: checked on site to be level. The height solver holds Δh = 0 hard; routing reads grade 0. */
+  flat_exact?: boolean;
+  /**
+   * The edge is a terrain break (a kerb, a retaining wall, a flight of outdoor steps): residual interpolation does not
+   * smooth heights across it. Missing: outdoor steps count as one (edge_type 'outdoor' + highway 'steps'); false opts out.
+   */
+  is_breakline?: boolean;
+  /** Derived by the elevation recompute: height of `to` minus height of `from`, metres. */
+  elev_diff_m?: number;
+  /** Derived: standard deviation of elev_diff_m, metres. */
+  elev_sigma_m?: number;
+  /** Derived: elev_diff_m over the plan length, percent, from → to (positive = uphill). */
+  grade_pct?: number;
 }
+
+/** Edge properties written by the elevation recompute (setEdgeElevation), never by hand. */
+export const DERIVED_ELEVATION_PROPS = ['elev_diff_m', 'elev_sigma_m', 'grade_pct'] as const;
+export type DerivedElevationProp = (typeof DERIVED_ELEVATION_PROPS)[number];
 
 export interface BuildingFeature {
   type: 'Feature';

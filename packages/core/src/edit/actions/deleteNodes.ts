@@ -3,6 +3,7 @@ import { bumpRev, defineAction, deletionWarnings, observationMessage, overrideCo
 import { lineLength } from '../geo.ts';
 import { deepEqual, edgeCoords, edgesAt, type EditEdge, type EditState } from '../state.ts';
 import { missing } from './common.ts';
+import { dropDerivedElevation } from './setEdgeElevation.ts';
 
 export interface DeleteNodesOptions {
   /** Join the two edges through a deleted node into one when they match (default false). */
@@ -14,8 +15,9 @@ function unhealable(p: EdgeProperties): boolean {
   return p.highway === 'elevator' || p.edge_type === 'portal' || p.edge_type === 'bridge';
 }
 
+/** Derived elevation values differ along any slope; they are dropped from a healed edge, so they do not block a heal. */
 function comparable(p: EdgeProperties): Record<string, unknown> {
-  const { from: _f, to: _t, rev: _r, step_count: _s, ...rest } = p;
+  const { from: _f, to: _t, rev: _r, step_count: _s, elev_diff_m: _d, elev_sigma_m: _e, grade_pct: _g, ...rest } = p;
   return rest;
 }
 
@@ -30,7 +32,7 @@ export interface HealPlan {
 
 /**
  * How deleting `nodeId` would join its two edges, or null when it would not.
- * Conditions: exactly two edges, equal apart from from / to / rev / step_count, a–n–b with a ≠ b, and
+ * Conditions: exactly two edges, equal apart from from / to / rev / step_count / derived elevation values, a–n–b with a ≠ b, and
  * the same direction through n (a bidirectional edge without incline / conveying may be turned around).
  * The longer edge keeps its id; n's coordinate becomes a bend point; step counts add up.
  */
@@ -102,6 +104,7 @@ export function deleteNodes(ids: readonly string[], options: DeleteNodesOptions 
           kept.props.to = plan.to;
           kept.vertices = plan.vertices;
           if (plan.stepCount !== undefined) kept.props.step_count = plan.stepCount;
+          dropDerivedElevation(kept.props);
           bumpRev(kept.props);
           delete draft.edges[plan.drop];
         } else {

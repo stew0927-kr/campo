@@ -38,6 +38,7 @@ export {
   type Route,
   type RouteFallback,
   type RouteResult,
+  type SlopeSegment,
   type UncertainSegment,
 } from './route.ts';
 export type { RouteStep, RouteStepKind } from './route-text.ts';

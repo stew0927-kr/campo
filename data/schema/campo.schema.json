@@ -266,9 +266,34 @@
         "covered": { "type": "boolean" },
         "hours": { "type": "string", "minLength": 1 },
         "building_from": { "type": "string", "minLength": 1 },
-        "building_to": { "type": "string", "minLength": 1 }
+        "building_to": { "type": "string", "minLength": 1 },
+        "flat_exact": { "description": "footway / corridor checked on site to be level: the height solver holds the height difference at 0 (docs/ELEVATION_INTEGRATION.md).", "type": "boolean" },
+        "is_breakline": { "description": "A terrain break (kerb, retaining wall, outdoor steps): height interpolation does not smooth across it. Missing: outdoor steps are one; false opts out.", "type": "boolean" },
+        "elev_diff_m": { "description": "Derived by the elevation recompute: height of to minus height of from, metres.", "type": "number", "minimum": -200, "maximum": 200 },
+        "elev_sigma_m": { "description": "Derived: standard deviation of elev_diff_m, metres.", "type": "number", "exclusiveMinimum": 0 },
+        "grade_pct": { "description": "Derived: elev_diff_m over the plan length, percent, from → to (positive = uphill).", "type": "number", "minimum": -1000, "maximum": 1000 }
       },
       "allOf": [
+        {
+          "description": "flat_exact only on footway and corridor (a level ramp is a footway).",
+          "if": { "required": ["flat_exact"] },
+          "then": { "properties": { "highway": { "enum": ["footway", "corridor"] } } }
+        },
+        {
+          "description": "is_breakline only on footway, steps and ramp (a terrain break is crossed on foot).",
+          "if": { "required": ["is_breakline"] },
+          "then": { "properties": { "highway": { "enum": ["footway", "steps", "ramp"] } } }
+        },
+        {
+          "description": "A level edge is not a terrain break: flat_exact and is_breakline are not both true.",
+          "if": { "required": ["flat_exact", "is_breakline"], "properties": { "flat_exact": { "const": true } } },
+          "then": { "properties": { "is_breakline": { "const": false } } }
+        },
+        {
+          "description": "elev_sigma_m and grade_pct come with elev_diff_m (all three are written by the recompute).",
+          "if": { "anyOf": [{ "required": ["elev_sigma_m"] }, { "required": ["grade_pct"] }] },
+          "then": { "required": ["elev_diff_m"] }
+        },
         {
           "description": "Allowed highway / edge_type pairs (§4.2).",
           "if": { "required": ["edge_type"], "properties": { "highway": { "const": "footway" } } },

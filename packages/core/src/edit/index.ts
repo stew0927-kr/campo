@@ -43,6 +43,7 @@ export { addBuilding, type NewBuilding } from './actions/addBuilding.ts';
 export { BUILDING_CODE, renameBuilding, renamedElevatorId } from './actions/renameBuilding.ts';
 export { setBuildingLevels } from './actions/setBuildingLevels.ts';
 export { reverseEdge } from './actions/reverseEdge.ts';
+export { setEdgeElevation, type EdgeElevationValues } from './actions/setEdgeElevation.ts';
 export { compose, type ComposeStep } from './compose.ts';
 export { addRoom, type NewRoom } from './actions/addRoom.ts';
 export { deleteRooms, doorsOfRoom } from './actions/deleteRooms.ts';

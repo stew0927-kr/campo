@@ -18,9 +18,10 @@ import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } fro
 import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
-  BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, PREVIEW_LAYERS, PREVIEW_SOURCE,
-  ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
-  dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON, type BreaklineShape, type RouteLine,
+  BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, OUTLINE_LAYERS, OUTLINE_SOURCE,
+  PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
+  dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
+  type BreaklineShape, type OutlineHover, type RouteLine,
 } from './layers.ts';
 import { registerBeltIcons, registerBreaklineTooth, registerPictograms, registerRoutePins } from './icons.ts';
 
@@ -30,6 +31,21 @@ const PICK_PX = 10;
 const DRAG_PX = 3;
 /** A dragged node snaps to a node or an edge of its own scope within this many pixels. */
 const DROP_PX = 8;
+/** 외곽선 수정: a press this close to a corner takes it; a right-click this close to a side adds a corner there. */
+const CORNER_PX = 10;
+const SIDE_PX = 8;
+
+/** 외곽선 수정 on the map: the corners being edited (the outer ring, open), the holes, and what the map does to them. */
+export interface OutlineEditView {
+  corners: readonly Position[];
+  holes: readonly Position[][];
+  /** A corner was dragged and let go here. */
+  onMove: (index: number, to: Position) => void;
+  /** A side was right-clicked: a corner at the foot on it. */
+  onInsert: (side: number, at: Position) => void;
+  /** A corner was right-clicked. */
+  onRemove: (index: number) => void;
+}
 
 export interface MapClick {
   position: Position;
@@ -91,6 +107,8 @@ interface Props {
   onHandleRefused: (reason: string) => void;
   /** The drag is over: the result, or null when it was cancelled (Esc). */
   onDragEnd: (result: DragResult | null) => void;
+  /** 외곽선 수정 is on: corners drag, right-clicks add and remove corners, and nothing else on the map reacts. */
+  outline: OutlineEditView | null;
 }
 
 /** Constructor options for the limits; a limit that is not declared is left out (MapLibre's default stays). */
@@ -136,6 +154,13 @@ export function MapView(props: Props) {
   const latest = useRef(props);
   latest.current = props;
   const pushPreview = () => whenReady((map) => (map.getSource(PREVIEW_SOURCE) as GeoJSONSource).setData(previewGeoJSON(latest.current.previewShapes, hoverShapes.current)));
+  /** 외곽선 수정: the corner or side under the pointer, and the corners while one is being dragged. */
+  const outlineHover = useRef<OutlineHover>(null);
+  const outlineDrag = useRef<{ index: number; corners: Position[] } | null>(null);
+  const pushOutline = (corners?: readonly Position[]) => whenReady((map) => {
+    const o = latest.current.outline;
+    (map.getSource(OUTLINE_SOURCE) as GeoJSONSource).setData(outlineGeoJSON(corners ?? o?.corners ?? [], o?.holes ?? [], o ? outlineHover.current : null, outlineDrag.current?.index ?? null));
+  });
 
   useEffect(() => {
     const map = new MapLibreMap({
@@ -169,6 +194,35 @@ export function MapView(props: Props) {
       for (const [id, filter] of hideInData([])) map.setFilter(id, filter ?? null);
       (map.getSource(DRAG_SOURCE) as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: [] });
       map.getContainer().removeAttribute('data-dragging');
+    };
+
+    // ---- 외곽선 수정: the corner (first) or the side under a screen point ----
+    const outlineHit = (point: ScreenPoint): (OutlineHover & object & { foot: ScreenPoint }) | null => {
+      const o = latest.current.outline;
+      if (!o || o.corners.length === 0) return null;
+      const pts: ScreenPoint[] = o.corners.map((c) => map.project([c[0], c[1]]));
+      let best: { kind: 'corner' | 'side'; index: number; foot: ScreenPoint } | null = null;
+      let bestD = CORNER_PX;
+      pts.forEach((pt, i) => {
+        const d = Math.hypot(pt.x - point.x, pt.y - point.y);
+        if (d <= bestD) {
+          bestD = d;
+          best = { kind: 'corner', index: i, foot: pt };
+        }
+      });
+      if (best) return best;
+      bestD = SIDE_PX;
+      pts.forEach((pt, i) => {
+        const f = footOnSegment(point, pt, pts[(i + 1) % pts.length]!);
+        if (f.dist <= bestD) {
+          bestD = f.dist;
+          best = { kind: 'side', index: i, foot: f.point };
+        }
+      });
+      return best;
+    };
+    const outlineCursor = (h: OutlineHover) => {
+      map.getCanvas().style.cursor = !latest.current.outline ? '' : h?.kind === 'corner' ? (outlineDrag.current ? 'grabbing' : 'grab') : h?.kind === 'side' ? 'copy' : '';
     };
 
     // ---- click: pick a node, an edge or a building outline ----
@@ -216,6 +270,7 @@ export function MapView(props: Props) {
       return { node, edge, building };
     };
     map.on('click', (e) => {
+      if (latest.current.outline) return; // 외곽선 수정 works with drags and right-clicks only
       const at: Position = [e.lngLat.lng, e.lngLat.lat];
       if (latest.current.tool === 'path' && !pathScope.current) pathScope.current = autoScope(at);
       if (DRAW_MODE[latest.current.tool]) return; // Terra Draw owns clicks while drawing
@@ -225,6 +280,16 @@ export function MapView(props: Props) {
     // Right-click: the browser's own menu is blocked on the map only (this listener sits on MapLibre's container), and the editor's menu opens.
     map.on('contextmenu', (e) => {
       e.originalEvent.preventDefault();
+      const o = latest.current.outline;
+      if (o) {
+        const h = outlineHit(e.point);
+        if (h?.kind === 'corner') o.onRemove(h.index);
+        else if (h?.kind === 'side') {
+          const ll = map.unproject([h.foot.x, h.foot.y]);
+          o.onInsert(h.index, [ll.lng, ll.lat]);
+        }
+        return;
+      }
       if (DRAW_MODE[latest.current.tool]) return;
       const { node, edge } = pickAt(e.point, (n) => nodeStrong(n, latest.current.scope), false);
       latest.current.onContextMenu({ node, edge, x: e.originalEvent.clientX, y: e.originalEvent.clientY });
@@ -328,6 +393,17 @@ export function MapView(props: Props) {
     };
 
     map.on('mousedown', (e) => {
+      const o = latest.current.outline;
+      if (o) {
+        const h = e.originalEvent.button === 0 ? outlineHit(e.point) : null;
+        if (h?.kind === 'corner') {
+          e.preventDefault(); // the map must not pan while a corner is pulled
+          outlineDrag.current = { index: h.index, corners: o.corners.map((c): Position => [c[0], c[1]]) };
+          map.getContainer().setAttribute('data-dragging', 'true');
+          outlineCursor(h);
+        }
+        return;
+      }
       if (latest.current.tool !== 'select' || e.originalEvent.button !== 0) return;
       if (e.originalEvent.shiftKey) {
         // Shift at the start: a box, not a drag (SPEC-v0.2 5.1).
@@ -359,6 +435,23 @@ export function MapView(props: Props) {
       }
     });
     map.on('mousemove', (e) => {
+      const od = outlineDrag.current;
+      if (od) {
+        od.corners[od.index] = [e.lngLat.lng, e.lngLat.lat];
+        pushOutline(od.corners);
+        return;
+      }
+      if (latest.current.outline) {
+        const h = outlineHit(e.point);
+        const next: OutlineHover = h ? { kind: h.kind, index: h.index } : null;
+        const was = outlineHover.current;
+        if (was?.kind !== next?.kind || was?.index !== next?.index) {
+          outlineHover.current = next;
+          pushOutline();
+          outlineCursor(next);
+        }
+        return;
+      }
       if (box) {
         const x = Math.min(box.x, e.point.x);
         const y = Math.min(box.y, e.point.y);
@@ -380,6 +473,14 @@ export function MapView(props: Props) {
       }
     });
     map.on('mouseup', (e) => {
+      const od = outlineDrag.current;
+      if (od) {
+        outlineDrag.current = null;
+        map.getContainer().removeAttribute('data-dragging');
+        outlineCursor(outlineHover.current);
+        latest.current.outline?.onMove(od.index, [e.lngLat.lng, e.lngLat.lat]);
+        return;
+      }
       press = null;
       endBox(e);
       if (!drag) return;
@@ -399,6 +500,12 @@ export function MapView(props: Props) {
     });
     // Released outside the map: the map never saw it, so put the node back.
     const onWindowUp = () => {
+      if (outlineDrag.current) {
+        // Let go outside the map: the corner goes back.
+        outlineDrag.current = null;
+        map.getContainer().removeAttribute('data-dragging');
+        pushOutline();
+      }
       press = null;
       if (box) {
         box.el.remove();
@@ -479,6 +586,7 @@ export function MapView(props: Props) {
       map.addSource(DRAG_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
       map.addSource(ELEVATION_SOURCE, { type: 'geojson', data: elevationGeoJSON(latest.current.breaklines, latest.current.slopes) });
+      map.addSource(OUTLINE_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       registerPictograms(map);
       registerBreaklineTooth(map);
       registerBeltIcons(map);
@@ -492,6 +600,7 @@ export function MapView(props: Props) {
       }
       for (const layer of PREVIEW_LAYERS) map.addLayer(layer);
       for (const layer of DRAG_LAYERS) map.addLayer(layer);
+      for (const layer of OUTLINE_LAYERS) map.addLayer(layer);
 
       const draw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map }),
@@ -610,6 +719,18 @@ export function MapView(props: Props) {
     pushPreview();
   }, [props.previewShapes]);
 
+  // 외곽선 수정: the draft as it is now (after a move, an added or removed corner, 되돌리기); off clears it.
+  useEffect(() => {
+    if (!props.outline) {
+      outlineHover.current = null;
+      outlineDrag.current = null;
+      whenReady((map) => {
+        map.getCanvas().style.cursor = '';
+      });
+    }
+    pushOutline();
+  }, [props.outline]);
+
   useEffect(() => {
     whenReady(() => drawRef.current?.setModeStyles('linestring', lineStyles(tool === 'breakline' ? ELEVATION_COLORS.breakline : KIND_COLOR[outdoorKind])));
   }, [outdoorKind, tool]);
@@ -627,6 +748,7 @@ export function MapView(props: Props) {
       ref={container}
       className="map"
       data-tool={tool}
+      data-outline={props.outline ? 'true' : undefined}
       role="application"
       aria-label="캠퍼스 지도. 도구를 고른 뒤 지도를 눌러 그립니다."
     />

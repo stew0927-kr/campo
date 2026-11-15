@@ -1,7 +1,7 @@
 // How the edit state is drawn on the map. Display only: builds a throwaway GeoJSON from the EditState.
 import type { FeatureCollection } from 'geojson';
 import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
-import { PICTOGRAM_COLORS, beltEndIds, edgeCoords, edgesAt, movedTogether, pictogramOf, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
+import { PICTOGRAM_COLORS, beltEndIds, closeRing, edgeCoords, outlineOfLevel, edgesAt, movedTogether, pictogramOf, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
 import { unattachedIds } from '../model/connect.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
@@ -48,7 +48,8 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
     features.push({
       type: 'Feature',
       id: b.id,
-      geometry: { type: 'Polygon', coordinates: b.polygon },
+      // The floor shown is drawn with its own outline when it has one (floor_outlines), the others with the building's.
+      geometry: { type: 'Polygon', coordinates: scope.kind === 'building' && scope.buildingId === b.id ? outlineOfLevel(b, scope.level) : b.polygon },
       properties: {
         id: b.id, kind: 'building', highway: null, node_type: null, classroom: false,
         emphasis: buildingInScope(b, scope) ? 1 : 0, selected: scope.kind === 'building' && b.id === scope.buildingId, highlight: highlight.has(b.id),
@@ -573,6 +574,64 @@ export const SLOPE_LAYERS: LayerSpecification[] = [
       'line-width': 10,
       'line-opacity': 0.9,
       'line-dasharray': [0.35, 0.35],
+    },
+  },
+];
+
+// ---- 외곽선 수정: the outline being edited, its sides and its corner handles ----
+
+export const OUTLINE_SOURCE = 'campo-outline';
+/** Same value as the CSS token --outline-edit. */
+export const OUTLINE_COLOR = '#3b5bdb';
+
+/** What the pointer is over while an outline is edited: a corner (drag, right-click deletes) or a side (right-click adds). */
+export type OutlineHover = { kind: 'corner' | 'side'; index: number } | null;
+
+export function outlineGeoJSON(corners: readonly Position[], holes: readonly Position[][], hover: OutlineHover, dragging: number | null): FeatureCollection {
+  if (corners.length === 0) return { type: 'FeatureCollection', features: [] };
+  const features: FeatureCollection['features'] = [
+    { type: 'Feature', geometry: { type: 'Polygon', coordinates: [closeRing(corners), ...holes] }, properties: { role: 'fill' } },
+  ];
+  corners.forEach((a, i) => {
+    const b = corners[(i + 1) % corners.length]!;
+    const on = hover?.kind === 'side' && hover.index === i;
+    features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: [a, b] }, properties: { role: 'side', index: i, hover: on } });
+    // A faint dot in the middle of each side: where a right-click adds a corner.
+    features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] }, properties: { role: 'mid', index: i, hover: on } });
+  });
+  corners.forEach((c, i) => {
+    const on = dragging === i || (hover?.kind === 'corner' && hover.index === i);
+    features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: { role: 'corner', index: i, hover: on } });
+  });
+  return { type: 'FeatureCollection', features };
+}
+
+const outlineRole = (role: string): ExpressionSpecification => ['==', ['get', 'role'], role];
+export const OUTLINE_LAYERS: LayerSpecification[] = [
+  { id: 'campo-outline-fill', type: 'fill', source: OUTLINE_SOURCE, filter: outlineRole('fill'), paint: { 'fill-color': OUTLINE_COLOR, 'fill-opacity': 0.12 } },
+  {
+    // The side under the pointer: a wide soft band, so it is plain where a right-click adds a corner.
+    id: 'campo-outline-side-hover', type: 'line', source: OUTLINE_SOURCE, filter: ['all', outlineRole('side'), ['get', 'hover']],
+    layout: { 'line-cap': 'round' }, paint: { 'line-color': OUTLINE_COLOR, 'line-width': 9, 'line-opacity': 0.25 },
+  },
+  {
+    id: 'campo-outline-side', type: 'line', source: OUTLINE_SOURCE, filter: outlineRole('side'),
+    layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': OUTLINE_COLOR, 'line-width': 2.5 },
+  },
+  {
+    id: 'campo-outline-mid', type: 'circle', source: OUTLINE_SOURCE, filter: outlineRole('mid'),
+    paint: {
+      'circle-radius': ['case', ['get', 'hover'], 4.5, 3] as never,
+      'circle-color': '#ffffff', 'circle-stroke-color': OUTLINE_COLOR, 'circle-stroke-width': 1.5, 'circle-opacity': 0.9,
+    },
+  },
+  {
+    id: 'campo-outline-corner', type: 'circle', source: OUTLINE_SOURCE, filter: outlineRole('corner'),
+    paint: {
+      'circle-radius': ['case', ['get', 'hover'], 8, 6.5] as never,
+      'circle-color': ['case', ['get', 'hover'], OUTLINE_COLOR, '#ffffff'] as never,
+      'circle-stroke-color': ['case', ['get', 'hover'], '#ffffff', OUTLINE_COLOR] as never,
+      'circle-stroke-width': 2.5,
     },
   },
 ];

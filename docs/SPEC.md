@@ -61,7 +61,7 @@ v0.1은 아래가 모두 되면 끝이다.
 
 | kind | geometry | 필수 속성 | 선택 속성 |
 |---|---|---|---|
-| `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m` |
+| `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m`, `floor_outlines`(층별 외곽선, 아래 참고) |
 | `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check`, `hours`, `closed_period`, `access_condition`, `sync_group` |
 | `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check`, `flat_exact`, `is_breakline`, `elev_diff_m`, `elev_sigma_m`, `grade_pct` |
 
@@ -130,6 +130,7 @@ data/campuses/hanyang-seoul/
                                # 층을 넘는 계단·엘리베이터 edge는 아래층 파일에 둔다
 ```
 
+- `building`의 `floor_outlines`(선택): 층마다 외곽선이 다를 때(저층부 포디움, 셋백, 넓은 지하층) 그 층만의 외곽선. 키는 `String(level)`(`"-1"`, `"3"`), 값은 Polygon 좌표(닫힌 고리, 점 4개 이상). 없는 층은 건물 Feature의 geometry를 쓴다(core `getBuildingOutlineForLevel`). 화면 표시용이며 길찾기는 읽지 않는다. 검사 E15가 그 층이 `levels`에 있는지와 고리가 닫혔는지 확인한다. 층을 지우면 그 층의 외곽선도 함께 지운다.
 - `campus.json`의 `map_limits`(선택): `bounds`([서, 남, 동, 북], 캠퍼스 중심을 포함해야 함), `min_zoom`, `max_zoom`. 편집기는 지도를 이 범위 밖으로 옮기지 못하게 한다. 범위는 코드에 두지 않고 캠퍼스마다 이 파일에 적는다(한양대는 중심에서 약 1.5km). 없으면 제한이 없다. 검사 E14가 순서·중심·줌 범위를 확인한다(v0.2 8장).
 - 한 건물은 한 사람이 맡아 편집한다. 그러면 Git 충돌이 거의 없다.
 - 저장할 때 Feature는 `id` 순서로 정렬하고, Feature 하나를 한 줄에 쓴다. 그래야 Git에서 바뀐 부분이 잘 보인다.
@@ -191,6 +192,7 @@ data/campuses/hanyang-seoul/
 6. 엘리베이터·계단 구간의 `level_from`·`level_to`가 양 끝 지점의 level과 다름
 7. `ground_levels`에 있는 층에 `entrance` 지점이 하나도 없음
 8. `entrance` 지점이 포탈 구간에 연결되지 않음
+- E15. `floor_outlines`의 층이 건물 `levels`에 없거나, 외곽선 고리가 닫히지 않았거나 점이 4개 미만
 
 **경고(통과는 함)**
 

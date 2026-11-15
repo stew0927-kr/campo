@@ -45,6 +45,12 @@ export interface BuildingProperties extends CommonProperties {
   ground_levels: Level[];
   /** A footbridge registered as a one-level building (SPEC-v0.2 §2.6). */
   building_type?: 'bridge';
+  /**
+   * The outline of single floors where it differs from the building's own (the Feature geometry): a podium, a setback,
+   * a basement wider than the tower. Key String(level), e.g. "-1", "3"; value Polygon coordinates (closed rings of 4+
+   * positions). A floor without one uses the building geometry (getBuildingOutlineForLevel). Display only: routing never reads it.
+   */
+  floor_outlines?: Record<string, Position[][]>;
   ext?: {
     moct_bldg_id?: string;
     floor_height_m?: number;
@@ -289,6 +295,8 @@ export const ERROR_CODES = {
   elevatorEdgeNotStops: 'elevator-edge-not-stops',
   /** E14: campus.json map_limits is not a usable area (bounds out of order, centre outside, min_zoom above max_zoom). */
   mapLimitsInvalid: 'map-limits-invalid',
+  /** E15: a floor outline of a building is for a level it does not have, or a ring is not closed (4+ positions, first = last). */
+  floorOutlineInvalid: 'floor-outline-invalid',
 } as const;
 
 export const WARNING_CODES = {

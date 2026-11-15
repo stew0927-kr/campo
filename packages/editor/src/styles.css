@@ -602,3 +602,27 @@ button.check-item:hover { background: var(--chrome); }
 .breakline-list li { display: inline-flex; align-items: center; gap: 5px; padding: 1px 2px 1px 8px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); font-size: var(--text-s); }
 .breakline-remove { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
 .breakline-remove:hover { background: var(--chrome); color: var(--danger); }
+
+/* ---- 외곽선 수정: one indigo for the draft on the map (layers.ts OUTLINE_COLOR), its row, and the way in ---- */
+:root { --outline-edit: #3b5bdb; }
+.map[data-outline="true"] .maplibregl-canvas { cursor: default; }
+.outline-form { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.outline-what { display: inline-flex; align-items: baseline; gap: 8px; margin: 0; }
+.outline-swatch { align-self: center; width: 14px; height: 12px; border: 2px solid var(--outline-edit); border-radius: 2px; background: color-mix(in srgb, var(--outline-edit) 14%, transparent); }
+.outline-scope { color: var(--muted); font-size: var(--text-s); }
+.outline-how { display: flex; gap: 10px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: var(--text-s); }
+.outline-how kbd { margin-right: 3px; padding: 0 5px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); color: var(--ink); font: inherit; font-size: 11px; }
+.outline-actions { display: flex; gap: 6px; margin-left: auto; }
+.outline-actions button { height: 28px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.outline-actions button[aria-disabled="true"] { color: var(--muted); opacity: 0.55; cursor: default; }
+.outline-actions .outline-done { border-color: var(--outline-edit); background: var(--outline-edit); color: #fff; font-weight: 600; }
+.outline-actions .outline-done:hover { background: color-mix(in srgb, var(--outline-edit) 85%, #000); }
+.outline-actions button:focus-visible { outline: 2px solid var(--outline-edit); outline-offset: 1px; }
+.floors-outline {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--outline-edit);
+  border-radius: 6px; background: var(--surface); color: var(--outline-edit); font-size: var(--text-s); font-weight: 600; cursor: pointer;
+}
+.floors-outline:hover { background: color-mix(in srgb, var(--outline-edit) 10%, var(--surface)); }
+.outline-floors { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
+.outline-floors li { display: flex; align-items: center; gap: 6px; }
+.outline-floors li span { min-width: 48px; font-weight: 600; color: var(--ink); }

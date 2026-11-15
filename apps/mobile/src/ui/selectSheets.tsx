@@ -176,11 +176,13 @@ interface BuildingInfoProps {
   building: EditBuilding;
   onSave: (form: BuildingForm) => void;
   onEnter: (level: number) => void;
+  /** 외곽선 수정 of the building outline (the floors without their own follow it). */
+  onOutline: () => void;
   onDelete: () => void;
   onClose: () => void;
 }
 
-export function BuildingInfoSheet({ building, onSave, onEnter, onDelete, onClose }: BuildingInfoProps) {
+export function BuildingInfoSheet({ building, onSave, onEnter, onOutline, onDelete, onClose }: BuildingInfoProps) {
   const p = building.props;
   const [name, setName] = useState(p.name);
   const [code, setCode] = useState(p.code);
@@ -201,6 +203,15 @@ export function BuildingInfoSheet({ building, onSave, onEnter, onDelete, onClose
       <BigButton label="저장" disabled={levels === null || name.trim() === '' || code === ''} onPress={() => levels && onSave({ name, code, levels })} style={styles.gap} />
       <FieldLabel>이 건물 조사하기</FieldLabel>
       <Choice label="들어갈 층" value={undefined} onChange={onEnter} options={levelChoices(p.levels)} />
+      <BigButton
+        tone="plain"
+        label="외곽선 수정"
+        hint={Object.keys(p.floor_outlines ?? {}).length > 0
+          ? `건물 외곽선을 고칩니다. ${Object.keys(p.floor_outlines ?? {}).map((k) => floorLabel(Number(k))).join(', ')}은(는) 층만의 외곽선이 있습니다`
+          : '건물 외곽선을 고칩니다. 한 층만 다르면 그 층에 들어가 메뉴의 [외곽선 수정]을 눌러 주세요'}
+        onPress={onOutline}
+        style={styles.gap}
+      />
       <BigButton tone="danger" label="건물 삭제" onPress={onDelete} style={styles.gapWide} />
     </BottomSheet>
   );

@@ -2,7 +2,10 @@
 // few questions a record needs. Records are plans of core edit actions (survey/plans.ts, buildings.ts, floors.ts, rooms.ts,
 // selection.ts); the session runs them and keeps what the sensors read (survey/session.ts). This file only wires the
 // pieces and holds what is on screen.
-import { buildingById, metres, surveySource, type EditBuilding, type EditNode, type Position } from '@campo/core';
+import {
+  buildingById, closeRing, hasFloorOutline, insertCorner, metres, moveCorner, outlineOfLevel, removeCorner, resetFloorOutline, ringCorners,
+  setBuildingOutline, surveySource, type EditBuilding, type EditNode, type Position,
+} from '@campo/core';
 import { DEFAULT_DH_MODEL, floorIdOfLevel, type BuildingId, type FloorId, type MeasureTarget } from '@campo/core/elevation';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -85,7 +88,9 @@ type Tool =
   /** The escalator stopwatch on the belts at a point (a pair runs both ways), or on the one belt picked in 선택. */
   | { kind: 'timer'; edgeIds: string[]; direction: 'forward' | 'backward'; fromSelect: boolean }
   | { kind: 'doorRun'; run: DoorRun }
-  | { kind: 'strip'; stage: 'corridor' | 'first' | 'last'; edges: string[]; first: Position | null };
+  | { kind: 'strip'; stage: 'corridor' | 'first' | 'last'; edges: string[]; first: Position | null }
+  /** 외곽선 수정 of a floor (or, level null, of the building): corners edited here, one history entry on 완료. */
+  | { kind: 'outline'; buildingId: string; level: number | null; corners: Position[]; holes: Position[][]; past: Position[][]; selected: number | null };
 
 const noSubscribe = () => () => {};
 const zero = () => 0;
@@ -437,6 +442,29 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     if (scope.kind === 'building') start();
     else notify('건물 안의 층에서 쓰는 도구입니다. 위쪽에서 건물과 층을 먼저 골라 주세요.', 'error');
   };
+  // ---- 외곽선 수정 ----
+
+  const startOutline = (buildingId: string, level: number | null): void => {
+    const b = buildingById(state, buildingId);
+    if (!b) return notify('건물을 찾을 수 없습니다.', 'error');
+    const [outer, ...holes] = outlineOfLevel(b, level);
+    setSelection(EMPTY_SELECTION);
+    setSheet(null);
+    setTool({ kind: 'outline', buildingId, level, corners: ringCorners(outer ?? []), holes, past: [], selected: null });
+  };
+  /** A change of the corners: the one before is kept for 되돌리기. */
+  const editOutline = (t: Extract<Tool, { kind: 'outline' }>, corners: Position[], selected: number | null = t.selected): void =>
+    setTool({ ...t, corners, past: [...t.past, t.corners], selected });
+  const finishOutline = (t: Extract<Tool, { kind: 'outline' }>): void => {
+    const b = buildingById(state, t.buildingId);
+    if (!b) return endTool();
+    if (t.past.length === 0) {
+      notify('바뀐 것이 없어 외곽선 수정을 마쳤습니다.');
+      return endTool();
+    }
+    if (apply(setBuildingOutline(b.props.code, t.level, [closeRing(t.corners), ...t.holes]), t.level === null ? '건물 외곽선을 고쳤습니다.' : `${floorLabel(t.level)} 외곽선을 고쳤습니다.`)) endTool();
+  };
+
   const endTool = (): void => {
     setTool(null);
     setSelection(EMPTY_SELECTION);
@@ -686,7 +714,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     { id: 'select', label: '다중선택', hint: '여러 지점·구간을 연속으로 누르거나 끌어서 골라 복사·삭제', onPress: () => setTool({ kind: 'select' }) },
     { id: 'strip', label: '강의실 자동 연결', disabled: !indoor, hint: '복도를 따라 강의실 문을 한 번에 놓기', onPress: needFloor(() => setTool({ kind: 'strip', stage: 'corridor', edges: [], first: null })) },
     { id: 'osm', label: '건물 외곽선 가져오기', hint: '십자선 자리 건물의 OSM 외곽선 가져오기', onPress: addOsmBuilding },
-    { id: 'draw', label: '건물 그리기', hint: '외곽선을 점으로 찍어 건물 만들기', onPress: () => setDraft([]) },
+    { id: 'draw', label: '외곽선 그리기', hint: '외곽선을 점으로 찍어 새 건물 만들기', onPress: () => setDraft([]) },
+    { id: 'outline', label: '외곽선 수정', disabled: !indoor, hint: '지금 층의 건물 외곽선 고치기', onPress: needFloor(() => scope.kind === 'building' && startOutline(scope.buildingId, scope.level)) },
     { id: 'copy', label: '층 복사·연동', disabled: !indoor, onPress: needFloor(() => setSheet('copy')) },
     { id: 'pressure', label: '측정된 기압', hint: '잰 지점을 지도에 표시하고 다시 재거나 지우기', disabled: !hasBarometer && (elevation?.current().nodes.length ?? 0) === 0, onPress: () => setPressureView(true) },
     { id: 'export', label: '내보내기', onPress: () => setSheet('export') },
@@ -770,6 +799,36 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
             { id: 'back', label: run.lastRef ? `뒷문 · ${run.lastRef}호` : '뒷문', disabled: run.lastRef === null, onPress: () => placeRunDoor(true) },
             undo,
             finish,
+          ],
+        };
+      }
+      case 'outline': {
+        const t = tool;
+        const b = buildingById(state, t.buildingId);
+        const own = t.level !== null && b !== undefined && hasFloorOutline(b, t.level);
+        const what = `${b?.props.name ?? '건물'} ${t.level === null ? '건물' : floorLabel(t.level)} 외곽선`;
+        return {
+          text: `${what}${t.level !== null && !own ? '(완료하면 이 층만의 외곽선이 됩니다)' : ''}. 꼭짓점을 끌어 옮기고, 선을 누르면 그 자리에 꼭짓점이 생깁니다. 꼭짓점을 누르면 골라서 지울 수 있습니다.`,
+          actions: [
+            { id: 'done', label: t.past.length > 0 ? `완료 (${t.past.length})` : '완료', primary: true, onPress: () => finishOutline(t) },
+            {
+              id: 'removeCorner', label: '꼭짓점 삭제', tone: 'danger', disabled: t.selected === null || t.corners.length <= 3,
+              onPress: () => {
+                if (t.selected === null) return;
+                const next = removeCorner(t.corners, t.selected);
+                if (!next) return notify('외곽선에는 꼭짓점이 세 개 이상 있어야 합니다.', 'error');
+                editOutline(t, next, null);
+              },
+            },
+            {
+              id: 'undoCorner', label: '되돌리기', disabled: t.past.length === 0,
+              onPress: () => setTool({ ...t, corners: t.past.at(-1) ?? t.corners, past: t.past.slice(0, -1), selected: null }),
+            },
+            ...(own && b ? [{
+              id: 'resetOutline', label: '건물 외곽선으로',
+              onPress: () => { if (apply(resetFloorOutline(b.props.code, t.level!), `${floorLabel(t.level!)}이(가) 건물 외곽선을 따르게 했습니다.`)) endTool(); },
+            } satisfies DockAction] : []),
+            { id: 'cancel', label: '취소', onPress: () => { endTool(); notify('외곽선 수정을 취소했습니다.'); } },
           ],
         };
       }
@@ -895,6 +954,14 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         onNodeTap={plain ? (id) => { setInfoId(id); setSheet('info'); } : undefined}
         heading={headingEdit}
         highlightEdges={tool?.kind === 'strip' ? tool.edges : undefined}
+        outline={tool?.kind === 'outline' ? {
+          corners: tool.corners,
+          holes: tool.holes,
+          selected: tool.selected,
+          onMove: (index, to) => editOutline(tool, moveCorner(tool.corners, index, to), index),
+          onInsert: (side, at) => editOutline(tool, insertCorner(tool.corners, side, at), side + 1),
+          onSelect: (index) => setTool({ ...tool, selected: index }),
+        } : null}
         marks={marks}
         bottomInset={dockHeight}
         escalatorSpots={escSpots}
@@ -1130,6 +1197,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
             key={selectedBuilding.id}
             building={selectedBuilding}
             onSave={(form) => saveBuilding(selectedBuilding, form)}
+            onOutline={() => startOutline(selectedBuilding.id, null)}
             onEnter={(level) => {
               endTool();
               pickScope({ kind: 'building', buildingId: selectedBuilding.id, level: selectedBuilding.props.levels.includes(level) ? level : defaultLevel(selectedBuilding) });

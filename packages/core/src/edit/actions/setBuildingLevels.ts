@@ -47,6 +47,12 @@ export function setBuildingLevels(code: string, levels: readonly number[]): Acti
       props.levels = next;
       const kept = props.ground_levels.filter((l) => next.includes(l));
       props.ground_levels = kept.length > 0 ? kept : [next.includes(1) ? 1 : next[0]!];
+      // A floor that goes takes its own outline with it (E15).
+      if (props.floor_outlines) {
+        const outlines = Object.fromEntries(Object.entries(props.floor_outlines).filter(([key]) => next.includes(Number(key))));
+        if (Object.keys(outlines).length > 0) props.floor_outlines = outlines;
+        else delete props.floor_outlines;
+      }
       bumpRev(props);
     },
   });

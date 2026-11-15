@@ -57,6 +57,11 @@ const TOOL_SPECS = [
     hint: '건물 외곽선을 클릭하며 그리고, 첫 점을 다시 누르면 끝납니다.',
   },
   {
+    id: 'outline', label: '외곽선 수정', group: 'draw',
+    description: '고른 건물의 지금 보는 층 외곽선을 고칩니다. 층마다 모양이 다르면 그 층만의 외곽선이 됩니다.',
+    hint: '꼭짓점을 끌어 옮기고, 선 위를 우클릭하면 그 자리에 꼭짓점이 생깁니다. 꼭짓점을 우클릭하면 지웁니다(3개 이상 유지). [완료] 또는 Enter로 반영, Esc는 취소입니다.',
+  },
+  {
     id: 'osm-building', label: '건물 외곽선 가져오기', group: 'draw', scope: 'outdoor',
     description: '지도에서 건물을 누르면 OpenStreetMap의 외곽선·이름·층수로 건물을 등록합니다.',
     hint: '가져올 건물의 안쪽을 누르세요. OpenStreetMap(Overpass)에서 외곽선을 받아 건물로 등록합니다. 되돌리기로 취소할 수 있고, 이름·코드·층은 상세 정보에서 고칩니다.',

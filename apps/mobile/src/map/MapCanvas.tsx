@@ -9,7 +9,7 @@
 //
 // The map keeps its own view. Dragging re-renders this component only (the screen around it reads the crosshair through
 // the handle when a record is made), and the drawn Features are redrawn only when the data, the floor or the zoom step changes.
-import { beltEndIds, buildingById, edgeCoords, isEscalator, pictogramOf, type EditState, type Position } from '@campo/core';
+import { beltEndIds, buildingById, edgeCoords, isEscalator, outlineOfLevel, pictogramOf, type EditState, type Position } from '@campo/core';
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
 import { Image, PanResponder, Vibration, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, G, Line, Path, Polygon, Polyline, Rect, Text as SvgText } from 'react-native-svg';
@@ -89,6 +89,54 @@ interface Props {
   pins?: readonly PressurePin[] | null;
   pinSelected?: string | null;
   onPinTap?: (key: string) => void;
+  /** 외곽선 수정: one finger on a corner drags it (before the map pans), a tap on a side adds a corner there, a tap on a corner picks it. */
+  outline?: OutlineEdit | null;
+}
+
+/** The outline being edited on the map. */
+export interface OutlineEdit {
+  /** The outer ring's corners (open) and the holes, drawn as they are. */
+  corners: readonly Position[];
+  holes: readonly Position[][];
+  selected: number | null;
+  onMove: (index: number, to: Position) => void;
+  onInsert: (side: number, at: Position) => void;
+  onSelect: (index: number | null) => void;
+}
+
+/** A finger this close to a corner takes it, this close to a side adds a corner (screen pixels: thumbs, not mouse pointers). */
+const CORNER_HIT_PX = 26;
+const SIDE_HIT_PX = 20;
+const OUTLINE_COLOR = '#3B5BDB';
+
+/** The corner under a screen point, else the side and the foot on it. */
+function outlineHit(o: OutlineEdit, screen: (p: Position) => XY, at: XY): { kind: 'corner'; index: number } | { kind: 'side'; index: number; foot: XY } | null {
+  const pts = o.corners.map(screen);
+  let corner: number | null = null;
+  let best = CORNER_HIT_PX;
+  pts.forEach((pt, i) => {
+    const d = Math.hypot(pt[0] - at[0], pt[1] - at[1]);
+    if (d <= best) {
+      best = d;
+      corner = i;
+    }
+  });
+  if (corner !== null) return { kind: 'corner', index: corner };
+  let side: { kind: 'side'; index: number; foot: XY } | null = null;
+  best = SIDE_HIT_PX;
+  pts.forEach((a, i) => {
+    const b = pts[(i + 1) % pts.length]!;
+    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+    const len2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((at[0] - a[0]) * dx + (at[1] - a[1]) * dy) / len2));
+    const foot: XY = [a[0] + t * dx, a[1] + t * dy];
+    const d = Math.hypot(foot[0] - at[0], foot[1] - at[1]);
+    if (d <= best) {
+      best = d;
+      side = { kind: 'side', index: i, foot };
+    }
+  });
+  return side;
 }
 
 interface Touch {
@@ -160,16 +208,18 @@ const unturned = (v: MapView): MapView => ({ x: v.x, y: v.y, scale: v.scale });
 export function MapCanvas({
   state, base, projection, center, scope, anchorId, handle, tileCache, draft = null, movingId = null, onSnap,
   mode = 'pan', selection = null, onTapHit, onBoxPick, dragNodeId = null, onNodeMove, onNodeTap, liftNodes = false, heading = null, highlightEdges, marks, bottomInset = 0,
-  escalatorSpots, pins = null, pinSelected = null, onPinTap,
+  escalatorSpots, pins = null, pinSelected = null, onPinTap, outline = null,
 }: Props) {
+  /** The corner being dragged and where it is now (map metres); null when none is. */
+  const [cornerDrag, setCornerDrag] = useState<{ index: number; xy: XY } | null>(null);
   const [size, setSize] = useState<Size | null>(null);
   const [view, setView] = useState<MapView | null>(null);
   const [box, setBox] = useState<Box | null>(null);
   /** Where a held point is being carried, in map metres; null when none is. */
   const [carry, setCarry] = useState<{ id: string; xy: XY } | null>(null);
   // The responder and the handle are made once; they read the newest values through refs.
-  const latest = useRef({ view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes, pins, onPinTap });
-  latest.current = { view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes, pins, onPinTap };
+  const latest = useRef({ view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes, pins, onPinTap, outline });
+  latest.current = { view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes, pins, onPinTap, outline };
 
   /** A view that shows the scope, at the map's current turn. */
   const fit = (target: Scope, on: Size): MapView => {
@@ -230,6 +280,8 @@ export function MapCanvas({
     fanStart: null as { angle: number; deg: number } | null,
     /** The press timer of a single selected point, and the point while it is being carried. */
     hold: null as ReturnType<typeof setTimeout> | null, carrying: null as string | null,
+    /** 외곽선 수정: the corner the finger came down on. */
+    corner: null as number | null,
   });
   // Moves of the view are gathered here and applied at most once per frame: a setView on every touch event
   // overflows the update depth of React on a fast drag.
@@ -274,7 +326,15 @@ export function MapCanvas({
       const now = touchOf(e);
       clearHold();
       clearPending();
-      gesture.current = { last: now, start: { x: now.x, y: now.y, at: Date.now() }, maxCount: now.count, moved: 0, turn: 0, turning: false, fanStart: null, hold: null, carrying: null };
+      gesture.current = { last: now, start: { x: now.x, y: now.y, at: Date.now() }, maxCount: now.count, moved: 0, turn: 0, turning: false, fanStart: null, hold: null, carrying: null, corner: null };
+      // 외곽선 수정: a finger that comes down on a corner holds it, so the map does not pan under it.
+      {
+        const { outline: o, view: v0, size: s0 } = latest.current;
+        if (o && now.count === 1 && v0 && s0) {
+          const hit = outlineHit(o, (p) => toScreen(v0, s0, projection.toXY(p)), [now.x, now.y]);
+          if (hit?.kind === 'corner') gesture.current.corner = hit.index;
+        }
+      }
       // A single selected point held down for a moment is picked up.
       const { mode: m, view: v, size: s, dragNodeId: only, liftNodes: lift } = latest.current;
       if (((m === 'select' && only) || (m === 'pan' && lift)) && now.count === 1 && v && s) {
@@ -309,6 +369,17 @@ export function MapCanvas({
         return;
       }
       const { mode: m, view: v, size: s, heading: h } = latest.current;
+      if (g.corner !== null) {
+        if (now.count === 1 && g.maxCount === 1 && v && s && g.moved > TAP_PX) {
+          const index = g.corner;
+          const xy = fromScreen(v, s, [now.x, now.y]);
+          setCornerDrag({ index, xy });
+        }
+        if (g.maxCount === 1) return;
+        // A second finger: it was a pinch after all.
+        g.corner = null;
+        setCornerDrag(null);
+      }
       if (g.carrying !== null) {
         // The point follows the finger; no box and no map pan while it is carried.
         if (now.count === 1 && v && s) {
@@ -357,6 +428,28 @@ export function MapCanvas({
       const { mode: m, view: v, size: s, state: st, scope: sc, onTapHit: tap, onBoxPick: pick, onNodeMove: put } = latest.current;
       const quick = Date.now() - g.start.at <= TAP_MS;
       clearHold();
+      // 외곽선 수정: a dragged corner is put down; a tap picks a corner, adds one on a side, or clears the pick.
+      const o = latest.current.outline;
+      if (o && v && s && g.maxCount === 1) {
+        const corner = g.corner;
+        g.corner = null;
+        setCornerDrag(null);
+        if (corner !== null && g.moved > TAP_PX && g.last) {
+          const end = g.last;
+          clearPending();
+          g.last = null;
+          o.onMove(corner, projection.toPosition(fromScreen(v, s, [end.x, end.y])));
+          return;
+        }
+        if (g.moved <= TAP_PX && quick) {
+          const hit = outlineHit(o, (p) => toScreen(v, s, projection.toXY(p)), [g.start.x, g.start.y]);
+          if (hit?.kind === 'corner') o.onSelect(hit.index);
+          else if (hit?.kind === 'side') o.onInsert(hit.index, projection.toPosition(fromScreen(v, s, hit.foot)));
+          else o.onSelect(null);
+          g.last = null;
+          return;
+        }
+      }
       // A carried point is put down where it was last drawn (or where the finger last was).
       const dropped = g.carrying !== null && v && s && g.last ? { id: g.carrying, xy: pending.current.carry?.xy ?? fromScreen(v, s, [g.last.x, g.last.y]) } : null;
       clearPending();
@@ -485,6 +578,7 @@ export function MapCanvas({
                 </>
               )}
               {anchor && <Circle cx={anchor.xy[0]} cy={anchor.xy[1]} r={15 / view.scale} fill="none" stroke={color.anchor} strokeWidth={3.5 / view.scale} />}
+              {outline && <OutlineDraft outline={outline} drag={cornerDrag} projection={projection} px={1 / view.scale} />}
               {snap && snap.id !== anchorId && mode !== 'select' && <Circle cx={snap.xy[0]} cy={snap.xy[1]} r={(BADGE_DP / 2 + 4) / view.scale} fill="none" stroke={color.ok} strokeWidth={3 / view.scale} />}
               <Pictograms state={state} base={base} projection={projection} scope={scope} px={1 / steppedScale(view.scale)} turn={turn} spots={escalatorSpots} />
               {pins?.map((p) => <Pin key={p.key} pin={p} xy={projection.toXY(p.at)} turn={turn} px={1 / view.scale} selected={p.key === pinSelected} />)}
@@ -532,7 +626,7 @@ const Features = memo(function Features({ state, base, projection, scope, px, sp
   const buildings = Object.values(state.buildings).map((b) => (
     <Polygon
       key={b.id}
-      points={pointsOf(projection, b.polygon[0] ?? [])}
+      points={pointsOf(projection, (b.id === here && scope.kind === 'building' ? outlineOfLevel(b, scope.level) : b.polygon)[0] ?? [])}
       fill={b.id === here ? color.buildingHere : color.building}
       fillOpacity={b.id === here ? 0.9 : 0.7}
       stroke={color.buildingLine}
@@ -633,6 +727,36 @@ function Pin({ pin, xy, turn, px, selected }: { pin: PressurePin; xy: XY; turn: 
       )}
       <SvgText x={box.x + 24} y={gy + 4.3} fontSize={12} fontWeight="800" fill={live ? color.onPrimary : tint}>{pinText(pin)}</SvgText>
     </G>
+  );
+}
+
+/**
+ * 외곽선 수정 on the map: the outline filled faintly, its sides, a small dot in the middle of each side (a tap there adds a
+ * corner), and a round handle on each corner, large enough for a thumb; the picked corner is filled.
+ */
+function OutlineDraft({ outline, drag, projection, px }: { outline: OutlineEdit; drag: { index: number; xy: XY } | null; projection: Projection; px: number }) {
+  const xy = outline.corners.map((c, i): XY => (drag?.index === i ? drag.xy : projection.toXY(c)));
+  const ring = (pts: readonly XY[]) => pts.map((p) => p.join(',')).join(' ');
+  return (
+    <>
+      <Polygon points={ring(xy)} fill={OUTLINE_COLOR} fillOpacity={0.14} stroke="none" />
+      {outline.holes.map((h, i) => <Polygon key={i} points={ring(h.map((p) => projection.toXY(p)))} fill={color.surface} fillOpacity={0.6} stroke={OUTLINE_COLOR} strokeWidth={1.5 * px} />)}
+      <Polygon points={ring(xy)} fill="none" stroke={color.surface} strokeWidth={6 * px} strokeLinejoin="round" />
+      <Polygon points={ring(xy)} fill="none" stroke={OUTLINE_COLOR} strokeWidth={3 * px} strokeLinejoin="round" />
+      {xy.map((a, i) => {
+        const b = xy[(i + 1) % xy.length]!;
+        return <Circle key={`m${i}`} cx={(a[0] + b[0]) / 2} cy={(a[1] + b[1]) / 2} r={3.5 * px} fill={color.surface} stroke={OUTLINE_COLOR} strokeWidth={1.5 * px} />;
+      })}
+      {xy.map((p, i) => {
+        const on = outline.selected === i || drag?.index === i;
+        return (
+          <G key={`c${i}`}>
+            <Circle cx={p[0]} cy={p[1]} r={(on ? 13 : 10) * px} fill={OUTLINE_COLOR} fillOpacity={on ? 0.22 : 0} />
+            <Circle cx={p[0]} cy={p[1]} r={(on ? 8 : 7) * px} fill={on ? OUTLINE_COLOR : color.surface} stroke={on ? color.surface : OUTLINE_COLOR} strokeWidth={2.5 * px} />
+          </G>
+        );
+      })}
+    </>
   );
 }
 

@@ -13,6 +13,7 @@ export { migrateCampusFiles, type MigrateProblem, type MigrateResult, type Migra
 export { ENDPOINT_TOLERANCE_M, isClassroomDoor, isValidFeature, mapLimitsProblem, validateCampus } from './validate.ts';
 export * from './costs.ts';
 export * from './pictograms.ts';
+export * from './outline.ts';
 export * from './calibration/index.ts';
 export {
   buildGraph,

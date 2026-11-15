@@ -21,6 +21,7 @@ import {
 } from './types.ts';
 import { CALIBRATION_FILE, CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
 import { GRADE_CAUTION_MAX_PCT, isStepFreePassable } from './costs.ts';
+import { outlineProblem } from './outline.ts';
 
 /** Max distance (m) between an edge's line ends and its from/to nodes (§7 error 4). */
 export const ENDPOINT_TOLERANCE_M = 1;
@@ -208,6 +209,19 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     } else if (level !== null && !building.feature.properties.levels.includes(level)) {
       error(file, node.id, E.levelNotInBuilding,
         `level ${level}이 건물 "${building_id}"의 levels(${building.feature.properties.levels.join(', ')})에 없습니다.`);
+    }
+  }
+
+  // ---- E15. A floor outline belongs to a level of the building and is closed rings of 4+ positions ----
+  for (const { file, feature: building } of buildings.values()) {
+    for (const [key, polygon] of Object.entries(building.properties.floor_outlines ?? {})) {
+      const level = Number(key);
+      if (!building.properties.levels.includes(level)) {
+        error(file, building.id, E.floorOutlineInvalid, `floor_outlines의 "${key}"층이 건물의 levels(${building.properties.levels.join(', ')})에 없습니다.`);
+        continue;
+      }
+      const problem = outlineProblem(polygon);
+      if (problem) error(file, building.id, E.floorOutlineInvalid, `floor_outlines "${key}": ${problem}`);
     }
   }
 

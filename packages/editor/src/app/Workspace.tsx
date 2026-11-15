@@ -39,6 +39,7 @@ import { CopyPanel } from '../ui/CopyPanel.tsx';
 import { CrossPicker } from '../ui/CrossPicker.tsx';
 import { FloorPicker } from '../ui/FloorPicker.tsx';
 import { HistoryButtons } from '../ui/HistoryButtons.tsx';
+import { OutlineForm } from '../ui/OutlineForm.tsx';
 import { HelpDialog } from '../ui/HelpDialog.tsx';
 import { MeasurePanel } from '../ui/MeasurePanel.tsx';
 import { PropertiesPanel } from '../ui/PropertiesPanel.tsx';
@@ -59,6 +60,10 @@ import { useElevation } from './useElevation.ts';
 import { useInspection } from './useInspection.ts';
 import { useReports } from './useReports.ts';
 import { useShortcuts, type KeyBinding } from './useShortcuts.ts';
+import {
+  insertDraftCorner, moveDraftCorner, planOutline, planResetOutline, redoDraft, removeDraftCorner, startOutline, undoDraft, type OutlineDraft,
+} from '../model/outlineEdit.ts';
+import type { OutlineEditView } from '../map/MapView.tsx';
 
 type Notice = { text: string; tone: 'info' | 'warn' | 'error' } | null;
 
@@ -91,6 +96,8 @@ export function Workspace({ session }: { session: Session }) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [copyPanel, setCopyPanel] = useState<{ ids: string[]; result: string[] | null } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  /** 외곽선 수정: the outline being edited (one history entry on 완료). */
+  const [outline, setOutline] = useState<OutlineDraft | null>(null);
   /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
   const [obsRev, setObsRev] = useState(0);
   /** Field surveys imported so far (data/surveys): their photos and readings are shown under 상세 정보. */
@@ -149,6 +156,10 @@ export function Workspace({ session }: { session: Session }) {
   const elevation = useElevation({ session, state, perform, info, fail, routes: routeResults, shown: routeShown, nearest: nearest?.result ?? null });
 
   const stepHistory = (dir: 'undo' | 'redo') => {
+    if (outline) {
+      setOutline((d) => d && (dir === 'undo' ? undoDraft(d) : redoDraft(d)));
+      return;
+    }
     history[dir]();
     lastProp.current = null;
     sync();
@@ -168,10 +179,73 @@ export function Workspace({ session }: { session: Session }) {
     return id !== null && ui.selection.includes(id) ? { selection: ui.selection.filter((x) => x !== id) } : {};
   };
   const setTool = (tool: Tool) => {
+    if (tool === 'outline') return beginOutline();
     patchUi({ tool, pickFrom: null, ...dropImported() });
     setStrip(initialStrip);
     setNotice(null);
   };
+
+  // ---- 외곽선 수정: the floor shown (or, outdoors, the building picked) is edited in a draft; 완료 is one history entry ----
+
+  /** Start on a building and floor (null: the building outline); without a target, on the floor shown or the building selected. */
+  const beginOutline = (target?: { buildingId: string; level: number | null }) => {
+    const picked = ui.selection.length === 1 ? buildingById(state, ui.selection[0]!) : undefined;
+    const at = target
+      ?? (ui.scope.kind === 'building' ? { buildingId: ui.scope.buildingId, level: ui.scope.level }
+        : picked ? { buildingId: picked.id, level: null }
+        : ui.selectedBuildingId ? { buildingId: ui.selectedBuildingId, level: null } : null);
+    if (!at) return info(`외곽선을 고칠 건물을 먼저 골라 주세요. [${toolLabel('select-building')}]으로 건물과 층을 고르면 그 층의 외곽선을 고칩니다.`);
+    const draft = startOutline(state, at.buildingId, at.level);
+    if ('error' in draft) return fail(draft.error);
+    setOutline(draft);
+    patchUi({ tool: 'outline', pickFrom: null, selection: [], ...(at.level !== null ? { scope: { kind: 'building', buildingId: at.buildingId, level: at.level }, selectedBuildingId: at.buildingId } : {}) });
+    setStrip(initialStrip);
+    setNotice(null);
+  };
+  // Another floor picked while editing: that floor's outline (what was not finished is dropped). Another tool: the draft goes.
+  useEffect(() => {
+    if (ui.tool !== 'outline') {
+      setOutline(null);
+      return;
+    }
+    if (ui.scope.kind !== 'building') return;
+    const { buildingId, level } = ui.scope;
+    setOutline((d) => {
+      if (d && d.buildingId === buildingId && d.level === level) return d;
+      const next = startOutline(state, buildingId, level);
+      return 'error' in next ? d : next;
+    });
+  }, [ui.tool, ui.scope]); // eslint-disable-line react-hooks/exhaustive-deps
+  const endOutline = () => patchUi({ tool: 'select', pickFrom: null });
+  const finishOutline = () => {
+    if (!outline) return;
+    if (outline.past.length === 0) {
+      endOutline();
+      return info('바뀐 것이 없어 외곽선 수정을 마쳤습니다.');
+    }
+    if (perform(planOutline(outline)) === undefined) endOutline();
+  };
+  const cancelOutline = () => {
+    endOutline();
+    info('외곽선 수정을 취소했습니다. 고친 것은 반영하지 않았습니다.');
+  };
+  const resetOutline = () => {
+    if (!outline || outline.level === null) return;
+    if (perform(planResetOutline(state, outline.buildingId, outline.level)) !== undefined) return;
+    const next = startOutline(history.current(), outline.buildingId, outline.level);
+    if (!('error' in next)) setOutline(next);
+  };
+  const outlineView = useMemo<OutlineEditView | null>(() => (outline ? {
+    corners: outline.corners,
+    holes: outline.holes,
+    onMove: (index, to) => setOutline((d) => d && moveDraftCorner(d, index, to)),
+    onInsert: (side, at) => setOutline((d) => d && insertDraftCorner(d, side, at)),
+    onRemove: (index) => {
+      const next = removeDraftCorner(outline, index);
+      if ('error' in next) fail(next.error);
+      else setOutline(next);
+    },
+  } : null), [outline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Jump to `scope` (from a list, not the floor picker). A tool that cannot be used there gives way to 선택. */
   const showScope = (scope: Scope, patch: Partial<UiState>) => setUi((u) => ({
@@ -352,8 +426,8 @@ export function Workspace({ session }: { session: Session }) {
     merge: { blocked: blocked.merge, run: () => perform(plans.merge) },
     flip: { blocked: blocked.flip, run: () => perform(plans.flip) },
     split: { blocked: blocked.split, run: () => perform(plans.split) },
-    undo: { blocked: history.canUndo() ? false : '되돌릴 변경이 없습니다.', soft: true, run: () => stepHistory('undo') },
-    redo: { blocked: history.canRedo() ? false : '다시 할 변경이 없습니다.', soft: true, run: () => stepHistory('redo') },
+    undo: { blocked: (outline ? outline.past.length > 0 : history.canUndo()) ? false : '되돌릴 변경이 없습니다.', soft: true, run: () => stepHistory('undo') },
+    redo: { blocked: (outline ? outline.future.length > 0 : history.canRedo()) ? false : '다시 할 변경이 없습니다.', soft: true, run: () => stepHistory('redo') },
     'import-survey': { blocked: false, run: () => surveyInput.current?.click() },
     'find-broken': { blocked: broken.length === 0 ? '끊긴 지점이 없습니다.' : false, count: broken.length, soft: true, run: showNextBroken },
     'attach-unattached': {
@@ -486,7 +560,8 @@ export function Workspace({ session }: { session: Session }) {
 
   // ---- Keys (SPEC-v0.2 5.3). Tool and operation keys come from the registry; the rest belong to one tool or to the screen. ----
   const onEscape = () => {
-    if (copyPanel) setCopyPanel(null);
+    if (outline) cancelOutline();
+    else if (copyPanel) setCopyPanel(null);
     else if (ui.tool === 'strip' && strip.edgeIds.length > 0) setStrip(initialStrip);
     else if (ui.pickFrom) {
       patchUi({ pickFrom: null });
@@ -499,6 +574,8 @@ export function Workspace({ session }: { session: Session }) {
   const inStrip = ui.tool === 'strip';
   useShortcuts([
     { key: 's', mod: true, run: () => void onSave() },
+    { key: 'enter', mod: 'any', when: outline !== null, run: finishOutline },
+    { key: 'y', mod: true, when: outline !== null, run: () => stepHistory('redo') },
     ...OPERATIONS.flatMap((o) => [o.key, o.aliasKey].flatMap((k): KeyBinding[] => (
       k ? [{ ...parseKey(k), when: !o.onSelection || selecting, run: () => runOperation(o.id) }] : []
     ))),
@@ -585,6 +662,8 @@ export function Workspace({ session }: { session: Session }) {
             onLevels={(levels) => perform(planSetBuildingLevels(selectedBuilding.props.code, levels))}
             renameBlocked={(newCode) => renameBlocked(state, ctx, selectedBuilding.props.code, newCode)}
             removeBlocked={(level) => levelRemoveBlocked(state, selectedBuilding.props.code, level)}
+            onEditOutline={(level) => beginOutline({ buildingId: selectedBuilding.id, level })}
+            onResetOutline={(level) => perform(planResetOutline(state, selectedBuilding.id, level))}
           />
         )}
         <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))} />
@@ -654,7 +733,18 @@ export function Workspace({ session }: { session: Session }) {
       <Toolbar
         ui={ui}
         operations={operations}
-        toolForm={inStrip ? (
+        toolForm={ui.tool === 'outline' && outline ? (
+          <OutlineForm
+            draft={outline}
+            buildingName={buildingById(state, outline.buildingId)?.props.name ?? outline.code}
+            ownOutline={outline.level !== null && buildingById(state, outline.buildingId)?.props.floor_outlines?.[String(outline.level)] !== undefined}
+            onUndo={() => stepHistory('undo')}
+            onRedo={() => stepHistory('redo')}
+            onReset={resetOutline}
+            onCancel={cancelOutline}
+            onDone={finishOutline}
+          />
+        ) : inStrip ? (
           <StripForm
             strip={strip}
             status={stripShown.status}
@@ -705,6 +795,7 @@ export function Workspace({ session }: { session: Session }) {
             onToolClick[ui.tool]?.(click);
           }}
           onContextMenu={onContextMenu}
+          outline={outlineView}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
           beginHandleDrag={beginHandleDrag}
@@ -746,6 +837,7 @@ export function Workspace({ session }: { session: Session }) {
             onPick={(level) => showFloor({ kind: 'building', buildingId: floorBuilding.id, level }, toolDef(ui.tool).cross)}
             onOutdoor={() => showFloor(OUTDOOR)}
             broken={brokenByLevel(checkedState, brokenSet, floorBuilding.id)}
+            onOutline={ui.tool === 'outline' ? null : (level) => beginOutline({ buildingId: floorBuilding.id, level })}
           />
         )}
       </div>

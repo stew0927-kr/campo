@@ -248,7 +248,7 @@ export function ScopeSheet({ scope, buildings, onPick, onClose }: ScopeSheetProp
   return (
     <BottomSheet title="어디를 조사하나요?" onClose={onClose}>
       <BigButton tone={scope.kind === 'outdoor' ? 'primary' : 'plain'} label="바깥" onPress={() => onPick({ kind: 'outdoor' })} />
-      {buildings.length === 0 && <Text style={styles.note}>등록된 건물이 없습니다. 아래 도구의 [건물 추가]로 OSM 건물을 가져오거나 외곽선을 그려 주세요.</Text>}
+      {buildings.length === 0 && <Text style={styles.note}>등록된 건물이 없습니다. 메뉴의 [건물 외곽선 가져오기]로 OSM 건물을 가져오거나 [외곽선 그리기]로 그려 주세요.</Text>}
       {buildings.map((b) => (
         <View key={b.id}>
           <FieldLabel>{b.props.name}</FieldLabel>

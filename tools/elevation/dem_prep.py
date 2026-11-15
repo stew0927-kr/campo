@@ -20,6 +20,10 @@ CAMPO DEM 전처리 — 국토지리정보원 자료 → 캠퍼스 클립 → CO
   python dem_prep.py contours --contours */N3L_F0010000.shp --spots */N3P_F0020000.shp \
       --boundary campus.geojson --fallback-raster 37612.img --res 1.0 --out out/hy_seoul_tin
 
+  # C) 폴더 하나만: 하위 폴더에서 등고선·표고점·DEM을 재귀 탐색, 영역과 겹치는 도엽만 자동 선택해 합침
+  python dem_prep.py ngii --ngii-dir ~/Downloads/ngii-hanyang --bbox 127.0386 37.5520 127.0537 37.5619 \
+      --res 1.0 --out derived/hanyang-seoul/dem
+
   # 샘플링 확인
   python dem_prep.py sample --grid out/hy_seoul_dem.json --lonlat 127.0450 37.5570
 
@@ -170,6 +174,11 @@ def cmd_raster(a):
 # B) contours (+ spot heights) → TIN
 # ------------------------------------------------------------------ #
 
+def pd_is_numeric(series) -> bool:
+    from pandas.api.types import is_numeric_dtype
+    return bool(is_numeric_dtype(series))
+
+
 def pick_z_field(gdf, forced: str | None) -> str | None:
     if forced:
         if forced not in gdf.columns:
@@ -178,7 +187,7 @@ def pick_z_field(gdf, forced: str | None) -> str | None:
     for c in Z_FIELD_CANDIDATES:
         if c in gdf.columns:
             return c
-    num = [c for c in gdf.columns if c != "geometry" and np.issubdtype(gdf[c].dtype, np.number)]
+    num = [c for c in gdf.columns if c != "geometry" and pd_is_numeric(gdf[c])]
     plausible = [c for c in num if gdf[c].notna().any() and -50 <= gdf[c].min() and gdf[c].max() <= 2000 and gdf[c].nunique() > 1]
     if len(plausible) == 1:
         return plausible[0]
@@ -217,6 +226,10 @@ def read_xyz(paths: list[str], dst_crs: str, encoding: str, z_field: str | None,
 
 
 def cmd_contours(a):
+    cmd_contours_core(a)
+
+
+def cmd_contours_core(a, label: str = "NGII 1:5000 contours/spots TIN"):
     from scipy.interpolate import griddata
 
     geom = load_boundary(a.boundary, a.bbox, a.dst_crs)
@@ -241,7 +254,116 @@ def cmd_contours(a):
         fb = resample_to(src, src_tr, src_crs, tr, a.dst_crs, w, h, "bilinear")
         dst = np.where(holes, fb, dst)
         print(f"fallback raster filled {int(holes.sum()):,} cells")
-    finish(a, dst, tr, w, h, geom, source=f"NGII 1:5000 contours/spots TIN ({len(xyz)} pts)")
+    finish(a, dst, tr, w, h, geom, source=f"{label} ({len(xyz)} pts)")
+
+
+
+# ------------------------------------------------------------------ #
+# C) ngii-dir: 폴더 재귀 탐색 + 영역과 겹치는 파일만 자동 선택
+# ------------------------------------------------------------------ #
+
+CONTOUR_NAME = "n3l_f0010000.shp"
+SPOT_NAME = "n3p_f0020000.shp"
+RASTER_EXTS = {".img", ".tif", ".tiff"}
+MIN_VALID_RATIO = 0.95
+
+
+def discover_ngii(root: Path) -> dict[str, list[Path]]:
+    """root 하위를 재귀 탐색(대소문자 무시). 키: contours / spots / rasters."""
+    found: dict[str, list[Path]] = {"contours": [], "spots": [], "rasters": []}
+    for p in sorted(root.rglob("*")):
+        if not p.is_file():
+            continue
+        n = p.name.lower()
+        if n == CONTOUR_NAME:
+            found["contours"].append(p)
+        elif n == SPOT_NAME:
+            found["spots"].append(p)
+        elif p.suffix.lower() in RASTER_EXTS:
+            found["rasters"].append(p)
+    return found
+
+
+def file_bounds(path: Path, kind: str, dst_crs: str, src_crs: str | None = None):
+    """파일 경계를 목표 CRS (xmin, ymin, xmax, ymax)로. 읽을 수 없거나 비어 있으면 (None, 이유)."""
+    from rasterio.warp import transform_bounds
+    try:
+        if kind == "raster":
+            with rasterio.open(path) as ds:
+                crs = CRS.from_user_input(src_crs) if src_crs else ds.crs
+                if crs is None:
+                    return None, "좌표계 없음(--src-crs 필요)"
+                b = tuple(ds.bounds)
+        else:
+            import pyogrio
+            info = pyogrio.read_info(path)
+            if not info.get("crs"):
+                return None, ".prj(좌표계) 없음"
+            crs = CRS.from_user_input(info["crs"])
+            tb = info.get("total_bounds")
+            if tb is None or not all(math.isfinite(v) for v in tb):
+                return None, "도형이 없음(빈 파일)"
+            b = tuple(tb)
+        return tuple(transform_bounds(crs, CRS.from_user_input(dst_crs), *b)), None
+    except Exception as e:  # 깨진 파일 하나가 전체를 막지 않게
+        return None, f"읽기 실패: {e}"
+
+
+def bounds_overlap(a, b) -> bool:
+    return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
+
+
+def select_overlapping(found: dict[str, list[Path]], request, dst_crs: str, src_crs: str | None = None):
+    """request = 목표 CRS의 (xmin, ymin, xmax, ymax). 반환: (선택, 제외[(경로, 이유)])."""
+    chosen: dict[str, list[Path]] = {k: [] for k in found}
+    skipped: list[tuple[Path, str]] = []
+    kinds = {"contours": "vector", "spots": "vector", "rasters": "raster"}
+    for key, paths in found.items():
+        for p in paths:
+            b, why = file_bounds(p, kinds[key], dst_crs, src_crs)
+            if b is None:
+                skipped.append((p, why))
+            elif bounds_overlap(b, request):
+                chosen[key].append(p)
+            else:
+                skipped.append((p, "요청 영역과 겹치지 않음"))
+    return chosen, skipped
+
+
+def cmd_ngii(a):
+    root = Path(a.ngii_dir)
+    if not root.is_dir():
+        raise SystemExit(f"--ngii-dir 폴더가 없습니다: {root}")
+    geom = load_boundary(a.boundary, a.bbox, a.dst_crs)
+    x0, y0, x1, y1 = geom_bounds(geom)
+    request = (x0 - a.buffer, y0 - a.buffer, x1 + a.buffer, y1 + a.buffer)
+    found = discover_ngii(root)
+    print(f"found in {root}: contours {len(found['contours'])}, spots {len(found['spots'])}, rasters {len(found['rasters'])}")
+    if not any(found.values()):
+        raise SystemExit(f"{root} 아래에서 N3L_F0010000.shp / N3P_F0020000.shp / *.img / *.tif 를 하나도 찾지 못했습니다")
+    chosen, skipped = select_overlapping(found, request, a.dst_crs, a.src_crs)
+    for key in ("contours", "spots", "rasters"):
+        for p in chosen[key]:
+            print(f"selected {key}: {p}")
+    for p, why in skipped:
+        print(f"제외: {p} ({why})")
+    if not chosen["contours"] and not chosen["spots"]:
+        print("경고: 요청 영역과 겹치는 등고선(N3L_F0010000)·표고점(N3P_F0020000) 도엽이 없습니다. "
+              "해당 지역 수치지형도 도엽을 추가로 받아야 할 수 있습니다.")
+    if not any(chosen.values()):
+        raise SystemExit("요청 영역과 겹치는 파일이 하나도 없습니다 — 도엽 번호와 영역(--boundary/--bbox)을 확인하세요. "
+                         f"탐색한 파일 {sum(len(v) for v in found.values())}개 모두 겹치지 않거나 읽을 수 없었습니다.")
+    if chosen["contours"] or chosen["spots"]:
+        if not chosen["contours"]:
+            print("경고: 겹치는 등고선 없이 표고점만 있습니다 — 결과가 거칠 수 있습니다.")
+        a.contours = [str(p) for p in chosen["contours"]]
+        a.spots = [str(p) for p in chosen["spots"]]
+        a.fallback_raster = [str(p) for p in chosen["rasters"]] or None
+        cmd_contours_core(a, label="NGII ngii-dir TIN")
+    else:
+        print("note: 겹치는 등고선·표고점이 없어 공개 DEM(래스터)만 사용합니다(해상도가 거침).")
+        a.src = [str(p) for p in chosen["rasters"]]
+        cmd_raster(a)
 
 
 # ------------------------------------------------------------------ #
@@ -274,6 +396,33 @@ def finish(a, dst, tr, w, h, geom, source: str):
     print(f"grid {w}×{h} @ {a.res} m, valid {valid.mean() * 100:.1f}%, "
           f"h=[{np.nanmin(dst):.2f}, {np.nanmax(dst):.2f}] m")
     print(f"wrote {out.with_suffix('.tif')} (COG), {jp}, {bp} ({bp.stat().st_size / 1e6:.2f} MB)")
+    warn_low_coverage(dst, outside, tr, a.dst_crs)
+
+
+def warn_low_coverage(dst, outside, tr, dst_crs: str, min_ratio: float = MIN_VALID_RATIO):
+    """경계(+버퍼) 안쪽 셀 중 값이 있는 비율이 낮으면, 빈 곳이 어디인지 알려 준다."""
+    from pyproj import Transformer
+    inside = ~outside
+    n_in = int(inside.sum())
+    if n_in == 0:
+        return
+    holes = inside & ~np.isfinite(dst)
+    ratio = 1.0 - holes.sum() / n_in
+    if ratio >= min_ratio:
+        return
+    rows, cols = np.where(holes)
+    res = tr.a
+    hx0, hx1 = tr.c + cols.min() * res, tr.c + (cols.max() + 1) * res
+    hy1, hy0 = tr.f - rows.min() * res, tr.f - (rows.max() + 1) * res
+    tf = Transformer.from_crs(dst_crs, "EPSG:4326", always_xy=True)
+    lon0, lat0 = tf.transform(hx0, hy0)
+    lon1, lat1 = tf.transform(hx1, hy1)
+    h, w = dst.shape
+    cy, cx = rows.mean() / h, cols.mean() / w
+    where = ("북" if cy < 0.33 else "남" if cy > 0.67 else "") + ("서" if cx < 0.33 else "동" if cx > 0.67 else "")
+    print(f"경고: 경계 안쪽 유효 셀 비율 {ratio * 100:.1f}% (95% 미만) — 값이 없는 셀 {int(holes.sum()):,}개. "
+          f"빈 곳은 대체로 영역의 {where or '가운데'}쪽, 경도 {lon0:.5f}~{lon1:.5f}, 위도 {lat0:.5f}~{lat1:.5f} 부근입니다. "
+          "그 구역을 덮는 수치지형도 도엽 또는 DEM 도엽이 빠졌을 수 있습니다(인접 도엽을 추가로 받으세요).")
 
 
 # ------------------------------------------------------------------ #
@@ -324,6 +473,15 @@ def build_parser():
     c.add_argument("--fallback-raster", nargs="*", help="TIN 빈 곳을 채울 DEM")
     common(c)
     c.set_defaults(fn=cmd_contours)
+
+    n = sub.add_parser("ngii", help="폴더 하나로: 등고선·표고점·DEM을 재귀 탐색, 영역과 겹치는 도엽만 자동 선택")
+    n.add_argument("--ngii-dir", required=True, help="수치지형도/DEM 압축 해제 폴더(하위 폴더 재귀 탐색)")
+    n.add_argument("--z-field", help="높이 속성명(자동 탐지 실패 시)")
+    n.add_argument("--encoding", default="cp949", help="DBF 인코딩(.cpg 없으면 cp949)")
+    n.add_argument("--densify", type=float, default=2.0, help="등고선 정점 보강 간격(m)")
+    n.add_argument("--resampling", default="bilinear", choices=["bilinear", "cubic", "nearest"])
+    common(n)
+    n.set_defaults(fn=cmd_ngii)
 
     s = sub.add_parser("sample", help="격자에서 위경도 지점 높이 조회")
     s.add_argument("--grid", required=True)

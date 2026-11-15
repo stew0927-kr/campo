@@ -115,3 +115,71 @@ def test_contours_mode_tin_with_korean_field(tmp_path, campus):
     for dx, dy in ((0, 0), (90, 60), (-150, -100)):
         v = g.sample_bilinear(X0 + dx, Y0 + dy)[0]
         assert abs(v - plane(X0 + dx, Y0 + dy)) < 0.05, (dx, dy, v)
+
+
+# ------------------------------------------------------------------ #
+# ngii 폴더 자동 선택 (--ngii-dir)
+# ------------------------------------------------------------------ #
+
+def _write_contours(folder: Path, x_off: float, y_off: float, with_spot=True):
+    """x_off/y_off(m)만큼 떨어진 곳의 평면 등고선을 도엽 폴더로 쓴다. 한 도엽 = 한 폴더."""
+    import geopandas as gpd
+    from shapely.geometry import LineString, Point
+
+    folder.mkdir(parents=True, exist_ok=True)
+    cx, cy = X0 + x_off, Y0 + y_off
+    lines, hs = [], []
+    base = plane(cx, cy)
+    for h in np.arange(round(base / 5) * 5 - 20, round(base / 5) * 5 + 25, 5.0):
+        # 같은 평면의 등고선을 도엽 중심(cx, cy) 둘레 ±500 m 에만 그린다
+        pts = [(X0 + (h - 25.0 - 0.01 * (y - Y0)) / 0.02, y) for y in np.linspace(cy - 500, cy + 500, 11)]
+        lines.append(LineString(pts)); hs.append(h)
+    gpd.GeoDataFrame({"등고수치": hs}, geometry=lines, crs="EPSG:5186").to_file(folder / "N3L_F0010000.shp", encoding="cp949")
+    if with_spot:
+        gpd.GeoDataFrame({"표고수치": [plane(cx + 10, cy)]}, geometry=[Point(cx + 10, cy)], crs="EPSG:5186").to_file(
+            folder / "N3P_F0020000.shp", encoding="cp949")
+
+
+def test_ngii_dir_selects_only_overlapping_sheets(tmp_path, campus):
+    root = tmp_path / "ngii"
+    _write_contours(root / "sheet_a", 0, 0)            # 캠퍼스를 덮음
+    _write_contours(root / "nested" / "sheet_b", 100, 0)  # 캠퍼스와 겹침(두 번째 도엽)
+    _write_contours(root / "far_away", 30_000, 0)      # 30 km 떨어진 도엽 → 제외
+    out = tmp_path / "out" / "ngii_dem"
+    r = run("ngii", "--ngii-dir", root, "--boundary", campus, "--res", 1.0, "--out", out)
+    assert r.returncode == 0, r.stderr
+    log = r.stdout
+    assert "sheet_a" in log and "sheet_b" in log
+    assert "far_away" in log and "제외" in log
+    selected = [l for l in log.splitlines() if l.startswith("selected")]
+    assert all("far_away" not in l for l in selected), log
+    g = Grid.load(out.with_suffix(".json"))
+    for dx, dy in ((0, 0), (90, 60), (-150, -100)):
+        v = g.sample_bilinear(X0 + dx, Y0 + dy)[0]
+        assert abs(v - plane(X0 + dx, Y0 + dy)) < 0.1, (dx, dy, v)
+
+
+def test_ngii_dir_no_overlap_fails_with_clear_message(tmp_path, campus):
+    root = tmp_path / "ngii"
+    _write_contours(root / "far_away", 30_000, 0)
+    r = run("ngii", "--ngii-dir", root, "--boundary", campus, "--out", tmp_path / "x")
+    assert r.returncode != 0
+    msg = r.stderr + r.stdout
+    assert "겹치" in msg and "far_away" in msg
+
+
+def test_ngii_dir_raster_only_and_low_valid_warning(tmp_path, campus):
+    root = tmp_path / "ngii"
+    (root / "dem").mkdir(parents=True)
+    # 캠퍼스 동쪽 절반만 덮는 DEM → valid < 95 % 경고
+    n, res = 30, 90.0
+    left, top = X0, Y0 + n / 2 * res
+    xs = left + (np.arange(n) + 0.5) * res
+    ys = top - (np.arange(n) + 0.5) * res
+    X, Y = np.meshgrid(xs, ys)
+    with rasterio.open(root / "dem" / "part.img", "w", driver="HFA", width=n, height=n, count=1, dtype="float32",
+                       crs="EPSG:5186", transform=from_origin(left, top, res, res), nodata=-9999) as ds:
+        ds.write(plane(X, Y).astype("float32"), 1)
+    r = run("ngii", "--ngii-dir", root, "--boundary", campus, "--res", 2.0, "--out", tmp_path / "o")
+    assert r.returncode == 0, r.stderr
+    assert "경고" in r.stdout and "95%" in r.stdout

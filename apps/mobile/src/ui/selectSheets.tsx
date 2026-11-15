@@ -290,8 +290,8 @@ export function EscalatorSheet({ scope, levels, trip, onDepart, onArrive, onCanc
 
   if (!trip) {
     return (
-      <BottomSheet title="에스컬레이터" onClose={onClose}>
-        <Text style={styles.lead}>타는 곳에 십자선을 맞추고 출발을 누른 뒤, 내린 곳에 십자선을 맞추고 도착을 눌러 주세요.</Text>
+      <BottomSheet title="에스컬레이터 · 다른 층과 연결" onClose={onClose}>
+        <Text style={styles.lead}>이 지점에서 타고 [여기서 출발]을 누른 뒤, 내린 곳에 십자선을 맞추고 메뉴의 [에스컬 도착]을 눌러 주세요.</Text>
         <FieldLabel>어느 쪽으로 타나요?</FieldLabel>
         <Choice label="탄 방향" value={rodeUp} onChange={setRodeUp} options={[{ value: true, label: '올라감' }, { value: false, label: '내려감' }]} />
         {indoor && (
@@ -302,7 +302,7 @@ export function EscalatorSheet({ scope, levels, trip, onDepart, onArrive, onCanc
         )}
         <FieldLabel>이 자리의 에스컬레이터</FieldLabel>
         <Choice label="에스컬레이터 종류" value={belt} onChange={setBelt} options={[{ value: 'one', label: '이 방향만' }, { value: 'pair', label: '상행+하행 한 쌍' }, { value: 'reversible', label: '시간대별 방향 전환' }]} />
-        <Text style={styles.note}>{barometer === false ? '기압계가 없어 높이는 기록하지 않습니다.' : '출발과 도착의 기압 차이로 높이를 잽니다. 시간은 [선택]에서 에스컬레이터를 고르면 잴 수 있습니다.'}</Text>
+        <Text style={styles.note}>{barometer === false ? '기압계가 없어 높이는 기록하지 않습니다.' : '출발과 도착의 기압 차이로 높이를 잽니다. 시간은 이 지점을 다시 눌러 [시간 재기]로 잴 수 있습니다.'}</Text>
         <BigButton label="여기서 출발" disabled={indoor && toLevel === undefined} onPress={() => onDepart({ rodeUp, belt, toLevel: toLevel ?? null, startHpa: pressure ?? null })} style={styles.gap} />
       </BottomSheet>
     );

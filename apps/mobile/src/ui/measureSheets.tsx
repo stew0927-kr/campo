@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
+import { pinText, type PressurePin } from '../survey/pressurePins.ts';
 import { BottomSheet } from './BottomSheet.tsx';
 import { BigButton, FieldLabel } from './controls.tsx';
 import { TOUCH, TOUCH_LARGE, color, font, radius, space } from './theme.ts';
@@ -269,6 +270,42 @@ export function PressureSheet({ rows, ttlMin, edges, pending, onClear, onClose }
   );
 }
 
+// ---- 측정된 기압 → 지도에서 누른 지점 ----
+
+interface PressurePointSheetProps {
+  pin: PressurePin;
+  /** Whether this phone can measure now (a barometer, the measure mode on). */
+  canMeasure: boolean;
+  onRemeasure: () => void;
+  onDelete: () => void;
+  onClose: () => void;
+}
+
+/** One measured spot tapped on the map: how much of it is still in memory, and 다시 재기 or 삭제. */
+export function PressurePointSheet({ pin, canMeasure, onRemeasure, onDelete, onClose }: PressurePointSheetProps) {
+  const live = pin.leftMs !== null;
+  return (
+    <BottomSheet title={pin.label} onClose={onClose}>
+      <View style={[styles.state, live ? styles.stateLive : styles.stateSaved]}>
+        <Text style={[styles.stateTitle, { color: live ? color.primary : color.ok }]}>
+          {live ? `기압이 메모리에 ${pinText({ ...pin, short: '' })} 더 남아 있습니다` : '기압은 지웠고 높이 차만 남아 있습니다'}
+        </Text>
+        <Text style={styles.stateBody}>
+          {live ? '이 시간 안에 다른 지점을 재면 두 지점 사이의 높이 차가 생깁니다.' : '30분이 지나 기압 값은 휴대폰 메모리에서 지웠습니다.'} 저장된 높이 차는 {pin.edges}개입니다.
+        </Text>
+      </View>
+      <BigButton
+        label="이 지점 다시 재기"
+        hint={canMeasure ? '이 자리에 서서 누르면 10초 동안 잽니다' : '기압계가 없거나 설정에서 측정을 껐습니다'}
+        disabled={!canMeasure}
+        onPress={onRemeasure}
+        style={styles.gap}
+      />
+      <BigButton tone="danger" label="이 지점 측정 삭제" hint={`이 지점의 기압과 높이 차 ${pin.edges}개를 지웁니다`} onPress={onDelete} style={styles.gap} />
+    </BottomSheet>
+  );
+}
+
 const shadow = { elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } } as const;
 
 const styles = StyleSheet.create({
@@ -307,4 +344,9 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: font.label, fontWeight: '700', color: color.ink },
   rowValue: { fontSize: font.label, fontWeight: '700', color: color.ink, fontVariant: ['tabular-nums'] },
   rowSub: { fontSize: font.small, color: color.inkSoft, fontVariant: ['tabular-nums'] },
+  state: { gap: 4, padding: space.md, marginTop: space.xs, borderRadius: radius.md, borderWidth: 1.5 },
+  stateLive: { borderColor: color.primary, backgroundColor: '#EEF4FF' },
+  stateSaved: { borderColor: color.ok, backgroundColor: '#EDF7F0' },
+  stateTitle: { fontSize: font.label, fontWeight: '800' },
+  stateBody: { fontSize: font.small, lineHeight: 18, color: color.ink },
 });

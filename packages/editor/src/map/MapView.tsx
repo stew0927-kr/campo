@@ -22,7 +22,7 @@ import {
   ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
   dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON, type BreaklineShape, type RouteLine,
 } from './layers.ts';
-import { registerBeltIcons, registerRestroomIcons, registerRoutePins } from './icons.ts';
+import { registerBeltIcons, registerBreaklineTooth, registerPictograms, registerRoutePins } from './icons.ts';
 
 /** Clicking within this many pixels of a node picks it (잇기, 선택). Larger than the 5px snap: it is a pick, not a placement. */
 const PICK_PX = 10;
@@ -69,7 +69,7 @@ interface Props {
   focus: FocusRequest | null;
   /** What 길 그리기 drew, and the scope its first click fixed. */
   onPathDrawn: (vertices: PathVertex[], scope: Scope) => void;
-  /** What 불연속선 그리기 drew (plain map positions, nothing snapped). */
+  /** What the 고도 단절선 tool drew (plain map positions, nothing snapped). */
   onBreaklineDrawn: (coords: Position[]) => void;
   /** Break lines, and the caution / steep parts of the routes shown. */
   breaklines: readonly BreaklineShape[];
@@ -479,7 +479,8 @@ export function MapView(props: Props) {
       map.addSource(DRAG_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
       map.addSource(ELEVATION_SOURCE, { type: 'geojson', data: elevationGeoJSON(latest.current.breaklines, latest.current.slopes) });
-      registerRestroomIcons(map);
+      registerPictograms(map);
+      registerBreaklineTooth(map);
       registerBeltIcons(map);
       registerRoutePins(map);
       // Routes sit above the faded data but below the points, so the points stay clickable and readable.

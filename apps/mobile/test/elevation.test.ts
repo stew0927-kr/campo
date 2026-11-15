@@ -4,6 +4,7 @@ import { strFromU8, unzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import {
   PressureSessionBuffer,
+  floorNodeKey,
   outdoorNodeKey,
   type BarometerWindowResult,
   type HeightNode,
@@ -14,7 +15,8 @@ import { buildArchive } from '../src/export/archive.ts';
 import {
   ARCHIVE_ELEVATION_DIRTY, ARCHIVE_ELEVATION_STORE, ELEVATION_STORE_PATH, openElevationRepo,
 } from '../src/storage/elevationRepo.ts';
-import { AT, CAMPUS, memoryStore } from './helpers.ts';
+import { buildingCentre, pinText, pressurePins } from '../src/survey/pressurePins.ts';
+import { AT, CAMPUS, fixture, memoryStore } from './helpers.ts';
 
 function window(p: number, tMs: number): BarometerWindowResult {
   return {
@@ -72,6 +74,53 @@ describe('ElevationRepo (expo-file-system JSON through FileStore)', () => {
     expect(again.nearestOutdoor({ lat: 37.001, lng: 127 }, 3)).toBeNull();
     await again.clear();
     expect((await openElevationRepo(fs)).current().nodes).toEqual([]);
+  });
+
+  it('deleting a spot on the map removes it with its Δh edges, marks the far ends and is written to the file', async () => {
+    let clock = 0;
+    const buffer = new PressureSessionBuffer({}, () => `e${clock}`, () => clock);
+    const fs = memoryStore();
+    const repo = await openElevationRepo(fs);
+    const A = point('A', 37), B = point('B', 37.001), C = point('C', 37.002);
+    for (const [p, at, hpa] of [[A, 0, 1010], [B, 60_000, 1009.6], [C, 120_000, 1009.2]] as const) {
+      clock = at;
+      await repo.commit(p, buffer.add({ sessionId: SESSION.sessionId, nodeKey: p.key, window: window(hpa, at) }), SESSION);
+    }
+    expect(repo.current().edges).toHaveLength(2);
+    await repo.remove(C.key);
+    expect(repo.current().nodes.map((n) => n.key)).toEqual([A.key, B.key]);
+    expect(repo.current().edges.map((e) => [e.from, e.to])).toEqual([[A.key, B.key]]);
+    expect([...repo.pending()].sort()).toEqual([A.key, B.key].sort());
+    expect((await openElevationRepo(fs)).current().nodes.map((n) => n.key)).toEqual([A.key, B.key]);
+    expect(buffer.forgetNode(C.key)).toBe(1);
+  });
+
+  it('측정된 기압 pins: outdoor spots where measured, floors at their building, with the time left in memory', async () => {
+    const { state } = await fixture();
+    let clock = 0;
+    const buffer = new PressureSessionBuffer({}, () => `p${clock}`, () => clock);
+    const repo = await openElevationRepo(memoryStore());
+    const A = point('A', 37.0001);
+    const F3: HeightNode = { kind: 'floor_plane', key: floorNodeKey('bldg_A', '3F'), buildingId: 'bldg_A' as never, floorId: '3F' as never, createdAt: 0 };
+    const F1: HeightNode = { ...F3, key: floorNodeKey('bldg_A', '1F'), floorId: '1F' as never };
+    for (const [p, at] of [[A, 0], [F3, 60_000], [F1, 120_000]] as const) {
+      clock = at;
+      await repo.commit(p, buffer.add({ sessionId: SESSION.sessionId, nodeKey: p.key, window: window(1010 - at / 1e6, at) }), SESSION);
+    }
+    const ttl = 30 * 60_000;
+    const pins = pressurePins(repo.current(), buffer.list(), state, 10 * 60_000);
+    expect(pins.map((p) => [p.label, p.short, p.leftMs, p.edges, p.stack])).toEqual([
+      ['바깥 지점 1', '', ttl - 10 * 60_000, 1, 0],
+      ['A동 3F', '3F', ttl + 60_000 - 10 * 60_000, 2, 0],
+      ['A동 1F', '1F', ttl + 120_000 - 10 * 60_000, 1, 1],
+    ]);
+    expect(pins[0]!.at).toEqual([127, 37.0001]);
+    expect(pins[1]!.at).toEqual(buildingCentre(state.buildings[Object.keys(state.buildings).find((id) => state.buildings[id]!.id === 'bldg_A')!]!));
+    expect(pinText(pins[1]!)).toBe('3F · 21분');
+    // After the buffer forgets them only the saved Δh are left.
+    const later = pressurePins(repo.current(), buffer.list(), state, 40 * 60_000);
+    expect(later.map((p) => p.leftMs)).toEqual([null, null, null]);
+    expect(pinText(later[0]!)).toBe('저장됨');
   });
 
   it('the exported zip carries the store and the pending heights next to survey.json; nothing when nothing was measured', async () => {

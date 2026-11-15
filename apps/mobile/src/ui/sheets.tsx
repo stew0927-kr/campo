@@ -1,6 +1,6 @@
 // The bottom sheets of the record buttons. They only collect answers; SurveyScreen turns the answers into plans.
 import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, heightFromPressure, type AccessInfo, type AccessProp, type DoorRole, type EditBuilding, type RestroomGender, type Wheelchair } from '@campo/core';
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { defaultLevel, floorLabel, type Scope } from '../model/scope.ts';
 import { usePressure } from '../sensors/device.ts';
@@ -93,7 +93,7 @@ export function DoorSheet({ suggestion, photos, onPhoto, onRecord, onClose }: Do
   );
 }
 
-// ---- 계단/EV 층 변경 ----
+// ---- 계단 · 엘리베이터: 다른 층과 연결 (started from the point's sheet) ----
 
 /** A floor change that has started: the surveyor is on the stairs or in the elevator. */
 export interface FloorTrip {
@@ -104,6 +104,8 @@ export interface FloorTrip {
 }
 
 interface FloorSheetProps {
+  /** What the trip is: the kind of the point it starts from. */
+  kind: VerticalKind;
   scope: Extract<Scope, { kind: 'building' }>;
   building: EditBuilding;
   trip: FloorTrip | null;
@@ -118,12 +120,11 @@ interface FloorSheetProps {
 /** Below this the barometer cannot tell up from down reliably, so the surveyor says which. */
 const MIN_CLEAR_HEIGHT_M = 1;
 
-export function FloorSheet({ scope, building, trip, photos, onPhoto, onDepart, onArrive, onCancelTrip, onClose }: FloorSheetProps) {
+export function FloorSheet({ kind, scope, building, trip, photos, onPhoto, onDepart, onArrive, onCancelTrip, onClose }: FloorSheetProps) {
   // Live pressure while the sheet is open (the reading is shared with the rest of the screen).
   const { value: pressure, available: barometer } = usePressure();
   const levels = [...building.props.levels].sort((a, b) => a - b);
   const at = levels.indexOf(scope.level);
-  const [kind, setKind] = useState<VerticalKind>('stairs');
   // Stairs are recorded one floor at a time (the floor above or below); an elevator can go to any floor.
   const reachable = (k: VerticalKind): number[] => levels.filter((l, i) => l !== scope.level && (k === 'elevator' || Math.abs(i - at) === 1));
   const others = reachable(kind);
@@ -133,11 +134,11 @@ export function FloorSheet({ scope, building, trip, photos, onPhoto, onDepart, o
 
   if (!trip) {
     return (
-      <BottomSheet title="계단/EV 층 변경" onClose={onClose}>
-        <Text style={styles.lead}>지금 {floorLabel(scope.level)}입니다. 계단참이나 엘리베이터 앞에 십자선을 맞추고 출발을 눌러 주세요.</Text>
-        <FieldLabel>무엇으로 이동하나요?</FieldLabel>
-        <Choice label="이동 수단" value={kind} onChange={setKind} options={[{ value: 'stairs', label: '계단' }, { value: 'elevator', label: '엘리베이터' }]} />
-        <FieldLabel>어느 층으로 가나요?</FieldLabel>
+      <BottomSheet title={kind === 'stairs' ? '계단 · 다른 층과 연결' : '엘리베이터 · 다른 층과 연결'} onClose={onClose}>
+        <Text style={styles.lead}>
+          {floorLabel(scope.level)}의 이 {kind === 'stairs' ? '계단' : '엘리베이터'}에서 출발합니다. 갈 층을 고르고 [여기서 출발]을 누른 뒤, 도착하면 메뉴의 [도착 기록]을 눌러 주세요.
+        </Text>
+        <FieldLabel>{kind === 'stairs' ? '바로 위나 아래, 어느 층으로 가나요?' : '어느 층에서 내리나요?'}</FieldLabel>
         <Choice label="도착 층" value={toLevel} onChange={setToLevel} options={levelOptions(others)} />
         <Text style={styles.note}>
           {barometer === false ? '이 기기에는 기압계가 없어 높이는 기록하지 않습니다.'
@@ -266,6 +267,8 @@ export function ScopeSheet({ scope, buildings, onPick, onClose }: ScopeSheetProp
 // ---- 지점·문 정보 (개방시간 / 폐쇄기간 / 개방조건, 메모, 사진) ----
 
 interface PointInfoSheetProps {
+  /** Shown first: the point's way to other floors (stairs, elevator, escalator), when it has one. */
+  header?: ReactNode;
   /** "문 101호", "출입구 A동 1층 출입구". */
   title: string;
   /** The edges at the point that can have a sill (not steps): how many, and what they say when they agree. Left out when there are none. */
@@ -306,7 +309,7 @@ function AccessInput({ name, value, onChange }: { name: AccessProp; value: strin
   );
 }
 
-export function PointInfoSheet({ title, sill, access, note, photos, onPhoto, onSave, onClose }: PointInfoSheetProps) {
+export function PointInfoSheet({ header, title, sill, access, note, photos, onPhoto, onSave, onClose }: PointInfoSheetProps) {
   const [stepFree, setStepFree] = useState<StepFree | undefined>(sill?.value);
   const [values, setValues] = useState<Required<AccessInfo>>({ hours: access.hours ?? '', closed_period: access.closed_period ?? '', access_condition: access.access_condition ?? '' });
   const [memo, setMemo] = useState(note);
@@ -315,6 +318,7 @@ export function PointInfoSheet({ title, sill, access, note, photos, onPhoto, onS
   const [open, setOpen] = useState(filled > 0);
   return (
     <BottomSheet title={title} onClose={onClose}>
+      {header}
       <Pressable
         onPress={() => setOpen((o) => !o)}
         accessibilityRole="button"

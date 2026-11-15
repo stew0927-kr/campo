@@ -1,7 +1,7 @@
 // How the edit state is drawn on the map. Display only: builds a throwaway GeoJSON from the EditState.
 import type { FeatureCollection } from 'geojson';
 import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
-import { edgeCoords, edgesAt, movedTogether, type EditNode, type EditState, type Position, type Profile } from '@campo/core';
+import { PICTOGRAM_COLORS, beltEndIds, edgeCoords, edgesAt, movedTogether, pictogramOf, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
 import { unattachedIds } from '../model/connect.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
@@ -12,9 +12,15 @@ export const DATA_SOURCE = 'campo-data';
 /** Line colours per kind of way. Same values as the CSS tokens --footway / --steps / --ramp. */
 export const WAY_COLORS = { footway: '#2463a6', corridor: '#3d4c5a', steps: '#d4461a', ramp: '#1f8f68', elevator: '#6a4fc4', other: '#5b6875' } as const;
 
-/** Name of the restroom icon (icons.ts): gender and wheelchair access, so both read on the map. */
-export const restroomIcon = (n: EditNode): string =>
-  n.props.node_type === 'restroom' ? `restroom-${n.props.restroom_gender ?? 'unisex'}-${n.props.wheelchair ?? 'unknown'}` : '';
+/** Image id of a point badge (icons.ts registerPictograms); a restroom's carries its wheelchair answer too. */
+export const pictogramImage = (kind: PictogramKind, wheelchair: Wheelchair | null): string => (wheelchair ? `pict-${kind}-${wheelchair}` : `pict-${kind}`);
+
+/** The badge a point is drawn with (core pictogramOf), or '' for a plain dot. */
+export function nodeIcon(n: EditNode, beltEnds: ReadonlySet<string>): string {
+  const kind = pictogramOf(n, beltEnds);
+  if (kind === null) return '';
+  return pictogramImage(kind, n.props.node_type === 'restroom' ? n.props.wheelchair ?? 'unknown' : null);
+}
 
 const isClassroom = (n: EditNode) => n.props.node_type === 'door' && (n.props.space_name !== undefined || n.props.ref !== undefined);
 
@@ -77,6 +83,7 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
     }
   }
   const waiting = unattachedIds(state);
+  const beltEnds = beltEndIds(state);
   for (const n of Object.values(state.nodes)) {
     features.push({
       type: 'Feature',
@@ -85,7 +92,7 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       properties: {
         id: n.id, kind: 'node', highway: null, node_type: n.props.node_type, classroom: isClassroom(n),
         emphasis: nodeStrong(n, scope) ? 1 : 0, selected: false, highlight: highlight.has(n.id),
-        unattached: waiting.has(n.id), icon: restroomIcon(n), synced: n.props.sync_group !== undefined, broken: broken.has(n.id),
+        unattached: waiting.has(n.id), icon: nodeIcon(n, beltEnds), synced: n.props.sync_group !== undefined, broken: broken.has(n.id),
       },
     });
   }
@@ -126,6 +133,8 @@ const opacity: ExpressionSpecification = ['case', strong, 1, 0.18];
 const isEdge: ExpressionSpecification = ['==', ['get', 'kind'], 'edge'];
 const isNode: ExpressionSpecification = ['==', ['get', 'kind'], 'node'];
 const isBelt: ExpressionSpecification = ['!=', ['get', 'conveying'], ''];
+/** A point drawn as a pictogram badge rather than a dot. */
+const hasIcon: ExpressionSpecification = ['!=', ['get', 'icon'], ''];
 /** Pixels to move an edge aside so a pair of escalators between the same two points shows both. */
 /** icon-offset of a belt arrow: [0, px] for the few sides a pair can have (a match, because an offset cannot be built from a number at run time). */
 const arrowShift = ['match', ['get', 'arrowOffset'],
@@ -144,11 +153,14 @@ const wayColor = [
   WAY_COLORS.other,
 ] as const;
 
+/** Dot colours (a dragged point, a POI): the typed points take their badge colour. */
 const nodeColor = [
   'match', ['get', 'node_type'],
-  'entrance', '#1f8f68',
-  'elevator_stop', WAY_COLORS.elevator,
-  'stair_landing', WAY_COLORS.steps,
+  'entrance', PICTOGRAM_COLORS.entrance,
+  'elevator_stop', PICTOGRAM_COLORS.elevator,
+  'stair_landing', PICTOGRAM_COLORS.stairs,
+  'restroom', PICTOGRAM_COLORS.restroom_all,
+  'door', PICTOGRAM_COLORS.door,
   'poi', '#1e2933',
   '#ffffff',
 ] as const;
@@ -237,16 +249,17 @@ export const DATA_LAYERS: LayerSpecification[] = [
     type: 'circle',
     source: DATA_SOURCE,
     filter: ['all', isNode, ['get', 'highlight']],
-    paint: { 'circle-radius': 11, 'circle-color': '#f2b705', 'circle-opacity': 0.55 },
+    paint: { 'circle-radius': ['case', hasIcon, 18, 11] as never, 'circle-color': '#f2b705', 'circle-opacity': 0.55 },
   },
   {
+    // Plain points (corridor, outdoor, classroom-less POIs); typed points are badges (campo-pictograms).
     id: 'campo-nodes',
     type: 'circle',
     source: DATA_SOURCE,
-    filter: isNode,
+    filter: ['all', isNode, ['!', hasIcon]],
     paint: {
       'circle-radius': ['case', ['any', ['==', ['get', 'node_type'], 'poi'], ['get', 'classroom']], 6, 4.5] as never,
-      'circle-color': ['case', ['get', 'classroom'], '#2463a6', nodeColor] as never,
+      'circle-color': ['case', ['get', 'classroom'], PICTOGRAM_COLORS.door, nodeColor] as never,
       'circle-stroke-color': '#1e2933',
       'circle-stroke-width': 2,
       'circle-opacity': opacity,
@@ -269,7 +282,7 @@ DATA_LAYERS.push(
     type: 'circle',
     source: DATA_SOURCE,
     filter: ['all', isNode, ['==', ['get', 'unattached'], true], strong],
-    paint: { 'circle-radius': 17, 'circle-color': UNATTACHED_COLOR, 'circle-opacity': 0.12, 'circle-stroke-color': UNATTACHED_COLOR, 'circle-stroke-width': 3, 'circle-stroke-opacity': opacity },
+    paint: { 'circle-radius': ['case', hasIcon, 19, 17] as never, 'circle-color': UNATTACHED_COLOR, 'circle-opacity': 0.12, 'circle-stroke-color': UNATTACHED_COLOR, 'circle-stroke-width': 3, 'circle-stroke-opacity': opacity },
   },
   {
     // Linked to the same spot on other floors (sync_group): a thin ring round the point.
@@ -277,7 +290,7 @@ DATA_LAYERS.push(
     type: 'circle',
     source: DATA_SOURCE,
     filter: ['all', isNode, ['==', ['get', 'synced'], true], strong],
-    paint: { 'circle-radius': 9, 'circle-color': SYNC_COLOR, 'circle-opacity': 0, 'circle-stroke-color': SYNC_COLOR, 'circle-stroke-width': 1.5 },
+    paint: { 'circle-radius': ['case', hasIcon, 15.5, 9] as never, 'circle-color': SYNC_COLOR, 'circle-opacity': 0, 'circle-stroke-color': SYNC_COLOR, 'circle-stroke-width': 1.5 },
   },
   {
     // 끊긴 지점 찾기: a route cannot use this point. Drawn on every floor that is shown strongly, and outdoors.
@@ -285,14 +298,20 @@ DATA_LAYERS.push(
     type: 'circle',
     source: DATA_SOURCE,
     filter: ['all', isNode, ['==', ['get', 'broken'], true], strong],
-    paint: { 'circle-radius': 14, 'circle-color': BROKEN_COLOR, 'circle-opacity': 0.14, 'circle-stroke-color': BROKEN_COLOR, 'circle-stroke-width': 3.5 },
+    paint: { 'circle-radius': ['case', hasIcon, 18, 14] as never, 'circle-color': BROKEN_COLOR, 'circle-opacity': 0.14, 'circle-stroke-color': BROKEN_COLOR, 'circle-stroke-width': 3.5 },
   },
   {
-    id: 'campo-restrooms',
+    // Stairs, elevators, escalator ends, restrooms, entrances and room doors (core pictograms.ts). Smaller when zoomed out.
+    id: 'campo-pictograms',
     type: 'symbol',
     source: DATA_SOURCE,
-    filter: ['all', isNode, ['!=', ['get', 'icon'], '']],
-    layout: { 'icon-image': ['get', 'icon'], 'icon-size': 0.8, 'icon-allow-overlap': true, 'icon-ignore-placement': true },
+    filter: ['all', isNode, hasIcon],
+    layout: {
+      'icon-image': ['get', 'icon'],
+      'icon-size': ['interpolate', ['linear'], ['zoom'], 16, 0.62, 19, 1] as never,
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+    },
     paint: { 'icon-opacity': opacity },
   },
   {
@@ -345,7 +364,7 @@ export const DRAG_LAYERS: LayerSpecification[] = [
     type: 'circle',
     source: DRAG_SOURCE,
     filter: ['==', ['get', 'role'], 'node'],
-    paint: { 'circle-radius': 6, 'circle-color': ['case', ['get', 'classroom'], '#2463a6', nodeColor] as never, 'circle-stroke-color': '#1e2933', 'circle-stroke-width': 2 },
+    paint: { 'circle-radius': 6, 'circle-color': ['case', ['get', 'classroom'], PICTOGRAM_COLORS.door, nodeColor] as never, 'circle-stroke-color': '#1e2933', 'circle-stroke-width': 2 },
   },
 ];
 
@@ -479,7 +498,7 @@ export const ELEVATION_SOURCE = 'campo-elevation';
 export const ELEVATION_COLORS = { breakline: '#6b4423', caution: '#d9a100', steep: '#c92a2a' } as const;
 
 export interface BreaklineShape {
-  /** 'drawn': ElevationStore.breaklines (불연속선 그리기); 'edge': an outdoor flight or an is_breakline edge. */
+  /** 'drawn': ElevationStore.breaklines (고도 단절선 그리기); 'edge': an outdoor flight or an is_breakline edge. */
   kind: 'drawn' | 'edge';
   id: string;
   coordinates: Position[];
@@ -497,28 +516,49 @@ export function elevationGeoJSON(breaklines: readonly BreaklineShape[], slopes: 
   };
 }
 
-/** Break lines under the data (a cut in the ground), slope stripes over the routes. */
+/**
+ * Break lines under the data (a cut in the ground), slope stripes over the routes. A drawn 고도 단절선 is a wall symbol
+ * as on a topographic map: a solid edge with teeth hanging off one side (icons.ts breakline-tooth), so it reads as a drop
+ * and not as a path. Campus edges that act as one (outdoor steps, is_breakline) keep a thin dashed line beside them.
+ */
 export const BREAKLINE_LAYERS: LayerSpecification[] = [
   {
     id: 'campo-breakline-casing',
     type: 'line',
     source: ELEVATION_SOURCE,
     filter: ['==', ['get', 'role'], 'break-drawn'],
-    layout: { 'line-cap': 'butt', 'line-join': 'round' },
-    paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-opacity': 0.75 },
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.85 },
   },
   {
     id: 'campo-breakline',
     type: 'line',
     source: ELEVATION_SOURCE,
-    filter: ['match', ['get', 'role'], ['break-drawn', 'break-edge'], true, false],
-    layout: { 'line-cap': 'butt', 'line-join': 'round' },
-    paint: {
-      'line-color': ELEVATION_COLORS.breakline,
-      'line-width': ['match', ['get', 'role'], 'break-drawn', 3.5, 2],
-      'line-dasharray': [0.6, 0.6],
-      'line-offset': ['match', ['get', 'role'], 'break-edge', 5, 0],
+    filter: ['==', ['get', 'role'], 'break-drawn'],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': ELEVATION_COLORS.breakline, 'line-width': 3.5 },
+  },
+  {
+    id: 'campo-breakline-teeth',
+    type: 'symbol',
+    source: ELEVATION_SOURCE,
+    filter: ['==', ['get', 'role'], 'break-drawn'],
+    layout: {
+      'symbol-placement': 'line',
+      'symbol-spacing': 14,
+      'icon-image': 'breakline-tooth',
+      'icon-rotation-alignment': 'map',
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
     },
+  },
+  {
+    id: 'campo-breakline-edge',
+    type: 'line',
+    source: ELEVATION_SOURCE,
+    filter: ['==', ['get', 'role'], 'break-edge'],
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: { 'line-color': ELEVATION_COLORS.breakline, 'line-width': 2, 'line-dasharray': [0.6, 0.6], 'line-offset': 5 },
   },
 ];
 export const SLOPE_LAYERS: LayerSpecification[] = [

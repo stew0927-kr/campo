@@ -9,14 +9,16 @@
 //
 // The map keeps its own view. Dragging re-renders this component only (the screen around it reads the crosshair through
 // the handle when a record is made), and the drawn Features are redrawn only when the data, the floor or the zoom step changes.
-import { buildingById, edgeCoords, isEscalator, type EditState, type Position } from '@campo/core';
+import { beltEndIds, buildingById, edgeCoords, isEscalator, pictogramOf, type EditState, type Position } from '@campo/core';
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
 import { Image, PanResponder, Vibration, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, G, Line, Path, Polygon, Polyline, Rect, Text as SvgText } from 'react-native-svg';
 import { nodeInScope, type Scope } from '../model/scope.ts';
 import { SNAP_M } from '../survey/plans.ts';
+import { pinText, type PressurePin } from '../survey/pressurePins.ts';
 import { hitAt, inBox, type Box, type Hit, type Selection } from '../survey/selection.ts';
 import { dialHeading, fanPath, polar, touchAngle, wholeDegrees } from '../ui/dial.ts';
+import { PictoBadge } from '../ui/Pictogram.tsx';
 import { color, font, radius, space } from '../ui/theme.ts';
 import {
   coverSide, fitView, fromScreen, mapMatrix, panned, rotated, rotationOf, scaleBar, shortestTurn, toScreen, withRotation, zoomed,
@@ -81,6 +83,12 @@ interface Props {
   marks?: readonly { at: Position; tone: 'door' | 'back' | 'pin' }[];
   /** Space kept free at the bottom of the screen (the tool panel): the scale bar and compass sit just above it. */
   bottomInset?: number;
+  /** Walk points marked as where an escalator is boarded, before a belt is recorded (they get the escalator badge). */
+  escalatorSpots?: ReadonlySet<string>;
+  /** 측정된 기압 on the map: a pin per measured spot; a tap on one (in the plain map) calls onPinTap. */
+  pins?: readonly PressurePin[] | null;
+  pinSelected?: string | null;
+  onPinTap?: (key: string) => void;
 }
 
 interface Touch {
@@ -121,10 +129,29 @@ const NORTH_MS = 320;
 /** Radius of the photo fan on the map, in pixels: small, so the map around the point stays visible. */
 const FAN_PX = 64;
 
-/** The colour of a point by its type, so doors, lifts, stairs and so on tell apart at a glance. */
-const NODE_COLOR: Partial<Record<string, string>> = {
-  door: '#0C8599', corridor: '#8A94A3', outdoor: '#8A94A3', elevator_stop: '#D6336C', stair_landing: '#F59F00',
-  restroom: '#12B886', entrance: '#C92A2A', poi: '#495057',
+/** The colour of a plain point (the typed ones are pictogram badges, core pictograms.ts). */
+const NODE_COLOR: Partial<Record<string, string>> = { corridor: '#8A94A3', outdoor: '#8A94A3', poi: '#495057' };
+/** Badge size on the screen (dp), and the pins of 측정된 기압. */
+const BADGE_DP = 26;
+const PIN_H = 22;
+const PIN_RISE = 14;
+
+/**
+ * An upright group at map point `xy` drawn in screen units: undoes the map's flip, turn and scale (mapMatrix is its own
+ * inverse up to the scale), so a badge or a label stays level and the same size whatever the map does.
+ */
+function upright(xy: XY, turnDeg: number, px: number): string {
+  const t = (turnDeg * Math.PI) / 180;
+  const [c, s] = [Math.cos(t) * px, Math.sin(t) * px];
+  return `matrix(${c} ${-s} ${-s} ${-c} ${xy[0]} ${xy[1]})`;
+}
+
+/** Rough width of a pin's text (Korean glyphs are about a square, Latin and digits about half). */
+const textWidth = (text: string, size: number): number => [...text].reduce((w, ch) => w + (/[\u3131-\uD79D]/.test(ch) ? size : size * 0.6), 0);
+/** Where the pill of a pin sits above its spot, in screen pixels relative to the spot. */
+const pinBox = (pin: PressurePin): { x: number; y: number; w: number; h: number } => {
+  const w = 30 + textWidth(pinText(pin), 12);
+  return { x: -w / 2, y: -(PIN_RISE + PIN_H + pin.stack * (PIN_H + 4)), w, h: PIN_H };
 };
 
 /** Map metres of a turned map, as screen pixels on a north-up layout: the tiles under the map are laid out unturned. */
@@ -133,6 +160,7 @@ const unturned = (v: MapView): MapView => ({ x: v.x, y: v.y, scale: v.scale });
 export function MapCanvas({
   state, base, projection, center, scope, anchorId, handle, tileCache, draft = null, movingId = null, onSnap,
   mode = 'pan', selection = null, onTapHit, onBoxPick, dragNodeId = null, onNodeMove, onNodeTap, liftNodes = false, heading = null, highlightEdges, marks, bottomInset = 0,
+  escalatorSpots, pins = null, pinSelected = null, onPinTap,
 }: Props) {
   const [size, setSize] = useState<Size | null>(null);
   const [view, setView] = useState<MapView | null>(null);
@@ -140,8 +168,8 @@ export function MapCanvas({
   /** Where a held point is being carried, in map metres; null when none is. */
   const [carry, setCarry] = useState<{ id: string; xy: XY } | null>(null);
   // The responder and the handle are made once; they read the newest values through refs.
-  const latest = useRef({ view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes });
-  latest.current = { view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes };
+  const latest = useRef({ view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes, pins, onPinTap });
+  latest.current = { view, size, state, scope, mode, heading, onTapHit, onBoxPick, dragNodeId, onNodeMove, onNodeTap, liftNodes, pins, onPinTap };
 
   /** A view that shows the scope, at the map's current turn. */
   const fit = (target: Scope, on: Size): MapView => {
@@ -345,6 +373,20 @@ export function MapCanvas({
         else if (g.last && g.moved > TAP_PX) pick?.(inBox({ state: st, scope: sc, projection, view: v, size: s }, { x0: g.start.x, y0: g.start.y, x1: g.last.x, y1: g.last.y }));
       }
       if (m === 'pan' && v && s && g.maxCount === 1 && g.moved <= TAP_PX && quick) {
+        // A 측정된 기압 pin under the finger comes first: its pill, or its spot.
+        const { pins: shown, onPinTap: pinTap } = latest.current;
+        const pin = pinTap ? shown?.find((p) => {
+          const [x, y] = toScreen(v, s, projection.toXY(p.at));
+          const box = pinBox(p);
+          const [dx, dy] = [g.start.x - x, g.start.y - y];
+          return Math.hypot(dx, dy) <= 18 || (dx >= box.x - 6 && dx <= box.x + box.w + 6 && dy >= box.y - 6 && dy <= 6);
+        }) : undefined;
+        if (pin) {
+          pinTap?.(pin.key);
+          setBox(null);
+          g.last = null;
+          return;
+        }
         const hit = hitAt({ state: st, scope: sc, projection, view: v, size: s }, [g.start.x, g.start.y]);
         if (hit?.kind === 'node') latest.current.onNodeTap?.(hit.id);
       }
@@ -427,7 +469,7 @@ export function MapCanvas({
           <Svg width={size.width} height={size.height} pointerEvents="none">
             {/* Metres → pixels: x east, y north, turned around the crosshair (project.ts mapMatrix). */}
             <G transform={`matrix(${mapMatrix(view, size).join(' ')})`}>
-              <Features state={state} base={base} projection={projection} scope={scope} px={1 / steppedScale(view.scale)} />
+              <Features state={state} base={base} projection={projection} scope={scope} px={1 / steppedScale(view.scale)} spots={escalatorSpots} />
               <Highlights state={state} projection={projection} selection={selection} edges={highlightEdges} px={1 / view.scale} />
               {draft && draft.length > 0 && <Draft points={draft.map((p) => projection.toXY(p))} px={1 / view.scale} />}
               {marks?.map((m, i) => {
@@ -443,7 +485,9 @@ export function MapCanvas({
                 </>
               )}
               {anchor && <Circle cx={anchor.xy[0]} cy={anchor.xy[1]} r={15 / view.scale} fill="none" stroke={color.anchor} strokeWidth={3.5 / view.scale} />}
-              {snap && snap.id !== anchorId && mode !== 'select' && <Circle cx={snap.xy[0]} cy={snap.xy[1]} r={13 / view.scale} fill="none" stroke={color.ok} strokeWidth={3 / view.scale} />}
+              {snap && snap.id !== anchorId && mode !== 'select' && <Circle cx={snap.xy[0]} cy={snap.xy[1]} r={(BADGE_DP / 2 + 4) / view.scale} fill="none" stroke={color.ok} strokeWidth={3 / view.scale} />}
+              <Pictograms state={state} base={base} projection={projection} scope={scope} px={1 / steppedScale(view.scale)} turn={turn} spots={escalatorSpots} />
+              {pins?.map((p) => <Pin key={p.key} pin={p} xy={projection.toXY(p.at)} turn={turn} px={1 / view.scale} selected={p.key === pinSelected} />)}
             </G>
             {heading && <Fan at={toScreen(view, size, projection.toXY(heading.at))} deg={heading.deg} guides={heading.guides} turn={turn} />}
             {box && <Rect x={Math.min(box.x0, box.x1)} y={Math.min(box.y0, box.y1)} width={Math.abs(box.x1 - box.x0)} height={Math.abs(box.y1 - box.y0)} fill={color.primary} fillOpacity={0.12} stroke={color.primary} strokeWidth={1.5} strokeDasharray="6 4" />}
@@ -464,12 +508,20 @@ interface FeaturesProps {
   scope: Scope;
   /** Metres per screen pixel (at the zoom step), so strokes and dots keep about their size on screen. */
   px: number;
+  spots?: ReadonlySet<string> | undefined;
+}
+
+/** Belt ends and the escalator spots not ridden yet: the points with the escalator badge. */
+function escalatorIds(state: EditState, spots: ReadonlySet<string> | undefined): Set<string> {
+  const ids = beltEndIds(state);
+  for (const id of spots ?? []) ids.add(id);
+  return ids;
 }
 
 const pointsOf = (projection: Projection, coords: readonly Position[]): string => coords.map((p) => projection.toXY(p).join(',')).join(' ');
 
 /** Redrawn only when the data, the floor or the zoom step changes: dragging the map just moves the group around it. */
-const Features = memo(function Features({ state, base, projection, scope, px }: FeaturesProps) {
+const Features = memo(function Features({ state, base, projection, scope, px, spots }: FeaturesProps) {
   const here = scope.kind === 'building' ? scope.buildingId : null;
   const inScope = (id: string): boolean => {
     const n = state.nodes[id];
@@ -509,19 +561,17 @@ const Features = memo(function Features({ state, base, projection, scope, px }: 
     )];
   });
 
-  // Ends of escalator belts: the belt is an edge, so its two points are coloured like it.
-  const beltEnds = new Set<string>();
-  for (const e of Object.values(state.edges)) if (isEscalator(e.props)) beltEnds.add(e.props.from).add(e.props.to);
+  // Plain points only: stairs, elevators, escalator ends, restrooms, entrances and doors are badges (Pictograms).
+  const escalators = escalatorIds(state, spots);
   const nodes = Object.values(state.nodes).flatMap((n) => {
-    if (!nodeInScope(n, scope)) return [];
+    if (!nodeInScope(n, scope) || pictogramOf(n, escalators) !== null) return [];
     const [x, y] = projection.toXY(n.coord);
     const type = n.props.node_type;
     const walkPoint = type === 'corridor' || type === 'outdoor';
-    const fill = beltEnds.has(n.id) && walkPoint ? color.escalator : NODE_COLOR[type] ?? color.node;
     // A point recorded on this walk has an orange ring; the others a white one. (The selection ring is blue, the snap ring green.)
     const made = !(n.id in base.nodes);
     return [(
-      <Circle key={n.id} cx={x} cy={y} r={(walkPoint ? 5 : 7.5) * px} fill={fill} stroke={made ? color.accent : color.surface} strokeWidth={(made ? 2.5 : 1.5) * px} />
+      <Circle key={n.id} cx={x} cy={y} r={(walkPoint ? 5 : 7.5) * px} fill={NODE_COLOR[type] ?? color.node} stroke={made ? color.accent : color.surface} strokeWidth={(made ? 2.5 : 1.5) * px} />
     )];
   });
 
@@ -533,6 +583,58 @@ const Features = memo(function Features({ state, base, projection, scope, px }: 
     </>
   );
 });
+
+/**
+ * The typed points of this floor as upright badges (core pictograms.ts, the same as the editor's). Redrawn when the data,
+ * the floor, the zoom step or the map's turn changes; a point recorded on this walk has an orange rim.
+ */
+const Pictograms = memo(function Pictograms({ state, base, projection, scope, px, turn, spots }: FeaturesProps & { turn: number }) {
+  const escalators = escalatorIds(state, spots);
+  return (
+    <>
+      {Object.values(state.nodes).flatMap((n) => {
+        if (!nodeInScope(n, scope)) return [];
+        const kind = pictogramOf(n, escalators);
+        if (kind === null) return [];
+        return [(
+          <G key={n.id} transform={upright(projection.toXY(n.coord), turn, px)}>
+            <PictoBadge
+              kind={kind} size={BADGE_DP} x={-BADGE_DP / 2} y={-BADGE_DP / 2}
+              wheelchair={n.props.node_type === 'restroom' ? n.props.wheelchair ?? 'unknown' : null}
+              rim={n.id in base.nodes ? color.surface : color.accent}
+            />
+          </G>
+        )];
+      })}
+    </>
+  );
+});
+
+/** A 측정된 기압 pin: a dot on the spot, and a pill above it with the time its pressure stays in memory (or 저장됨). */
+function Pin({ pin, xy, turn, px, selected }: { pin: PressurePin; xy: XY; turn: number; px: number; selected: boolean }) {
+  const live = pin.leftMs !== null;
+  const box = pinBox(pin);
+  const tint = live ? color.primary : color.ok;
+  const gx = box.x + 9;
+  const gy = box.y + box.h / 2;
+  return (
+    <G transform={upright(xy, turn, px)}>
+      <Line x1={0} y1={0} x2={0} y2={box.y + box.h} stroke={tint} strokeWidth={2} />
+      <Circle cx={0} cy={0} r={selected ? 7 : 5} fill={tint} stroke={color.surface} strokeWidth={2} />
+      <Rect x={box.x} y={box.y} width={box.w} height={box.h} rx={box.h / 2} fill={live ? tint : color.surface} stroke={selected ? color.ink : tint} strokeWidth={selected ? 2.5 : 1.5} />
+      {live ? (
+        // Δh: two levels and the arrow between them (the measure button's glyph), small.
+        <Path
+          d={`M${gx - 1} ${gy + 5} h4.5 M${gx + 5.5} ${gy - 5} h4.5 M${gx + 4.5} ${gy + 4} v-7 M${gx + 2.5} ${gy - 1} l2 -2 l2 2`}
+          stroke={color.onPrimary} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" fill="none"
+        />
+      ) : (
+        <Path d={`M${gx} ${gy} l3 3 l5.5 -6`} stroke={tint} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      )}
+      <SvgText x={box.x + 24} y={gy + 4.3} fontSize={12} fontWeight="800" fill={live ? color.onPrimary : tint}>{pinText(pin)}</SvgText>
+    </G>
+  );
+}
 
 /** The selection (and the corridor a row of rooms will line), drawn over the Features. */
 function Highlights({ state, projection, selection, edges, px }: { state: EditState; projection: Projection; selection: Selection | null; edges?: readonly string[] | undefined; px: number }) {

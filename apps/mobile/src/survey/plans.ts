@@ -104,7 +104,7 @@ export function builder(state: EditState, ctx: EditContext) {
 }
 
 /** The closest node within `maxM` of `coord` that passes `accept`. */
-function nearestWhere(state: EditState, coord: Position, maxM: number, accept: (n: EditNode) => boolean): EditNode | undefined {
+export function nearestWhere(state: EditState, coord: Position, maxM: number, accept: (n: EditNode) => boolean): EditNode | undefined {
   let best: EditNode | undefined;
   let bestM = maxM;
   for (const n of Object.values(state.nodes)) {
@@ -147,7 +147,7 @@ function edgeBetween(state: EditState, a: string, b: string): EditEdge | undefin
 
 const isType = (type: NodeType) => (n: EditNode): boolean => n.props.node_type === type;
 
-function walkNode(scope: Scope, source: string): NodeProps {
+export function walkNode(scope: Scope, source: string): NodeProps {
   return { kind: 'node', node_type: scope.kind === 'outdoor' ? 'outdoor' : 'corridor', ...scopeProps(scope), source };
 }
 
@@ -294,7 +294,7 @@ export interface EscalatorOptions {
   belt: BeltKind;
 }
 
-const isWalkPoint = (n: EditNode): boolean => n.props.node_type === 'corridor' || n.props.node_type === 'outdoor';
+export const isWalkPoint = (n: EditNode): boolean => n.props.node_type === 'corridor' || n.props.node_type === 'outdoor';
 
 /**
  * An escalator from where the ride began (the input's coord and scope) to where it ended: a walk point at each end (an
@@ -418,7 +418,7 @@ export interface FloorChangeOptions {
 }
 
 /** The next free "{code}_elev{A-Z}" of the building (the editor's 엘리베이터 tool names them the same way). */
-function newElevatorId(state: EditState, code: string): string | undefined {
+export function newElevatorId(state: EditState, code: string): string | undefined {
   const used = new Set(Object.values(state.nodes).map((n) => n.props.elevator_id));
   for (let c = 65; c <= 90; c++) {
     const id = `${code}_elev${String.fromCharCode(c)}`;

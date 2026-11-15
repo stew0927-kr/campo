@@ -26,6 +26,26 @@ export function addMeasurement(store: ElevationStore, node: HeightNode, result: 
   return { ...store, nodes, edges };
 }
 
+/**
+ * The store without the measured height variable `key` (the surveyor deleted that spot): the node, every Δh edge at it
+ * (superseded ones too), its estimate and anchor passes, and the profiles of the removed edges. `removed` lists the edges
+ * taken out, so the variables at their other ends can be marked for a recompute. Unknown keys leave the store as it is.
+ */
+export function removeHeightNode(store: ElevationStore, key: string): { store: ElevationStore; removed: DhEdge[] } {
+  const removed = store.edges.filter((e) => e.from === key || e.to === key);
+  if (removed.length === 0 && !store.nodes.some((n) => n.key === key)) return { store, removed };
+  const gone = new Set<string>(removed.map((e) => e.edgeId));
+  const next: ElevationStore = {
+    ...store,
+    nodes: store.nodes.filter((n) => n.key !== key),
+    edges: store.edges.filter((e) => !gone.has(e.edgeId)),
+    ...(store.estimates ? { estimates: store.estimates.filter((x) => x.key !== key) } : {}),
+    ...(store.anchorPasses ? { anchorPasses: store.anchorPasses.filter((x) => x.nodeKey !== key) } : {}),
+    ...(store.profiles ? { profiles: store.profiles.filter((x) => !gone.has(x.edgeId)) } : {}),
+  };
+  return { store: next, removed };
+}
+
 type Obj = Record<string, unknown>;
 
 /** Only `keys`, in that order, leaving out undefined. Nested objects are picked by `nested`. */

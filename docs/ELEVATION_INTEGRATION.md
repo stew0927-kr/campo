@@ -249,7 +249,8 @@ SPEC-v0.2 9장은 "경사도 계산, 고도 데이터 합치기"를 v0.2 범위 
 | 고도 다시 계산 | 완료 | `server/elevation-api.ts` `POST /api/elevation/:id/recompute`: 저장 전 캠퍼스 파일을 임시 폴더에 쓰고 `--dirty`(+ 이전 residual·derived)로 솔버 실행. 폴더 `derived/<캠퍼스>/`(`CAMPO_ELEVATION_DIR`)에 `store.json`, `dem.json`(`CAMPO_ELEVATION_DEM`)이 없으면 이전 `elevation.json`을 그대로 읽는다. 결과는 `planRecomputeResult`(→ `applyDerivedElevation`) 이력 한 줄, 그다음 `clearDirty` |
 | 속성 패널 토글·읽기 전용 값, 종류 변경 시 flat_exact 지움 | 완료 | `PropertiesPanel` 고도 칸(스키마가 막는 토글은 이유와 함께 흐리게), `model/menu.ts` 종류 바꾸기가 `kindChangeExtras`로 같은 이력에서 flat_exact·is_breakline을 지움 |
 | 경로 테스트 경사 구간, 안내 문장 | 완료 | 지도에 주의(노랑)·급경사(빨강) 줄무늬(`SLOPE_LAYERS`), 경로 카드에 개수와 가장 가파른 곳, route-text `STEEP_NOTE` |
-| 불연속선 그리기 | 완료 | 도구 `breakline`(B, 바깥): 그린 선은 지도 데이터가 아니라 `store.json`의 `breaklines`(`PUT /api/elevation/:id/store`, 절대 기압이 든 파일은 거부). 그리거나 지우면 30 m 안 지점이 dirty. 지도에는 그린 선과 불연속선 구간(바깥 계단, is_breakline)을 갈색 점선으로 표시 |
+| 고도 단절선(옹벽·단차) 그리기 | 완료 | 도구 `breakline`(B, 바깥): 그린 선은 지도 데이터가 아니라 `store.json`의 `breaklines`(`PUT /api/elevation/:id/store`, 절대 기압이 든 파일은 거부). 그리거나 지우면 30 m 안 지점이 dirty. 지도에는 그린 선을 옹벽 기호(실선 + 한쪽 이빨)로, 불연속선 구간(바깥 계단, is_breakline)은 갈색 점선으로 표시. 상태 표시줄의 [고도 다시 계산]은 바뀐 곳이 없어도 "고도 최신"과 함께 늘 보이고, 그때는 누르지 못하며 툴팁으로 안내 |
+| 앱의 측정된 기압 지도 표시 | 완료 | 메뉴 [측정된 기압]은 잰 지점을 지도에 핀으로 표시(메모리에 남은 분, 지나면 "저장됨"). 핀을 누르면 다시 재기(같은 key) 또는 삭제(`removeHeightNode` + 버퍼 `forgetNode`, 이어진 Δh 엣지의 다른 끝은 dirty) |
 | 측정 FAB·카운트다운·"측정된 기압" | 완료 | `ui/measureSheets.tsx`: 메뉴 버튼 위 FAB → 십자선 [여기서 측정](층 안이면 그 층 평면, 바깥이면 3 m 안에서 전에 잰 지점을 다시 씀) → 안정화·10초 링 → 결과(좋음·보통·다시), 끝날 때 진동. 메뉴 "측정된 기압"은 메모리 버퍼 목록과 남은 시간, 기록 지우기 |
 | `ElevationRepo` | 완료 | `storage/elevationRepo.ts`: `elevation/store.json`(`serializeElevationStore`, 임시 파일을 거쳐 씀), `elevation/dirty.json`(`markMeasurements`의 heightNodes), 설치 id. 내보내기 zip에 `elevation_store.json`, `elevation_dirty.json`(Δh·σ·Δt만) |
 | `motionPermission` | 완료 | app.json 문구 |

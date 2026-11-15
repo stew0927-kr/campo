@@ -97,9 +97,9 @@ const TOOL_SPECS = [
     hint: '아래쪽 지점을 누르면 작은 창이 열립니다. 방향과 위쪽 층을 고른 다음, 위쪽 지점이나 빈자리를 누릅니다. 바깥에서는 층 선택 없이 방향만 고릅니다.',
   },
   {
-    id: 'breakline', label: '불연속선 그리기', group: 'draw', key: 'B', scope: 'outdoor',
-    description: '옹벽·연석처럼 땅 높이가 끊기는 선을 그립니다. 고도 보정이 이 선을 넘어 퍼지지 않습니다.',
-    hint: '높이가 끊기는 선을 따라 클릭하고, 마지막 점을 한 번 더 누르거나 Enter를 누르면 끝납니다. 지도 데이터가 아니라 고도 저장소에 저장됩니다.',
+    id: 'breakline', label: '고도 단절선(옹벽·단차)', group: 'draw', key: 'B', scope: 'outdoor',
+    description: '옹벽이나 급격한 단차처럼 양쪽 땅 높이가 끊어지는 경계선을 그려요(이 선 너머로는 고도가 섞이지 않음)',
+    hint: '시작점을 클릭하고, 꺾이는 곳마다 클릭한 뒤, 마지막 점을 더블클릭하거나 Enter를 누르면 완료됩니다. Esc는 취소입니다. 지도 데이터가 아니라 고도 저장소에 저장됩니다.',
   },
   {
     id: 'door', label: '호실 연속 입력', group: 'macro', key: 'D', placing: true, attachPreview: true,

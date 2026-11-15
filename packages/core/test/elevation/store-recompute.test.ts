@@ -18,6 +18,7 @@ import {
   outdoorNodeKey,
   readDerivedElevation,
   recomputeRequest,
+  removeHeightNode,
   serializeElevationStore,
   statePatches,
   type BarometerWindowResult,
@@ -82,6 +83,28 @@ describe('ElevationStore: persisted data has no absolute pressure', () => {
     expect(text.endsWith('}\n')).toBe(true);
     // Round trip of a clean store is exact.
     expect(serializeElevationStore(JSON.parse(serializeElevationStore(store)))).toBe(serializeElevationStore(store));
+  });
+});
+
+describe('deleting a measured spot (survey app 측정된 기압 → 삭제)', () => {
+  it('removes the node, every Δh edge at it and its estimate; the other variables stay', () => {
+    const { store } = measuredStore();
+    const withEstimate = { ...store, estimates: [{ key: A, hM: 30, sigmaM: 0.1, floating: false }, { key: B, hM: 34, sigmaM: 0.1, floating: false }] };
+    const { store: next, removed } = removeHeightNode(withEstimate as never, B);
+    expect(removed.map((e) => e.method).sort()).toEqual(['roundtrip', 'static_pair']);
+    expect(next.nodes.map((n) => n.key)).toEqual([A]);
+    expect(next.edges).toHaveLength(0);
+    expect(next.estimates?.map((x) => x.key)).toEqual([A]);
+    expect(removeHeightNode(next, 'op:nowhere').store).toBe(next);
+  });
+
+  it('forgets the spot’s pressures in memory, so the next window pairs with what is left', () => {
+    const { buf } = measuredStore();
+    expect(buf.forgetNode(A)).toBe(2);
+    expect(buf.list().map((o) => o.nodeKey)).toEqual([B]);
+    expect(buf.forgetNode(A)).toBe(0);
+    expect(buf.forgetNode(B)).toBe(1);
+    expect(buf.list()).toHaveLength(0);
   });
 });
 

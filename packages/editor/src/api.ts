@@ -99,7 +99,7 @@ export async function saveElevationStore(campusId: string, text: string): Promis
     body: JSON.stringify({ text }),
   });
   const body = (await res.json()) as { written?: boolean; error?: string };
-  if (!res.ok || !body.written) throw new Error(body.error ?? `불연속선을 저장하지 못했습니다 (HTTP ${res.status}).`);
+  if (!res.ok || !body.written) throw new Error(body.error ?? `고도 단절선을 저장하지 못했습니다 (HTTP ${res.status}).`);
 }
 
 /** Send the recompute request and the campus as it would be saved; the solver's derived/elevation.json comes back. */

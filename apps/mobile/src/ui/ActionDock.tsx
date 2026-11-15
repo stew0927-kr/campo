@@ -1,6 +1,6 @@
 // The thumb's corner of the survey screen. At rest it is one round menu button at the lower right, so the map keeps the
 // screen; a press slides up a translucent vertical menu bar over the map with the records made while walking (지점, 잇기,
-// 외부 길, 문, 호실 연속, 화장실, 계단/EV, 에스컬레이터, 출입구) and the tools (선택, 강의실 자동 연결, OSM 건물 가져오기, …).
+// 외부 길, 문, 화장실, 호실 연속, 계단, 엘리베이터, 에스컬레이터, 출입구) and the tools (선택, 강의실 자동 연결, OSM 건물 가져오기, …).
 // Picking one closes the bar. While a mode is on (잇기, 선택, a drawing, a move …) a compact panel across the bottom shows
 // only what that mode needs. Everything pressed is TOUCH (38 dp) high or more.
 import { type ReactNode } from 'react';
@@ -20,6 +20,8 @@ export interface DockAction {
   /** A mode that is on (the button turns dark). */
   active?: boolean;
   tone?: 'danger';
+  /** A pictogram in front of the label in the menu (the points that have a badge on the map). */
+  icon?: ReactNode;
 }
 
 /** What replaces the menu while a mode is on. */
@@ -84,8 +86,11 @@ function MenuItem({ a, onPicked }: { a: DockAction; onPicked: () => void }) {
       }}
       style={({ pressed }) => [styles.item, a.primary && styles.itemPrimary, a.active && styles.itemActive, pressed && styles.itemPressed, a.disabled && styles.disabled]}
     >
-      <Text style={styles.itemLabel} numberOfLines={1}>{a.label}</Text>
-      {a.hint !== undefined && <Text style={styles.itemHint} numberOfLines={1}>{a.hint}</Text>}
+      {a.icon !== undefined && <View style={styles.itemIcon}>{a.icon}</View>}
+      <View style={styles.itemText}>
+        <Text style={styles.itemLabel} numberOfLines={1}>{a.label}</Text>
+        {a.hint !== undefined && <Text style={styles.itemHint} numberOfLines={1}>{a.hint}</Text>}
+      </View>
     </Pressable>
   );
 }
@@ -178,11 +183,13 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.7 },
   disabled: { opacity: 0.35 },
   // the menu bar
-  menu: { position: 'absolute', right: space.md, width: 216, borderRadius: radius.md * 1.4, backgroundColor: 'rgba(22, 30, 42, 0.82)', overflow: 'hidden', ...shadow },
+  menu: { position: 'absolute', right: space.md, width: 232, borderRadius: radius.md * 1.4, backgroundColor: 'rgba(22, 30, 42, 0.82)', overflow: 'hidden', ...shadow },
   menuBody: { padding: space.sm, gap: 3 },
   section: { fontSize: 11, fontWeight: '800', letterSpacing: 1, color: 'rgba(255,255,255,0.55)', paddingHorizontal: space.md, paddingTop: space.sm, paddingBottom: 2 },
   sectionGap: { marginTop: space.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.2)' },
-  item: { minHeight: TOUCH + 2, justifyContent: 'center', paddingHorizontal: space.md, paddingVertical: 4, borderRadius: radius.sm },
+  item: { minHeight: TOUCH + 2, flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.md, paddingVertical: 4, borderRadius: radius.sm },
+  itemIcon: { width: 24, height: 24 },
+  itemText: { flex: 1, justifyContent: 'center' },
   itemPrimary: { backgroundColor: 'rgba(11, 95, 255, 0.55)' },
   itemActive: { backgroundColor: 'rgba(232, 89, 12, 0.6)' },
   itemPressed: { backgroundColor: 'rgba(255,255,255,0.16)' },

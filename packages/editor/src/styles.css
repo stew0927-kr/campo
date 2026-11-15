@@ -539,7 +539,7 @@ button.check-item:hover { background: var(--chrome); }
 .disclosure:has(.disclosure-toggle[aria-expanded="false"]) { padding-bottom: 4px; }
 .disclosure-body { display: flex; flex-direction: column; gap: inherit; }
 
-/* ---- 고도: 평지 확인 · 단절선, 계산 값, 경사 구간, 불연속선, 다시 계산 ---- */
+/* ---- 고도: 평지 확인 · 단절선, 계산 값, 경사 구간, 고도 단절선, 다시 계산 ---- */
 :root { --breakline: #6b4423; --slope-caution: #d9a100; --slope-steep: #c92a2a; --grade-gentle: #1f8f68; }
 .elev { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px 12px; border: 1px solid var(--rule); border-radius: 6px; }
 .elev-legend { padding: 0 4px; font-weight: 600; }
@@ -569,17 +569,36 @@ button.check-item:hover { background: var(--chrome); }
 .slope-max { color: var(--muted); }
 .route-steps li.step-steep::marker { color: var(--slope-steep); font-weight: 700; }
 
-.status-elev { display: inline-flex; align-items: center; gap: 8px; color: #ffe08a; }
+/* 고도 상태 in the dark status bar: fresh (a quiet check), stale (an amber dot and the live button), busy. */
+.status-elev { display: inline-flex; align-items: center; gap: 6px; color: #b9c3cc; }
+.status-elev-mark { display: inline-grid; place-items: center; width: 12px; height: 12px; }
+.status-elev[data-state="fresh"] .status-elev-mark { color: #8fd9b0; }
+.status-elev[data-state="stale"], .status-elev[data-state="busy"] { color: #ffe08a; }
+.status-elev[data-state="busy"] .status-elev-mark { animation: elev-pulse 1.2s ease-in-out infinite; }
+@keyframes elev-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .status-elev[data-state="busy"] .status-elev-mark { animation: none; } }
 .status-elev-run {
-  height: 20px; padding: 0 10px; border: 1px solid #ffe08a; border-radius: 10px; background: transparent;
-  color: #ffe08a; font-size: 11px; font-weight: 600; cursor: pointer;
+  height: 20px; margin-left: 2px; padding: 0 10px; border: 1px solid currentColor; border-radius: 10px; background: transparent;
+  color: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
 }
-.status-elev-run:hover:not(:disabled) { background: #ffe08a; color: var(--ink); }
-.status-elev-run:disabled { opacity: 0.6; cursor: progress; }
+.status-elev[data-state="stale"] .status-elev-run:hover { background: #ffe08a; color: var(--ink); }
+.status-elev-run[aria-disabled="true"] { border-color: #5b6875; color: #8e9aa6; cursor: help; }
+.status-elev[data-state="busy"] .status-elev-run { cursor: progress; }
+.status-elev-run:focus-visible { outline: 2px solid #ffe08a; outline-offset: 1px; }
 
-.breakline-form { display: flex; align-items: center; gap: 12px; min-width: 0; }
+/* 고도 단절선 options row: the wall swatch and the one-line meaning, then the drawing order, then the lines drawn. */
+.breakline-form { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.breakline-what { display: inline-flex; align-items: center; gap: 7px; margin: 0; color: var(--ink); }
+.breakline-swatch { flex: none; color: var(--breakline); }
+.breakline-steps { display: flex; align-items: center; gap: 4px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: var(--text-s); }
+.breakline-steps li { display: inline-flex; align-items: center; gap: 5px; }
+.breakline-steps li + li::before { content: ""; width: 10px; height: 1px; margin-right: 3px; background: var(--rule); }
+.breakline-step-n {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--breakline); color: #fff; font-size: 10px; font-weight: 700;
+}
+.breakline-esc kbd { padding: 0 4px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); font: inherit; font-size: 10px; }
 .breakline-list { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .breakline-list li { display: inline-flex; align-items: center; gap: 5px; padding: 1px 2px 1px 8px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); font-size: var(--text-s); }
-.breakline-swatch { width: 14px; height: 3px; background: repeating-linear-gradient(90deg, var(--breakline) 0 3px, transparent 3px 5px); }
 .breakline-remove { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
 .breakline-remove:hover { background: var(--chrome); color: var(--danger); }

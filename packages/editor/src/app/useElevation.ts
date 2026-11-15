@@ -103,12 +103,12 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     const next = withBreakline(base, coords, id, Date.now());
     if ('error' in next) return fail(next.error);
     const line = next.breaklines!.at(-1)!;
-    void writeStore(next, `불연속선을 그렸습니다(꺾은점 ${line.coordinates.length}개). 고도를 다시 계산하면 반영됩니다.`, nodesNearLine(state, line));
+    void writeStore(next, `고도 단절선을 그렸습니다(꺾은점 ${line.coordinates.length}개). 고도를 다시 계산하면 반영됩니다.`, nodesNearLine(state, line));
   };
   const removeBreakline = (id: string) => {
     const line = store?.breaklines?.find((b) => b.id === id);
     if (!store || !line) return;
-    void writeStore(withoutBreakline(store, id), '불연속선을 지웠습니다. 고도를 다시 계산하면 반영됩니다.', nodesNearLine(state, line));
+    void writeStore(withoutBreakline(store, id), '고도 단절선을 지웠습니다. 고도를 다시 계산하면 반영됩니다.', nodesNearLine(state, line));
   };
 
   /** Drawn break lines and the campus edges that act as one (outdoor steps, is_breakline), for the map. */

@@ -124,7 +124,7 @@ export function parseStore(text: string | null): ElevationStore {
 export function withBreakline(store: ElevationStore, coords: readonly Position[], id: string, now: number): ElevationStore | { error: string } {
   const line = coords.map(([lng, lat]) => ({ lat: lat!, lng: lng! }));
   const length = coords.slice(1).reduce((s, c, i) => s + metres(coords[i]!, c), 0);
-  if (line.length < 2 || length < 1) return { error: '불연속선은 1m 이상, 점 두 개 이상으로 그려 주세요.' };
+  if (line.length < 2 || length < 1) return { error: '고도 단절선은 1m 이상, 점 두 개 이상으로 그려 주세요.' };
   const b: BreakLine = { id, coordinates: line, source: 'manual', createdAt: now };
   return { ...store, breaklines: [...(store.breaklines ?? []), b] };
 }

@@ -101,6 +101,11 @@ export function useMeasureFlow({ enabled, repo, newId, installId, settleMs = 2_0
     pressFab: () => dispatch({ type: 'FAB_PRESS' }),
     /** 십자선 '여기서 측정' — 이 순간 좌표를 고정(이후 지도 이동 무시) */
     confirmCrosshair: (target: MeasureTarget) => dispatch({ type: 'CROSSHAIR_CONFIRM', target }),
+    /** '측정된 기압' 지도에서 지점을 눌러 다시 재기: 십자선 단계 없이 그 지점(같은 key)을 바로 대상으로 */
+    remeasure: (target: MeasureTarget) => {
+      if (stateRef.current.tag !== 'targeting') dispatch({ type: 'FAB_PRESS' });
+      dispatch({ type: 'CROSSHAIR_CONFIRM', target });
+    },
     start: () => {
       dispatch({ type: 'START' });
       void runSampling();

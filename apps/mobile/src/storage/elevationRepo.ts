@@ -10,6 +10,7 @@ import {
   emptyDirty,
   emptyElevationStore,
   markMeasurements,
+  removeHeightNode,
   serializeElevationStore,
   type AddResult,
   type ElevationDirty,
@@ -45,6 +46,11 @@ export interface LocalElevationRepo extends ElevationRepo {
   nearestOutdoor(at: LatLng, withinM: number): OutdoorPointNode | null;
   /** The files the exported zip carries (name → text). */
   archiveFiles(): Record<string, string>;
+  /**
+   * Delete one measured spot: its node and every Δh edge at it. The variables at the other ends of those edges are marked
+   * for the recompute; the spot itself leaves the list. (Its pressures in memory are forgotten by the buffer's owner.)
+   */
+  remove(key: HeightNodeKey): Promise<void>;
   /** Forget every measurement (the buffer in memory is cleared by its own owner). */
   clear(): Promise<void>;
   subscribe(fn: () => void): () => void;
@@ -139,6 +145,17 @@ export async function openElevationRepo(fs: FileStore, newId: () => string = ran
       [ARCHIVE_ELEVATION_STORE]: serializeElevationStore(store),
       [ARCHIVE_ELEVATION_DIRTY]: dirtyText(dirty),
     }),
+    async remove(key) {
+      const { store: next, removed } = removeHeightNode(store, key);
+      if (next === store) return;
+      const heightNodes = new Set(dirty.heightNodes);
+      for (const e of removed) heightNodes.add(e.from).add(e.to);
+      heightNodes.delete(key);
+      dirty = { ...dirty, heightNodes };
+      store = next;
+      changed();
+      await persist();
+    },
     async clear() {
       store = emptyElevationStore();
       dirty = emptyDirty();

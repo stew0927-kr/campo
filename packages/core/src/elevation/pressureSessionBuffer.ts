@@ -178,6 +178,29 @@ export class PressureSessionBuffer {
     return o ? Math.max(0, o.expiresAt - now) : 0;
   }
 
+  /**
+   * 지도에서 측정 지점 하나를 지울 때: 그 지점의 기압 창을 모두 버리고, 그 창이 낀 pair 기록도 버린다.
+   * 다음 측정은 남은 창 중 가장 최근 것과 짝을 짓는다. 지운 창 개수를 돌려준다.
+   */
+  forgetNode(nodeKey: HeightNodeKey | string): number {
+    let n = 0;
+    for (const [sid, list] of this.bySession) {
+      const dropped = new Set(list.filter((o) => o.nodeKey === nodeKey).map((o) => o.windowId as string));
+      if (dropped.size === 0) continue;
+      n += dropped.size;
+      const keep = list.filter((o) => !dropped.has(o.windowId));
+      const pairs = (this.pairs.get(sid) ?? []).filter((p) => !dropped.has(p.fromWindow) && !dropped.has(p.toWindow));
+      if (keep.length) {
+        this.bySession.set(sid, keep);
+        this.pairs.set(sid, pairs);
+      } else {
+        this.bySession.delete(sid);
+        this.pairs.delete(sid);
+      }
+    }
+    return n;
+  }
+
   /** 사용자가 '기압 기록 지우기'를 누르거나 로그아웃할 때 */
   clear(sessionId?: SessionId) {
     if (sessionId) {

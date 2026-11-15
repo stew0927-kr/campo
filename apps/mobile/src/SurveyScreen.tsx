@@ -23,6 +23,7 @@ import { SURVEY_DIR, clearSnapshot, createSaver, type FileStore } from './storag
 import { lookupOsmBuilding, planDrawnBuilding, planOsmBuilding } from './survey/buildings.ts';
 import { floorCopyTargets, planCopyFloor, planMoveNode, planUnsync, syncedOnFloor } from './survey/floors.ts';
 import { planDoor, planEscalator, planFloorChange, planLink, planPortal, planRestroom, planStart, type PathKind, type Plan, type PlanInput } from './survey/plans.ts';
+import { buildingCentre, pressurePins } from './survey/pressurePins.ts';
 import { nextRoomRef } from './survey/readings.ts';
 import { advanceRun, corridorAt, isRoomRef, planStrip, stripPreview, type DoorRun, type StripInput } from './survey/rooms.ts';
 import {
@@ -30,6 +31,7 @@ import {
   selectionFloor, selectionSize, stillThere, timingStats, toggled, withBox, type Selection,
 } from './survey/selection.ts';
 import type { Readings, SurveySession } from './survey/session.ts';
+import { planElevatorPoint, planEscalatorPoint, planStairPoint, planStepCount, verticalInfo, type VerticalPointKind } from './survey/vertical.ts';
 import { isoLocal } from './time.ts';
 import { ActionDock, type DockAction, type DockMode } from './ui/ActionDock.tsx';
 import { CameraCapture } from './ui/CameraCapture.tsx';
@@ -39,9 +41,11 @@ import { BuildingInfoSheet, CopySelectionSheet, EdgePropsSheet, EscalatorSheet, 
 import { SensorReadout, type SensorValues } from './ui/SensorReadout.tsx';
 import { DoorSheet, ExportSheet, FloorSheet, PointInfoSheet, PortalSheet, RestroomSheet, ScopeSheet, ShotsContext, type FloorTrip } from './ui/sheets.tsx';
 import { HistoryButtons } from './ui/HistoryButtons.tsx';
-import { MeasureCard, MeasureFab, PressureSheet, type PressureRow } from './ui/measureSheets.tsx';
+import { MeasureCard, MeasureFab, PressurePointSheet, PressureSheet, type PressureRow } from './ui/measureSheets.tsx';
+import { PictoIcon } from './ui/Pictogram.tsx';
 import { TOUCH, color, font, radius, space } from './ui/theme.ts';
 import { BuildingFormSheet, FloorCopySheet, PhotosSheet, SettingsSheet, type PrefetchState } from './ui/toolSheets.tsx';
+import { VerticalSection } from './ui/verticalSheets.tsx';
 
 interface Props {
   campus: Campus;
@@ -55,7 +59,7 @@ interface Props {
 
 type Sheet =
   | 'door' | 'floor' | 'portal' | 'scope' | 'export' | 'info' | 'building' | 'copy' | 'photos' | 'settings'
-  | 'escalator' | 'restroom' | 'edgeProps' | 'copySelection' | 'buildingInfo' | 'strip' | 'pressure' | null;
+  | 'escalator' | 'restroom' | 'edgeProps' | 'copySelection' | 'buildingInfo' | 'strip' | 'pressure' | 'pressurePoint' | null;
 interface Notice {
   text: string;
   tone: 'info' | 'error';
@@ -78,7 +82,8 @@ type CameraFor = { kind: 'record' } | { kind: 'point'; nodeId: string };
 type Tool =
   | { kind: 'link'; pathKind: PathKind; outdoorOnly: boolean }
   | { kind: 'select' }
-  | { kind: 'timer'; edgeId: string; direction: 'forward' | 'backward' }
+  /** The escalator stopwatch on the belts at a point (a pair runs both ways), or on the one belt picked in 선택. */
+  | { kind: 'timer'; edgeIds: string[]; direction: 'forward' | 'backward'; fromSelect: boolean }
   | { kind: 'doorRun'; run: DoorRun }
   | { kind: 'strip'; stage: 'corridor' | 'first' | 'last'; edges: string[]; first: Position | null };
 
@@ -92,12 +97,6 @@ const SAME_SPOT_M = 3;
 /** The round menu button of ActionDock (the measure button sits on top of it). */
 const DOCK_FAB = 54;
 const tileCache = createTileCache(expoTileStore);
-
-function centreOf(b: EditBuilding): Position {
-  const ring = b.polygon[0] ?? [];
-  const n = Math.max(ring.length, 1);
-  return [ring.reduce((s, p) => s + p[0], 0) / n, ring.reduce((s, p) => s + p[1], 0) / n];
-}
 
 export function SurveyScreen({ campus, session, store, greeting, onReset }: Props) {
   const insets = useSafeAreaInsets();
@@ -133,6 +132,20 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(greeting ? { text: greeting, tone: 'info' } : null);
   const [prefetch, setPrefetch] = useState<PrefetchState>({ running: false, done: 0, total: 0, result: null });
+  /** Walk points marked by the 에스컬레이터 button, until a belt is recorded from them (the schema has no escalator point). */
+  const [escSpots, setEscSpots] = useState<ReadonlySet<string>>(new Set());
+  /** The point a trip to another floor starts from (its sheet's 다른 층과 연결), until the trip has begun. */
+  const [linkFrom, setLinkFrom] = useState<{ nodeId: string; kind: VerticalPointKind } | null>(null);
+  /** 측정된 기압 shown on the map, the pin tapped, and the clock the pins count down with. */
+  const [pressureView, setPressureView] = useState(false);
+  const [pinKey, setPinKey] = useState<string | null>(null);
+  const [pinNow, setPinNow] = useState(Date.now());
+  useEffect(() => {
+    if (!pressureView) return undefined;
+    setPinNow(Date.now());
+    const t = setInterval(() => setPinNow(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [pressureView]);
   const cancelPrefetch = useRef({ cancelled: false });
 
   // Nothing below may touch the screen after it is gone (a photo copy or an export can finish late).
@@ -199,7 +212,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   /** Buildings, nearest to the crosshair first. Sorted when a sheet opens; the crosshair does not move while one is open. */
   const buildingsNear = useMemo(() => {
     const here = map.current?.crosshair() ?? campus.center;
-    return Object.values(state.buildings).map((b) => ({ b, d: metres(centreOf(b), here) })).sort((a, z) => a.d - z.d).map((x) => x.b);
+    return Object.values(state.buildings).map((b) => ({ b, d: metres(buildingCentre(b), here) })).sort((a, z) => a.d - z.d).map((x) => x.b);
   }, [state.buildings, sheet, campus.center]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearShots = (): void => {
@@ -588,20 +601,86 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     });
   };
   const measureCardOn = !['hidden', 'idle', 'targeting'].includes(mtag);
+  const pins = useMemo(
+    () => (pressureView && elevation ? pressurePins(elevation.current(), measuredPressureBuffer.list(), state, pinNow) : null),
+    // The repo's revision and the measure state change what is stored and what is in memory.
+    [pressureView, elevation, elevation?.getRevision(), mtag, state, pinNow], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const pin = pinKey !== null ? pins?.find((x) => x.key === pinKey) : undefined;
+  /** 다시 재기 from the map: the same height variable (outdoors the same key, a floor its plane), no crosshair step. */
+  const remeasure = (key: string): void => {
+    const node = elevation?.current().nodes.find((n) => n.key === key);
+    if (!node) return;
+    const at = pins?.find((x) => x.key === key)?.at;
+    measure.actions.remeasure(node.kind === 'outdoor_point'
+      ? { kind: 'outdoor', position: node.position, influenceRadiusM: node.influenceRadiusM, existingNodeKey: node.key }
+      : { kind: 'floor', buildingId: node.buildingId, floorId: node.floorId, intraOffsetM: 0, ...(at ? { position: { lat: at[1]!, lng: at[0]! } } : {}) });
+    setSheet(null);
+    setPinKey(null);
+  };
+  const removeMeasured = (key: string, label: string, edges: number): void => {
+    Alert.alert('이 지점의 측정을 지울까요?', `${label}의 기압 기록과 이 지점에 이어진 높이 차 ${edges}개를 지웁니다. 되돌릴 수 없습니다.`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '삭제',
+        style: 'destructive',
+        onPress: () => {
+          measuredPressureBuffer.forgetNode(key);
+          setSheet(null);
+          setPinKey(null);
+          void elevation?.remove(key as never).then(
+            () => notify(`${label}의 측정을 지웠습니다. 편집기에서 고도를 다시 계산하면 반영됩니다.`),
+            (err: Error) => notify(`측정을 지우지 못했습니다. ${err.message}`, 'error'),
+          );
+        },
+      },
+    ]);
+  };
+
+  // ---- 계단 · 엘리베이터 · 에스컬레이터: a point at the crosshair, and its sheet joins it to another floor ----
+
+  const placeEscalator = (): void => {
+    const plan = planEscalatorPoint(input());
+    if (record(plan) && !('error' in plan)) setEscSpots((s) => new Set(s).add(plan.featureId));
+  };
+  const linkFromPoint = (nodeId: string, kind: VerticalPointKind): void => {
+    if (trip || escTrip) return notify('다른 층으로 이동하는 중입니다. 메뉴에서 먼저 도착을 기록하거나 이동을 취소해 주세요.', 'error');
+    setLinkFrom({ nodeId, kind });
+    setSheet(kind === 'escalator' ? 'escalator' : 'floor');
+    clearShots();
+  };
+  /** The point a trip starts from: its own spot and floor, and the point as the walk's anchor (no extra walk edge). */
+  const tripStart = (): { coord: Position; scope: Scope; anchorId: string | null } => {
+    const from = linkFrom !== null ? state.nodes[linkFrom.nodeId] : undefined;
+    return from ? { coord: from.coord, scope, anchorId: from.id } : { coord: crosshair(), scope, anchorId };
+  };
+  const startTimer = (edgeIds: string[], fromSelect: boolean): void => {
+    const dirs = [...new Set(edgeIds.flatMap((id) => rideDirections(state, id)))];
+    setSheet(null);
+    setTool({ kind: 'timer', edgeIds, direction: dirs[0] ?? 'forward', fromSelect });
+  };
+  /** The belt the stopwatch runs on: the one that goes the way picked (a pair has one each way). */
+  const timerEdge = (t: Extract<Tool, { kind: 'timer' }>): string =>
+    t.edgeIds.find((id) => rideDirections(state, id).includes(t.direction)) ?? t.edgeIds[0]!;
+  const infoVertical = infoNode ? verticalInfo(state, infoNode.id, escSpots) : null;
 
   // ---- the panel ----
 
   const indoor = scope.kind === 'building';
   const records: DockAction[] = [
+    // A trip under way: arriving is the first thing on the menu.
+    ...(trip ? [{ id: 'arrive', label: '도착 기록', active: true, hint: `${floorLabel(trip.toLevel)}(으)로 이동 중입니다`, onPress: () => setSheet('floor') } satisfies DockAction] : []),
+    ...(escTrip ? [{ id: 'escArrive', label: '에스컬 도착', active: true, hint: '내린 자리에 십자선을 맞추고 누르세요', onPress: () => setSheet('escalator') } satisfies DockAction] : []),
     { id: 'start', label: '지점', hint: '십자선 자리에 지점 찍기(이미 있으면 그 지점에서 시작)', onPress: () => record(planStart(input())) },
     { id: 'link', label: '잇기', primary: true, hint: '지점과 지점을 구간으로 잇기', onPress: () => startLink(false) },
     { id: 'outdoor', label: '외부 길', disabled: indoor, hint: '바깥 길·계단·경사로 찍기', onPress: () => startLink(true) },
-    { id: 'door', label: '문/호실', disabled: !indoor, onPress: () => setSheet('door') },
-    { id: 'restroom', label: '화장실', disabled: !indoor, hint: '화장실 입구 찍기', onPress: needFloor(() => setSheet('restroom')) },
+    { id: 'door', label: '문/호실', icon: <PictoIcon kind="door" />, disabled: !indoor, onPress: () => setSheet('door') },
+    { id: 'restroom', label: '화장실', icon: <PictoIcon kind="restroom_all" />, disabled: !indoor, hint: '화장실 입구 찍기', onPress: needFloor(() => setSheet('restroom')) },
     { id: 'doorRun', label: '호실 연속', disabled: !indoor, hint: '번호가 저절로 올라가는 문 찍기', onPress: needFloor(() => setTool({ kind: 'doorRun', run: { nextRef: lastRoom === '' ? '' : nextRoomRef(lastRoom), step: 1, lastRef: null } })) },
-    { id: 'floor', label: trip ? '도착 기록' : '계단/EV', ...(trip ? { hint: '층 이동 중입니다' } : {}), active: trip !== null, onPress: () => setSheet('floor') },
-    { id: 'escalator', label: escTrip ? '에스컬 도착' : '에스컬레이터', ...(escTrip ? { hint: '에스컬레이터 이동 중입니다' } : {}), active: escTrip !== null, onPress: () => setSheet('escalator') },
-    { id: 'portal', label: '출입구', hint: scope.kind === 'building' ? '밖으로 나가기' : '건물로 들어가기', onPress: () => setSheet('portal') },
+    { id: 'stairs', label: '계단', icon: <PictoIcon kind="stairs" />, disabled: !indoor, hint: '십자선 자리에 계단 지점 찍기', onPress: needFloor(() => record(planStairPoint(input()))) },
+    { id: 'elevator', label: '엘리베이터', icon: <PictoIcon kind="elevator" />, disabled: !indoor, hint: '십자선 자리에 엘리베이터 찍기', onPress: needFloor(() => record(planElevatorPoint(input()))) },
+    { id: 'escalator', label: '에스컬레이터', icon: <PictoIcon kind="escalator" />, hint: '십자선 자리에 타는 곳 찍기', onPress: placeEscalator },
+    { id: 'portal', label: '출입구', icon: <PictoIcon kind="entrance" />, hint: scope.kind === 'building' ? '밖으로 나가기' : '건물로 들어가기', onPress: () => setSheet('portal') },
   ];
   const tools: DockAction[] = [
     { id: 'select', label: '다중선택', hint: '여러 지점·구간을 연속으로 누르거나 끌어서 골라 복사·삭제', onPress: () => setTool({ kind: 'select' }) },
@@ -609,7 +688,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     { id: 'osm', label: '건물 외곽선 가져오기', hint: '십자선 자리 건물의 OSM 외곽선 가져오기', onPress: addOsmBuilding },
     { id: 'draw', label: '건물 그리기', hint: '외곽선을 점으로 찍어 건물 만들기', onPress: () => setDraft([]) },
     { id: 'copy', label: '층 복사·연동', disabled: !indoor, onPress: needFloor(() => setSheet('copy')) },
-    { id: 'pressure', label: '측정된 기압', hint: '메모리에 있는 기압과 저장된 높이 차', disabled: !hasBarometer && (elevation?.current().edges.length ?? 0) === 0, onPress: () => setSheet('pressure') },
+    { id: 'pressure', label: '측정된 기압', hint: '잰 지점을 지도에 표시하고 다시 재거나 지우기', disabled: !hasBarometer && (elevation?.current().nodes.length ?? 0) === 0, onPress: () => setPressureView(true) },
     { id: 'export', label: '내보내기', onPress: () => setSheet('export') },
     { id: 'settings', label: '설정', onPress: () => setSheet('settings') },
   ];
@@ -646,7 +725,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
             { id: 'clear', label: '선택 해제', onPress: () => setSelection(EMPTY_SELECTION) },
             finish,
           ] : [
-            ...(onlyEscalator ? [{ id: 'timer', label: '시간 재기', primary: true, onPress: () => setTool({ kind: 'timer', edgeId: onlyEscalator, direction: rideDirections(state, onlyEscalator)[0]! }) } satisfies DockAction] : []),
+            ...(onlyEscalator ? [{ id: 'timer', label: '시간 재기', primary: true, onPress: () => startTimer([onlyEscalator], true) } satisfies DockAction] : []),
             { id: 'props', label: '속성 편집', primary: !onlyEscalator, disabled: n === 0, onPress: editSelection },
             { id: 'copyTo', label: '다른 층에 복사', disabled: !copyReady, onPress: () => setSheet('copySelection') },
             { id: 'delete', label: '삭제', tone: 'danger', disabled: n === 0, onPress: deleteSelection },
@@ -657,7 +736,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         };
       }
       case 'timer': {
-        const dirs = rideDirections(state, tool.edgeId);
+        const edgeId = timerEdge(tool);
+        const dirs = [...new Set(tool.edgeIds.flatMap((id) => rideDirections(state, id)))];
         return {
           text: '에스컬레이터에 발을 올린 순간 [시작], 내린 순간 [정지]를 눌러 주세요. 잴 때마다 측정이 쌓여 예상 시간이 보정됩니다.',
           extra: (
@@ -665,16 +745,16 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
               directions={dirs.length > 1 ? [{ value: 'forward', label: '올라감' }, { value: 'backward', label: '내려감' }] : []}
               direction={tool.direction}
               onDirection={(direction) => setTool({ ...tool, direction })}
-              stats={timingStats(state, tool.edgeId, tool.direction, session.timings)}
+              stats={timingStats(state, edgeId, tool.direction, session.timings)}
               onLap={(sec) => {
-                const done = session.addTiming(tool.edgeId, sec, tool.direction, isoLocal(new Date()));
+                const done = session.addTiming(edgeId, sec, tool.direction, isoLocal(new Date()));
                 if ('error' in done) notify(done.error, 'error');
                 else notify(`${done.timing.duration_sec}초를 기록했습니다.`);
               }}
             />
           ),
           actions: [
-            { id: 'back', label: '선택으로', onPress: () => setTool({ kind: 'select' }) },
+            ...(tool.fromSelect ? [{ id: 'back', label: '선택으로', onPress: () => setTool({ kind: 'select' }) } satisfies DockAction] : []),
             undo,
             finish,
           ],
@@ -768,10 +848,20 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
             { id: 'cancel', label: '취소', tone: 'danger', onPress: () => setMoving(null) },
           ],
         }
-        : toolMode();
+        : pressureView && !measureCardOn
+          ? {
+            text: !pins || pins.length === 0
+              ? '아직 기압을 잰 지점이 없습니다. 오른쪽 아래 높이 재기 버튼으로 첫 지점을 재 주세요.'
+              : `기압을 잰 지점 ${pins.length}곳입니다. 파란 표시는 기압이 메모리에 남은 시간, 초록 ✓는 높이 차만 저장된 곳입니다. 표시를 누르면 다시 재거나 지울 수 있습니다.`,
+            actions: [
+              { id: 'list', label: '목록 보기', onPress: () => setSheet('pressure') },
+              { id: 'end', label: '끝내기', tone: 'danger', onPress: () => { setPressureView(false); setPinKey(null); } },
+            ],
+          }
+          : toolMode();
 
   /** The plain crosshair state: no tool, drawing, move, photo direction or sheet is in the way of a tap on a point. */
-  const plain = tool === null && draft === null && moving === null && !heading && sheet === null && mtag !== 'targeting' && !measureCardOn;
+  const plain = tool === null && draft === null && moving === null && !heading && sheet === null && mtag !== 'targeting' && !measureCardOn && !pressureView;
   const mapMode: MapMode = heading ? 'heading' : tool?.kind === 'select' ? 'select' : 'pan';
   const marks = [
     ...(tool?.kind === 'strip' && tool.first ? [{ at: tool.first, tone: 'pin' as const }] : []),
@@ -788,7 +878,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         state={state} base={session.base} projection={proj} center={campus.center} scope={scope} anchorId={anchorId} handle={map} tileCache={tileCache}
         draft={draft} movingId={moving} onSnap={setSnappedId}
         mode={mapMode}
-        selection={tool?.kind === 'select' || tool?.kind === 'timer' ? (tool.kind === 'timer' ? { nodes: [], edges: [tool.edgeId], building: null } : selection) : null}
+        selection={tool?.kind === 'select' || tool?.kind === 'timer' ? (tool.kind === 'timer' ? { nodes: [], edges: [timerEdge(tool)], building: null } : selection) : null}
         onTapHit={(hit) => {
           const next = toggled(selection, hit);
           setSelection(next);
@@ -807,6 +897,10 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         highlightEdges={tool?.kind === 'strip' ? tool.edges : undefined}
         marks={marks}
         bottomInset={dockHeight}
+        escalatorSpots={escSpots}
+        pins={pins}
+        pinSelected={pinKey}
+        {...(pressureView ? { onPinTap: (key: string) => { setPinKey(key); setSheet('pressurePoint'); } } : {})}
       />
 
       <View pointerEvents="box-none" style={[styles.top, { paddingTop: insets.top + space.sm }]}>
@@ -852,7 +946,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
 
       <ActionDock records={records} tools={tools} open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} onClose={() => setMenuOpen(false)} mode={mode} onHeight={setDockHeight} />
 
-      {mtag !== 'hidden' && !menuOpen && sheet === null && !camera && !measureCardOn && (mode === null || mtag === 'targeting') && (
+      {mtag !== 'hidden' && !menuOpen && sheet === null && !camera && !measureCardOn && (mode === null || mtag === 'targeting' || pressureView) && (
         <MeasureFab
           above={mode ? dockHeight + space.md : insets.bottom + space.md + DOCK_FAB + space.md}
           active={mtag === 'targeting'}
@@ -889,12 +983,14 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           )}
           {sheet === 'floor' && (scope.kind === 'building' && here ? (
             <FloorSheet
+              kind={trip?.kind ?? (linkFrom?.kind === 'elevator' ? 'elevator' : 'stairs')}
               scope={scope} building={here} trip={trip} {...photo}
               onClose={() => setSheet(null) /* pictures taken for the trip are kept until it ends */}
               onDepart={(next) => {
-                setTrip({ ...next, coord: crosshair(), scope, anchorId, startAt: isoLocal(new Date()) });
+                setTrip({ ...next, ...tripStart(), startAt: isoLocal(new Date()) });
+                setLinkFrom(null);
                 setSheet(null);
-                notify('도착하면 [도착 기록]을 눌러 주세요.');
+                notify('도착하면 메뉴의 [도착 기록]을 눌러 주세요.');
               }}
               onCancelTrip={() => {
                 setTrip(null);
@@ -921,11 +1017,12 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
               trip={escTrip}
               onClose={() => setSheet(null)}
               onDepart={(next) => {
-                setEscTrip({ ...next, coord: crosshair(), scope, anchorId, startAt: isoLocal(new Date()) });
+                setEscTrip({ ...next, ...tripStart(), startAt: isoLocal(new Date()) });
+                setLinkFrom(null);
                 // Indoors the map turns to the floor ridden to, so the arrival snaps onto that floor's points; the view stays where it is.
                 if (scope.kind === 'building' && next.toLevel !== null) session.moveTo({ ...scope, level: next.toLevel });
                 setSheet(null);
-                notify('내린 자리에 십자선을 맞추고 [에스컬 도착]을 눌러 주세요.');
+                notify('내린 자리에 십자선을 맞추고 메뉴의 [에스컬 도착]을 눌러 주세요.');
               }}
               onCancelTrip={() => {
                 if (escTrip) session.moveTo(escTrip.scope);
@@ -938,6 +1035,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
                 const from = { ...input(escTrip.coord), scope: escTrip.scope, anchorId: escTrip.anchorId !== null && escTrip.anchorId in state.nodes ? escTrip.anchorId : null };
                 const plan = planEscalator(from, { arrive: { coord: crosshair(), scope: arriveScope }, rodeUp: escTrip.rodeUp, belt: escTrip.belt });
                 if (!record(plan, [], { startHpa: escTrip.startHpa, endHpa, startAt: escTrip.startAt })) return;
+                // The spot is a belt end now: its badge comes from the data.
+                if (escTrip.anchorId !== null) setEscSpots((sp) => { const next = new Set(sp); next.delete(escTrip.anchorId!); return next; });
                 setEscTrip(null);
                 closeSheet();
               }}
@@ -961,6 +1060,15 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           )}
           {sheet === 'info' && infoNode && (
             <PointInfoSheet
+              key={infoNode.id}
+              header={infoVertical ? (
+                <VerticalSection
+                  info={infoVertical}
+                  onLink={() => linkFromPoint(infoNode.id, infoVertical.kind)}
+                  onTime={infoVertical.belts.length > 0 ? () => startTimer(infoVertical.belts, false) : null}
+                  onStepCount={(count) => apply(planStepCount(state, infoVertical.flights, count), count === null ? '계단 칸 수를 지웠습니다.' : `계단 칸 수를 ${count}칸으로 저장했습니다.`)}
+                />
+              ) : undefined}
               title={pointTitle(infoNode)}
               {...(sillEdges(infoNode.id).length > 0 ? { sill: { count: sillEdges(infoNode.id).length, value: sillOf(infoNode.id) } } : {})}
               access={infoNode.props}
@@ -1072,6 +1180,15 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
               setSheet(null);
             }}
             onClose={closeSheet}
+          />
+        )}
+        {sheet === 'pressurePoint' && pin && (
+          <PressurePointSheet
+            pin={pin}
+            canMeasure={hasBarometer && measureOn && mtag !== 'hidden'}
+            onRemeasure={() => remeasure(pin.key)}
+            onDelete={() => removeMeasured(pin.key, pin.label, pin.edges)}
+            onClose={() => { setSheet(null); setPinKey(null); }}
           />
         )}
         {sheet === 'export' && (

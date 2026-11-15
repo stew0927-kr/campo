@@ -41,8 +41,11 @@ import { FloorPicker } from '../ui/FloorPicker.tsx';
 import { HistoryButtons } from '../ui/HistoryButtons.tsx';
 import { OutlineForm } from '../ui/OutlineForm.tsx';
 import { View3DButton } from '../ui/View3DButton.tsx';
+import { TerrainButton } from '../ui/TerrainButton.tsx';
 import { measuredFloorLevels } from '@campo/core';
-import { stackGeoJSON } from '../map/layers.ts';
+import { deckLayers } from '../map/deck3d.ts';
+import { fetchTerrain } from '../api.ts';
+import { sampleTerrainGrid, terrainBase, type TerrainGrid } from '../model/terrain3d.ts';
 import { HelpDialog } from '../ui/HelpDialog.tsx';
 import { MeasurePanel } from '../ui/MeasurePanel.tsx';
 import { PropertiesPanel } from '../ui/PropertiesPanel.tsx';
@@ -77,6 +80,14 @@ const DRAG_DONE: Record<Extract<DragResult, { ok: true }>['kind'], string> = {
   handle: '구간 가운데에 새 지점을 만들었습니다.',
 };
 
+/** Lowest and highest height of a grid (metres), for the 지형 3D legend. */
+function terrainRange(grid: TerrainGrid): [number, number] {
+  const base = terrainBase(grid);
+  let top = base;
+  for (const h of grid.z) if (h !== null && h > top) top = h;
+  return [base, top];
+}
+
 const stripInput = (s: StripState): StripInput | null => (s.first && s.last ? {
   corridorEdgeIds: s.edgeIds, first: s.first, last: s.last, count: Math.floor(Number(s.count)), startRef: s.startRef, refStep: s.refStep, doorsPerRoom: s.doorsPerRoom,
 } : null);
@@ -103,6 +114,30 @@ export function Workspace({ session }: { session: Session }) {
   const [outline, setOutline] = useState<OutlineDraft | null>(null);
   /** 3D 보기: the map tilted with every building's floors stacked by height. */
   const [view3d, setView3d] = useState(false);
+  /** 지형 3D: on or off (independent of 건물 3D), and the grid once it has been asked for (null: none; undefined: not yet). */
+  const [terrain3d, setTerrain3d] = useState(false);
+  const [terrainGrid, setTerrainGrid] = useState<TerrainGrid | null | undefined>(undefined);
+  const toggleTerrain = () => {
+    if (terrain3d) {
+      setTerrain3d(false);
+      return info(view3d ? '지형 3D를 껐습니다. 건물 3D는 그대로입니다.' : '지형 3D를 껐습니다.');
+    }
+    setTerrain3d(true);
+    if (terrainGrid !== undefined) return;
+    fetchTerrain(session.campusId).then(
+      (grid) => {
+        setTerrainGrid(grid ?? sampleTerrainGrid(session.meta.center));
+        info(grid
+          ? `${grid.source === 'corrected' ? '보정한 고도 그리드' : 'DEM(보정 전)'}로 지형을 그렸습니다. 바깥 길과 건물 1층 외곽선이 지형 높이에 올라갑니다.`
+          : '보정 고도 그리드도 DEM도 없어 샘플 지형(실제 고도가 아님)을 보여 줍니다. derived/<캠퍼스>/에 DEM을 두고 고도 다시 계산을 돌리면 실제 지형이 나옵니다.');
+      },
+      // Without the dev server's elevation API: the sample, so the view can still be tried.
+      () => {
+        setTerrainGrid(sampleTerrainGrid(session.meta.center));
+        info('고도 그리드를 불러오지 못해 샘플 지형(실제 고도가 아님)을 보여 줍니다.');
+      },
+    );
+  };
   /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
   const [obsRev, setObsRev] = useState(0);
   /** Field surveys imported so far (data/surveys): their photos and readings are shown under 상세 정보. */
@@ -603,10 +638,13 @@ export function Workspace({ session }: { session: Session }) {
   ]);
 
   // ---- What the map shows ----
-  /** 3D 보기: floors stacked by height (measured floor planes first, then the building's floor height, then 3.9 m). */
-  const stack = useMemo(
-    () => (view3d ? stackGeoJSON(state, ui.scope, (id) => measuredFloorLevels(elevation.estimates, id)) : { type: 'FeatureCollection' as const, features: [] }),
-    [view3d, state, ui.scope, elevation.estimates],
+  /** 건물 3D (floors stacked by height: measured floor planes, then the building's floor height, then 3.9 m) and 지형 3D. */
+  const deck = useMemo(
+    () => (view3d || terrain3d ? deckLayers({
+      state, scope: ui.scope, grid: terrainGrid ?? null, terrain: terrain3d, buildings: view3d,
+      measured: (id) => measuredFloorLevels(elevation.estimates, id),
+    }) : []),
+    [view3d, terrain3d, terrainGrid, state, ui.scope, elevation.estimates],
   );
   const reportsOpen = ui.panelTab === 'reports';
   const highlight = useMemo(
@@ -806,8 +844,8 @@ export function Workspace({ session }: { session: Session }) {
           }}
           onContextMenu={onContextMenu}
           outline={outlineView}
-          view3d={view3d}
-          stack={stack}
+          tilt={view3d || terrain3d}
+          deck={deck}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
           beginHandleDrag={beginHandleDrag}
@@ -844,8 +882,14 @@ export function Workspace({ session }: { session: Session }) {
         <HistoryButtons blocked={{ undo: operations.undo.blocked, redo: operations.redo.blocked }} onRun={runOperation} />
         <View3DButton on={view3d} onToggle={() => {
           setView3d((v) => !v);
-          info(view3d ? '평면 지도로 돌아왔습니다.' : '3D 보기입니다. 건물의 층을 층고대로 쌓았고, 지금 보는 층은 노란색입니다. 오른쪽 버튼으로 끌면 지도를 돌릴 수 있습니다.');
+          info(view3d ? '건물 3D를 껐습니다.' : '건물 3D입니다. 층을 층고대로 쌓았고, 지금 보는 층은 노란색입니다. 건물과 층을 고르면 그 층의 지점과 길, 다른 층과 잇는 엘리베이터·계단이 높이대로 보입니다.');
         }} />
+        <TerrainButton
+          on={terrain3d}
+          source={terrain3d && terrainGrid ? terrainGrid.source : null}
+          range={terrain3d && terrainGrid ? terrainRange(terrainGrid) : null}
+          onToggle={toggleTerrain}
+        />
         {floorBuilding && !crossFrom && (
           <FloorPicker
             building={floorBuilding}

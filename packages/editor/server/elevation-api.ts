@@ -3,6 +3,7 @@
 //   PUT  /api/elevation/:id/store      ← { text }    the ElevationStore (break lines drawn in the editor). No absolute pressure.
 //   POST /api/elevation/:id/recompute  ← { request, files }  recomputeRequest JSON and the campus as it would be saved
 //        → { derived, mode: 'solved' | 'existing', log }
+//   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null }  solve/corrected_dem first, else dem.json (server/terrain.ts)
 // Per campus folder <elevationDir>/<id>/ (default derived/<id>/, git-ignored):
 //   store.json      ElevationStore (copy the survey app's elevation_store.json here)
 //   dem.json        campo-grid DEM meta (dem_prep.py output, read only). CAMPO_ELEVATION_DEM overrides it.
@@ -16,6 +17,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { HttpError, writeCampusFiles } from './campus-api.ts';
+import { readGridFile } from './terrain.ts';
 
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
@@ -80,7 +82,7 @@ export function checkStoreText(text: string): void {
 export function createElevationApi(opts: ElevationApiOptions) {
   const run = opts.run ?? pythonRunner(opts.python ?? 'python3', opts.solverScript);
   return async (req: IncomingMessage, res: ServerResponse, next: () => void): Promise<void> => {
-    const m = /^\/api\/elevation\/([^/?#]+)(\/store|\/recompute)?\/?(?:\?.*)?$/.exec(req.url ?? '');
+    const m = /^\/api\/elevation\/([^/?#]+)(\/store|\/recompute|\/terrain)?\/?(?:\?.*)?$/.exec(req.url ?? '');
     if (!m) return next();
     try {
       const id = decodeURIComponent(m[1]!);
@@ -100,6 +102,12 @@ export function createElevationApi(opts: ElevationApiOptions) {
       if (!m[2] && req.method === 'GET') {
         const gone = await missing();
         return send(res, 200, { store: await readIfExists(paths.store), solver: { ready: gone.length === 0, missing: gone } });
+      }
+      if (m[2] === '/terrain' && req.method === 'GET') {
+        const corrected = join(paths.solve, 'corrected_dem.json');
+        if (await exists(corrected)) return send(res, 200, { grid: await readGridFile(corrected, 'corrected') });
+        if (await exists(paths.dem)) return send(res, 200, { grid: await readGridFile(paths.dem, 'dem') });
+        return send(res, 200, { grid: null });
       }
       if (m[2] === '/store' && req.method === 'PUT') {
         const body = JSON.parse(await readBody(req)) as { text?: unknown };

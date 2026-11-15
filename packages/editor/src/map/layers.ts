@@ -1,7 +1,7 @@
 // How the edit state is drawn on the map. Display only: builds a throwaway GeoJSON from the EditState.
 import type { FeatureCollection } from 'geojson';
 import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
-import { PICTOGRAM_COLORS, STACK_COLORS, beltEndIds, buildingStack, closeRing, edgeCoords, outlineOfLevel, edgesAt, movedTogether, pictogramOf, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
+import { PICTOGRAM_COLORS, beltEndIds, closeRing, edgeCoords, outlineOfLevel, edgesAt, movedTogether, pictogramOf, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
 import { unattachedIds } from '../model/connect.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
@@ -634,59 +634,4 @@ export const OUTLINE_LAYERS: LayerSpecification[] = [
       'circle-stroke-width': 2.5,
     },
   },
-];
-
-// ---- 3D 보기: every building's floors stacked by height (core buildingStack), as fill-extrusion ----
-
-export const STACK_SOURCE = 'campo-stack';
-/** Each slab stops this far under the next floor, so the floors read as separate plates. */
-const SLAB_GAP_M = 0.4;
-/** The ground plate drawn where a building has basements. */
-const GROUND_PLATE_M = 0.25;
-
-/**
- * Floor slabs of every building. MapLibre cannot extrude below the ground, so a building with basements is lifted by
- * their depth and a thin translucent plate marks the ground level between its basements and its floor 1.
- * `measured` gives a building's measured floor heights (level → metres), when the recompute has them.
- */
-export function stackGeoJSON(state: EditState, scope: Scope, measured: (buildingId: string) => ReadonlyMap<number, number> = () => new Map()): FeatureCollection {
-  const features: FeatureCollection['features'] = [];
-  for (const b of Object.values(state.buildings)) {
-    const stack = buildingStack(b, measured(b.id));
-    if (stack.length === 0) continue;
-    const lift = Math.max(0, -Math.min(...stack.map((s) => s.baseM)));
-    for (const s of stack) {
-      const selected = scope.kind === 'building' && scope.buildingId === b.id && scope.level === s.level;
-      features.push({
-        type: 'Feature',
-        geometry: { type: 'Polygon', coordinates: s.outline },
-        properties: {
-          role: 'floor', building: b.id, level: s.level, selected, below: s.level < 0,
-          base: lift + s.baseM, top: Math.max(lift + s.baseM + 0.2, lift + s.topM - SLAB_GAP_M),
-        },
-      });
-    }
-    if (lift > 0) {
-      features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: b.polygon }, properties: { role: 'ground', building: b.id, base: lift - GROUND_PLATE_M, top: lift } });
-    }
-  }
-  return { type: 'FeatureCollection', features };
-}
-
-const stackExtrusion = (filter: ExpressionSpecification, color: ExpressionSpecification | string, opacity: number, id: string): LayerSpecification => ({
-  id, type: 'fill-extrusion', source: STACK_SOURCE, filter,
-  layout: { visibility: 'none' },
-  paint: {
-    'fill-extrusion-color': color as never,
-    'fill-extrusion-base': ['get', 'base'],
-    'fill-extrusion-height': ['get', 'top'],
-    'fill-extrusion-opacity': opacity,
-    'fill-extrusion-vertical-gradient': true,
-  },
-});
-
-export const STACK_LAYERS: LayerSpecification[] = [
-  stackExtrusion(['==', ['get', 'role'], 'ground'], STACK_COLORS.ground, 0.35, 'campo-stack-ground'),
-  stackExtrusion(['all', ['==', ['get', 'role'], 'floor'], ['!', ['get', 'selected']]], ['case', ['get', 'below'], STACK_COLORS.below, STACK_COLORS.floor], 0.5, 'campo-stack-floors'),
-  stackExtrusion(['all', ['==', ['get', 'role'], 'floor'], ['get', 'selected']], STACK_COLORS.selected, 0.92, 'campo-stack-selected'),
 ];

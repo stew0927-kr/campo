@@ -641,3 +641,20 @@ button.check-item:hover { background: var(--chrome); }
 .view3d-btn[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #f2b705; box-shadow: 0 0 0 3px rgb(242 183 5 / 0.35), 0 4px 14px rgb(30 41 51 / 0.35); }
 .view3d-btn[aria-pressed="true"] .view3d-label { color: #fff; }
 @media (prefers-reduced-motion: reduce) { .view3d-btn { transition: none; } }
+
+/* 지형 3D: beside 건물 3D, the same pill; on, it glows in the relief's clay colour instead of the floor yellow. */
+.terrain3d { position: absolute; top: 10px; left: 226px; z-index: 2; display: flex; align-items: center; gap: 8px; }
+.terrain3d .terrain3d-btn { position: static; }
+.terrain3d-btn[aria-pressed="true"] { color: #e0b48c; box-shadow: 0 0 0 3px rgb(181 141 108 / 0.4), 0 4px 14px rgb(30 41 51 / 0.35); }
+.terrain3d-note {
+  margin: 0; padding: 4px 10px; border-radius: 12px; background: rgb(255 255 255 / 0.92); border: 1px solid var(--rule);
+  color: var(--ink); font-size: var(--text-s); font-weight: 600; box-shadow: 0 2px 8px rgb(30 41 51 / 0.14);
+}
+.terrain3d-note span { color: var(--muted); font-weight: 500; }
+.terrain3d-sample { border-color: #e8590c; }
+.terrain3d-sample span:last-child { color: #c2410c; }
+/* The 3D views' canvas (deck.gl) lies over the map's own drawing but under every control: the zoom and compass, the
+   floor picker and the floating buttons stay usable. */
+/* deck.gl puts its canvas in the top-left control slot, after the zoom buttons: lift them over it. */
+.map .maplibregl-ctrl-top-left > .maplibregl-ctrl { position: relative; z-index: 1; }
+.floors { z-index: 3; }

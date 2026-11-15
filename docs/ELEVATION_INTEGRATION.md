@@ -256,3 +256,10 @@ SPEC-v0.2 9장은 "경사도 계산, 고도 데이터 합치기"를 v0.2 범위 
 | `motionPermission` | 완료 | app.json 문구 |
 | 검사 경고 | 완료 | W15 `flat-exact-not-flat`, W16 `steep-ramp`(SPEC-v0.2 8장) |
 | 남은 일 | — | 편집기 현장 기록 불러오기가 zip의 `elevation_store.json`을 `derived/<캠퍼스>/store.json`에 합치는 것(지금은 손으로 복사), SPEC-v0.2 3.4 프로필 표, σ 모델 재추정 |
+
+### 지형 3D와 건물 3D (편집기)
+
+- 지도 왼쪽 위 [3D](건물)와 [지형] 버튼은 따로 켜고 끈다. 둘 중 하나라도 켜지면 지도가 52° 기운다. 그리는 것은 deck.gl(MapboxOverlay)이고 클릭·끌기는 그대로 2D 편집기가 받는다.
+- 지형 고도: `derived/<캠퍼스>/solve/corrected_dem.json`(솔버 보정 결과: flat_exact, 평지 ±1%, 계단, 기압 Δh, 단절선 반영) → `dem.json` → 둘 다 없으면 샘플 언덕(화면에 "실제 고도 아님" 표시). 개발 서버 `GET /api/elevation/:id/terrain`이 EPSG:5186 그리드를 한 변 160칸 이하로 줄여 보낸다.
+- 지형 위에는 바깥 구간(4 m마다 지형을 따라)과 건물의 지면 층(`ground_levels`) 외곽선을 올린다. 건물은 지면 층 외곽선 아래 가장 낮은 지형 높이에 서고, 층은 `buildingStack`(측정 층고 → `floor_height_m` → 3.9 m)대로 쌓인다. 지하층은 지면 아래.
+- 건물 3D에서 건물·층을 고르면 그 건물의 실내 지점과 구간을 높이대로 띄운다: 고른 층은 픽토그램과 진한 선, 다른 층은 작은 점과 연한 선, 엘리베이터·층 사이 계단은 수직선(같은 elevator_id의 정차 지점도 한 줄로 잇는다).

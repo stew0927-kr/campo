@@ -1,5 +1,6 @@
 import { useId, type KeyboardEvent } from 'react';
 import type { PointRouteResult } from '@campo/core';
+import { GRADE_LIMITS, slopeSummary } from '../model/elevation.ts';
 import type { Place } from '../model/places.ts';
 import type { RouteKind } from './ui-state.ts';
 
@@ -181,11 +182,25 @@ function RouteCard({ title, className, result: r, badge, toggle }: CardProps) {
           {r.uncertainSegments.length > 0 && (
             <p className="route-note">계단·턱 여부를 확인하지 못한 구간 {r.uncertainSegments.length}곳을 지납니다.</p>
           )}
+          <SlopeRow segments={r.slopeSegments} />
           {r.steps.length > 0 ? (
-            <ol className="route-steps">{r.steps.map((s, i) => <li key={i}>{s.text}</li>)}</ol>
+            <ol className="route-steps">{r.steps.map((s, i) => <li key={i} className={s.steep ? 'step-steep' : undefined}>{s.text}</li>)}</ol>
           ) : <p className="route-note">출발지와 도착지가 같은 지점에 이어져 있습니다.</p>}
         </>
       ) : <p className="route-note">경로 없음. {r.message}</p>}
     </section>
+  );
+}
+
+/** Caution (5–8 %) and steep (over 8 %) parts of the route, as on the map's stripes. Nothing when the route has none. */
+function SlopeRow({ segments }: { segments: Parameters<typeof slopeSummary>[0] }) {
+  const sum = slopeSummary(segments);
+  if (!sum) return null;
+  return (
+    <p className="route-slope" aria-label="경사 구간">
+      {sum.steep > 0 && <span className="slope-chip slope-steep" title={`경사 ${GRADE_LIMITS.caution}% 초과`}>급경사 {sum.steep}곳</span>}
+      {sum.caution > 0 && <span className="slope-chip slope-caution" title={`경사 ${GRADE_LIMITS.gentle}~${GRADE_LIMITS.caution}%`}>주의 {sum.caution}곳</span>}
+      <span className="slope-max">가장 가파른 곳 {sum.maxPct.toFixed(1)}%</span>
+    </p>
   );
 }

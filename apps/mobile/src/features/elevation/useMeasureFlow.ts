@@ -5,6 +5,7 @@
  * 영속 저장은 ElevationRepo 인터페이스로 분리(현재는 로컬 JSON, 나중에 PostGIS API로 교체).
  */
 import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { Platform } from 'react-native';
 
 import {
   PressureSessionBuffer,
@@ -12,26 +13,22 @@ import {
   measureReducer,
   needsKeepAwake,
   outdoorNodeKey,
-  type DhEdge,
-  type EdgeId,
   type HeightNode,
   type HeightNodeKey,
   type MeasureState,
   type MeasureTarget,
   type SessionId,
 } from '@campo/core/elevation';
+import type { ElevationRepo } from '../../storage/elevationRepo.ts';
 import { BarometerSampleError, isBarometerUsable, useBarometerSample } from './useBarometerSample';
 
-/** 영속 저장소 — 절대 기압을 받는 메서드가 아예 없다 */
-export interface ElevationRepo {
-  upsertNode(node: HeightNode): Promise<void>;
-  addEdges(edges: DhEdge[]): Promise<void>;
-  markSuperseded(ids: EdgeId[]): Promise<void>;
-}
+/** 영속 저장소 — 절대 기압을 받는 메서드가 아예 없다(storage/elevationRepo.ts: 로컬 JSON) */
+export type { ElevationRepo };
 
 /* 앱 프로세스 단위 싱글턴: 앱이 죽으면 기압도 함께 사라진다(의도된 휘발) */
 const buffer = new PressureSessionBuffer();
 let processSessionId: SessionId | null = null;
+const processStartedAt = Date.now();
 export function currentSessionId(newId: () => string): SessionId {
   if (!processSessionId) processSessionId = newId() as SessionId;
   return processSessionId;
@@ -43,10 +40,12 @@ export interface UseMeasureFlowOptions {
   enabled: boolean; // 설정의 '측정 모드' 토글(평상시 false → FAB 숨김)
   repo: ElevationRepo;
   newId: () => string; // expo-crypto randomUUID 주입 권장
+  /** 앱 설치별 무작위 ID(MeasurementSession.installId) */
+  installId: string;
   settleMs?: number;
 }
 
-export function useMeasureFlow({ enabled, repo, newId, settleMs = 2_000 }: UseMeasureFlowOptions) {
+export function useMeasureFlow({ enabled, repo, newId, installId, settleMs = 2_000 }: UseMeasureFlowOptions) {
   const [state, dispatch] = useReducer(measureReducer, { tag: 'hidden' } as MeasureState);
   const sample = useBarometerSample({ settleMs });
   const stateRef = useRef(state);
@@ -122,15 +121,12 @@ export function useMeasureFlow({ enabled, repo, newId, settleMs = 2_000 }: UseMe
       dispatch({ type: 'SAVE' });
       try {
         const { node, nodeKey, intraOffsetM } = targetToNode(s.target, newId);
-        await repo.upsertNode(node);
-        const r = buffer.add({
-          sessionId: currentSessionId(newId),
-          nodeKey,
-          intraOffsetM,
-          window: s.result,
+        const sessionId = currentSessionId(newId);
+        // 버퍼가 시간 간격(maxPairDtMin) 안의 직전 지점과 Δh 엣지를 만들고, TTL이 지난 기압은 여기서 폐기한다.
+        const r = buffer.add({ sessionId, nodeKey, intraOffsetM, window: s.result });
+        await repo.commit(node, r, {
+          sessionId, mode: 'static', platform: Platform.OS === 'ios' ? 'ios' : 'android', installId, startedAt: processStartedAt,
         });
-        if (r.supersede.length) await repo.markSuperseded(r.supersede);
-        if (r.newEdges.length) await repo.addEdges(r.newEdges);
         dispatch({ type: 'COMMIT_OK', edgesCreated: r.newEdges.length, diagnostics: r.diagnostics });
       } catch (e) {
         dispatch({ type: 'COMMIT_FAIL', message: String(e) });

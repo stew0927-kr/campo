@@ -1,5 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, FLOOR_FLIGHT_SEC, type AccessProp } from '@campo/core';
+import { elevationBadges, flagBlocked } from '../model/elevation.ts';
 import type { CommonEdits } from '../model/ops.ts';
 import type { AnyProps } from '../model/session.ts';
 
@@ -70,7 +71,17 @@ function AccessField({ name, value, onCommit }: { name: AccessProp; value: strin
   );
 }
 
-export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: { id: string; props: AnyProps } | undefined; selectedCount: number; onEdit: (edits: CommonEdits) => void }) {
+export type ElevationFlag = 'flat_exact' | 'is_breakline';
+
+interface PanelProps {
+  feature: { id: string; props: AnyProps } | undefined;
+  selectedCount: number;
+  onEdit: (edits: CommonEdits) => void;
+  /** 평지 확인 / 단절선 on an edge. */
+  onFlag: (flag: ElevationFlag, on: boolean) => void;
+}
+
+export function PropertiesPanel({ feature, selectedCount, onEdit, onFlag }: PanelProps) {
   if (selectedCount > 1) return <p className="panel-empty">{selectedCount}개를 골랐습니다. 속성은 하나만 골랐을 때 고칠 수 있습니다.</p>;
   if (!feature) return <p className="panel-empty">선택 도구로 지점이나 구간을 누르면 여기에서 속성을 고칠 수 있습니다.</p>;
   const p = feature.props;
@@ -112,6 +123,7 @@ export function PropertiesPanel({ feature, selectedCount, onEdit }: { feature: {
           <p className="field-help">계단 칸 수(step_count)를 모를 때만 쓰입니다. 내려갈 때는 올라갈 때의 3분의 2로 계산합니다.</p>
         </div>
       )}
+      {p.kind === 'edge' && <ElevationSection props={p} onFlag={onFlag} />}
       {p.kind === 'node' && (
         <>
           <AccessSection key={feature.id} filled={ACCESS_PROPS.filter((name) => !!p[name]).length}>
@@ -154,6 +166,50 @@ function AccessSection({ filled, children }: { filled: number; children: ReactNo
         </button>
       </legend>
       {open && <div id={bodyId} className="disclosure-body">{children}</div>}
+    </fieldset>
+  );
+}
+
+const FLAGS: { flag: ElevationFlag; label: string; help: string }[] = [
+  { flag: 'flat_exact', label: '완전 평지 (flat_exact)', help: '현장에서 평지로 확인했습니다. 높이 차를 0으로 묶습니다.' },
+  { flag: 'is_breakline', label: '단절선 (is_breakline)', help: '연석·옹벽처럼 높이가 끊깁니다. 보정이 이 선을 넘지 않습니다.' },
+];
+
+const GRADE_WORD = { gentle: '완만', caution: '주의', steep: '급경사' } as const;
+
+/**
+ * 고도: the two facts a person checks on site, as toggles (each greyed out with the reason where the schema does not
+ * allow it), and what the last recompute wrote, read only.
+ */
+function ElevationSection({ props: p, onFlag }: { props: Extract<AnyProps, { kind: 'edge' }>; onFlag: (flag: ElevationFlag, on: boolean) => void }) {
+  const badges = elevationBadges(p);
+  return (
+    <fieldset className="elev" aria-label="고도">
+      <legend className="elev-legend">고도</legend>
+      {FLAGS.map(({ flag, label, help }) => {
+        const on = p[flag] === true;
+        const blocked = on ? false : flagBlocked(p, flag);
+        return (
+          <label key={flag} className={`check-field elev-flag${blocked ? ' is-blocked' : ''}`} title={blocked || undefined}>
+            <input type="checkbox" checked={on} disabled={blocked !== false} onChange={(e) => onFlag(flag, e.target.checked)} />
+            <span>
+              {label}
+              <span className="elev-help">{blocked || help}</span>
+            </span>
+          </label>
+        );
+      })}
+      {badges ? (
+        <div className="elev-values" role="group" aria-label="계산한 고도 값 (읽기 전용)">
+          {badges.diff && <span className="elev-badge" title="끝 지점 높이 − 시작 지점 높이 (elev_diff_m)"><b>높이 차</b>{badges.diff}</span>}
+          {badges.sigma && <span className="elev-badge" title="높이 차의 표준편차 (elev_sigma_m)"><b>오차</b>{badges.sigma}</span>}
+          {badges.grade && (
+            <span className={`elev-badge elev-grade grade-${badges.grade.cls}`} title="그린 방향(시작 → 끝) 경사 (grade_pct)">
+              <b>경사</b>{badges.grade.text}<i>{GRADE_WORD[badges.grade.cls]}</i>
+            </span>
+          )}
+        </div>
+      ) : <p className="field-help">아직 계산한 고도 값이 없습니다. 상태 표시줄의 [고도 다시 계산]으로 채웁니다.</p>}
     </fieldset>
   );
 }

@@ -19,6 +19,7 @@ import { featureCenter, featureScope } from '../model/locate.ts';
 import { makeObservation, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 import { menuFields, planMenuEdit, selectionSummary, type MenuEdits } from '../model/menu.ts';
 import { buildingAt } from '../model/building.ts';
+import { planElevationFlag } from '../model/elevation.ts';
 import { fetchOsmBuilding, osmCode, planOsmBuilding } from '../model/osm.ts';
 import { embeddedOsmBuilding } from '../model/osmCampusData.ts';
 import { buildingsToDelete, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits } from '../model/ops.ts';
@@ -30,6 +31,7 @@ import { planUnsync, syncedIn, withSyncMirror } from '../model/sync.ts';
 import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, toBase64, withSurvey } from '../model/survey.ts';
 import type { PathVertex } from '../model/tools.ts';
 import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, renameBlocked } from '../model/buildingEdit.ts';
+import { BreaklineForm } from '../ui/BreaklineForm.tsx';
 import { BuildingPanel } from '../ui/BuildingPanel.tsx';
 import { ChecksPanel } from '../ui/ChecksPanel.tsx';
 import { ContextMenu } from '../ui/ContextMenu.tsx';
@@ -53,6 +55,7 @@ import { followBuildingRename, initialStrip, initialUi, reconcileUi, stripStage,
 import { AppDialogs, type Dialog } from './AppDialogs.tsx';
 import { commitSave, prepareSave } from './persist.ts';
 import { toolClicks } from './toolClicks.ts';
+import { useElevation } from './useElevation.ts';
 import { useInspection } from './useInspection.ts';
 import { useReports } from './useReports.ts';
 import { useShortcuts, type KeyBinding } from './useShortcuts.ts';
@@ -141,6 +144,9 @@ export function Workspace({ session }: { session: Session }) {
     });
     return undefined;
   };
+
+  // ---- 고도: dirty marks, 고도 다시 계산, 불연속선, the slope parts of the routes (useElevation.ts) ----
+  const elevation = useElevation({ session, state, perform, info, fail, routes: routeResults, shown: routeShown, nearest: nearest?.result ?? null });
 
   const stepHistory = (dir: 'undo' | 'redo') => {
     history[dir]();
@@ -581,7 +587,7 @@ export function Workspace({ session }: { session: Session }) {
             removeBlocked={(level) => levelRemoveBlocked(state, selectedBuilding.props.code, level)}
           />
         )}
-        <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} />
+        <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))} />
         {one && <SurveyNotes notes={surveyNotes(surveys, one.id, state)} />}
         {measure && measureTarget && (
           <MeasurePanel
@@ -656,7 +662,7 @@ export function Workspace({ session }: { session: Session }) {
             onRun={runStrip}
             onReset={() => setStrip(initialStrip)}
           />
-        ) : undefined}
+        ) : ui.tool === 'breakline' ? <BreaklineForm lines={elevation.breaklines} onRemove={elevation.removeBreakline} /> : undefined}
         campusName={session.meta.name}
         canSave={dirty || pendingMeasures > 0}
         saving={saving}
@@ -683,6 +689,9 @@ export function Workspace({ session }: { session: Session }) {
           hover={toolDef(ui.tool).attachPreview ? (pos, sc) => doorPreview(state, pos, sc) : null}
           previewShapes={stripShown.shapes}
           onPathDrawn={onPathDrawn}
+          onBreaklineDrawn={elevation.addBreakline}
+          breaklines={elevation.breaklineShapes}
+          slopes={elevation.slopes}
           onPolygonDrawn={(ring) => setDialog({ kind: 'building', ring })}
           onMapClick={(click) => {
             // 경로 테스트 → 직접 선택: the click is the route's end, snapped to the nearest edge there.
@@ -750,6 +759,7 @@ export function Workspace({ session }: { session: Session }) {
         dirty={dirty}
         notice={notice}
         hint={ui.tool in TOOL_OPTIONS ? toolDef(ui.tool).hint : null}
+        elevation={{ count: elevation.count, busy: elevation.busy, onRecompute: elevation.recompute }}
       />
 
       {ctxMenu && ui.selection.length > 0 && (

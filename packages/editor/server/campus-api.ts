@@ -6,6 +6,7 @@ import { mkdir, readdir, readFile, rm, rmdir, writeFile } from 'node:fs/promises
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, join, relative, sep } from 'node:path';
 import type { Plugin } from 'vite';
+import { createElevationApi, type ElevationApiOptions } from './elevation-api.ts';
 
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
 /** Every path a campus folder may contain (SPEC §4.3). Anything else is refused. */
@@ -339,6 +340,8 @@ export interface ApiDirs {
   changesetsDir: string;
   /** Field surveys imported from the survey app (default data/surveys). Left out: the surveys API is not mounted. */
   surveysDir?: string;
+  /** 고도 다시 계산 (elevation-api.ts). Left out: the elevation API is not mounted. */
+  elevation?: ElevationApiOptions;
 }
 
 /** Vite plugin: mounts the API on the dev server only. */
@@ -356,6 +359,10 @@ export function campusApiPlugin(dirs: string | ApiDirs): Plugin {
         if (dirs.surveysDir !== undefined) {
           const handleSurveys = createSurveysApi(dirs.surveysDir);
           server.middlewares.use((req, res, next) => void handleSurveys(req, res, next));
+        }
+        if (dirs.elevation !== undefined) {
+          const handleElevation = createElevationApi(dirs.elevation);
+          server.middlewares.use((req, res, next) => void handleElevation(req, res, next));
         }
       }
     },

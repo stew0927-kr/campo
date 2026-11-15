@@ -471,3 +471,68 @@ export const PREVIEW_LAYERS: LayerSpecification[] = [
     },
   },
 ];
+
+// ---- 고도: break lines (drawn ones and the campus edges that act as one) and the slope parts of the routes shown ----
+
+export const ELEVATION_SOURCE = 'campo-elevation';
+/** Same values as the CSS tokens --breakline / --slope-caution / --slope-steep. */
+export const ELEVATION_COLORS = { breakline: '#6b4423', caution: '#d9a100', steep: '#c92a2a' } as const;
+
+export interface BreaklineShape {
+  /** 'drawn': ElevationStore.breaklines (불연속선 그리기); 'edge': an outdoor flight or an is_breakline edge. */
+  kind: 'drawn' | 'edge';
+  id: string;
+  coordinates: Position[];
+}
+
+export function elevationGeoJSON(breaklines: readonly BreaklineShape[], slopes: readonly { cls: 'caution' | 'steep'; coordinates: Position[] }[]): FeatureCollection {
+  const line = (coordinates: Position[], properties: Record<string, string>): FeatureCollection['features'] =>
+    coordinates.length >= 2 ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates }, properties }] : [];
+  return {
+    type: 'FeatureCollection',
+    features: [
+      ...breaklines.flatMap((b) => line(b.coordinates, { role: `break-${b.kind}`, id: b.id })),
+      ...slopes.flatMap((s) => line(s.coordinates, { role: `slope-${s.cls}` })),
+    ],
+  };
+}
+
+/** Break lines under the data (a cut in the ground), slope stripes over the routes. */
+export const BREAKLINE_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-breakline-casing',
+    type: 'line',
+    source: ELEVATION_SOURCE,
+    filter: ['==', ['get', 'role'], 'break-drawn'],
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-opacity': 0.75 },
+  },
+  {
+    id: 'campo-breakline',
+    type: 'line',
+    source: ELEVATION_SOURCE,
+    filter: ['match', ['get', 'role'], ['break-drawn', 'break-edge'], true, false],
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: {
+      'line-color': ELEVATION_COLORS.breakline,
+      'line-width': ['match', ['get', 'role'], 'break-drawn', 3.5, 2],
+      'line-dasharray': [0.6, 0.6],
+      'line-offset': ['match', ['get', 'role'], 'break-edge', 5, 0],
+    },
+  },
+];
+export const SLOPE_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-slope',
+    type: 'line',
+    source: ELEVATION_SOURCE,
+    filter: ['match', ['get', 'role'], ['slope-caution', 'slope-steep'], true, false],
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    paint: {
+      'line-color': ['match', ['get', 'role'], 'slope-steep', ELEVATION_COLORS.steep, ELEVATION_COLORS.caution],
+      'line-width': 10,
+      'line-opacity': 0.9,
+      'line-dasharray': [0.35, 0.35],
+    },
+  },
+];

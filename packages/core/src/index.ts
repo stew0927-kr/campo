@@ -42,6 +42,7 @@ export {
   type UncertainSegment,
 } from './route.ts';
 export type { RouteStep, RouteStepKind } from './route-text.ts';
+export { STEEP_NOTE } from './route-text.ts';
 export * from './edit/index.ts';
 export * from './changeset/index.ts';
 export * from './reports/index.ts';

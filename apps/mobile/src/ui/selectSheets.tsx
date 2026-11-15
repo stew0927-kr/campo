@@ -1,13 +1,13 @@
 // Sheets of 선택 mode and of the new records: 구간 속성, 다른 층에 복사, 건물 정보, 강의실 자동 연결, 에스컬레이터.
 // They only collect answers; SurveyScreen turns the answers into plans.
-import { heightFromPressure, type EditBuilding, type EditEdge } from '@campo/core';
+import { gradeClass, heightFromPressure, type EditBuilding, type EditEdge } from '@campo/core';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { floorLabel, type Scope } from '../model/scope.ts';
 import { usePressure } from '../sensors/device.ts';
 import { parseLevelRange } from '../survey/buildings.ts';
 import type { BeltKind } from '../survey/plans.ts';
-import type { BuildingForm, EdgeAnswer } from '../survey/selection.ts';
+import { canBreakline, canFlatExact, type BuildingForm, type EdgeAnswer } from '../survey/selection.ts';
 import { BottomSheet } from './BottomSheet.tsx';
 import { BigButton, Choice, FieldLabel } from './controls.tsx';
 import { STEP_FREE_CHOICES, type StepFree } from './stepFree.ts';
@@ -45,10 +45,25 @@ export function EdgePropsSheet({ edges, onSave, onClose }: { edges: readonly Edi
   const [stepFree, setStepFree] = useState<StepFree | undefined>(flat.length > 0 ? common(flat, (e) => e.props.step_free) : undefined);
   const [incline, setIncline] = useState<'up' | 'down' | 'none' | undefined>(stairs.length > 0 ? common(stairs, (e) => e.props.incline ?? 'none') : undefined);
   const [conveying, setConveying] = useState(belts.length > 0 ? common(belts, (e) => e.props.conveying) : undefined);
+  const levelable = edges.filter(canFlatExact);
+  const breakable = edges.filter(canBreakline);
+  const [flatExact, setFlatExact] = useState<boolean | undefined>(levelable.length > 0 ? common(levelable, (e) => e.props.flat_exact === true) : undefined);
+  const [isBreakline, setIsBreakline] = useState<boolean | undefined>(breakable.length > 0 ? common(breakable, (e) => e.props.is_breakline === true) : undefined);
   const answer: EdgeAnswer = {
     ...(flat.length > 0 && stepFree !== undefined ? { stepFree } : {}),
     ...(stairs.length > 0 && incline !== undefined ? { incline: incline === 'none' ? null : incline } : {}),
     ...(belts.length > 0 && conveying !== undefined ? { conveying } : {}),
+    ...(levelable.length > 0 && flatExact !== undefined ? { flatExact } : {}),
+    ...(breakable.length > 0 && isBreakline !== undefined ? { isBreakline } : {}),
+  };
+  // The two never hold together: picking one on turns the other off (planEdgeEdits does the same on each edge).
+  const pickFlat = (v: boolean) => {
+    setFlatExact(v);
+    if (v && isBreakline) setIsBreakline(false);
+  };
+  const pickBreak = (v: boolean) => {
+    setIsBreakline(v);
+    if (v && flatExact) setFlatExact(false);
   };
   return (
     <BottomSheet title={`구간 ${edges.length}개 속성`} onClose={onClose}>
@@ -70,8 +85,72 @@ export function EdgePropsSheet({ edges, onSave, onClose }: { edges: readonly Edi
           <Choice label="에스컬레이터 방향" value={conveying} onChange={setConveying} options={[{ value: 'forward', label: '상행' }, { value: 'backward', label: '하행' }, { value: 'reversible', label: '양방향 전환' }]} />
         </>
       )}
+      {(levelable.length > 0 || breakable.length > 0) && <FieldLabel>고도</FieldLabel>}
+      {levelable.length > 0 && (
+        <ToggleRow
+          label="완전 평지"
+          hint={`현장에서 평지로 확인했습니다${levelable.length < edges.length ? ` (평지 길·복도 ${levelable.length}개)` : ''}`}
+          value={flatExact}
+          onChange={pickFlat}
+        />
+      )}
+      {breakable.length > 0 && (
+        <ToggleRow
+          label="단절선"
+          hint={`연석·옹벽처럼 높이가 끊깁니다${breakable.length < edges.length ? ` (길·계단·경사로 ${breakable.length}개)` : ''}`}
+          value={isBreakline}
+          onChange={pickBreak}
+        />
+      )}
+      <ElevationBadges edges={edges} />
       <BigButton label="저장" disabled={Object.keys(answer).length === 0} onPress={() => onSave(answer)} style={styles.gap} />
     </BottomSheet>
+  );
+}
+
+/** One on/off fact of the picked edges: a row with the label and a two-state switch (undefined: the edges differ). */
+function ToggleRow({ label, hint, value, onChange }: { label: string; hint: string; value: boolean | undefined; onChange: (v: boolean) => void }) {
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityLabel={label}
+      accessibilityHint={hint}
+      accessibilityState={{ checked: value === undefined ? 'mixed' : value }}
+      onPress={() => onChange(value !== true)}
+      style={({ pressed }) => [styles.toggle, value === true && styles.toggleOn, pressed && styles.pressed]}
+    >
+      <View style={styles.toggleText}>
+        <Text style={styles.toggleLabel}>{label}</Text>
+        <Text style={styles.toggleHint} numberOfLines={2}>{value === undefined ? '고른 구간마다 다릅니다. 누르면 모두 켭니다.' : hint}</Text>
+      </View>
+      <View style={[styles.track, value === true && styles.trackOn]}>
+        <View style={[styles.knob, value === true && styles.knobOn]} />
+      </View>
+    </Pressable>
+  );
+}
+
+const GRADE_TONE = { gentle: color.ok, caution: color.warn, steep: color.danger } as const;
+const GRADE_WORD = { gentle: '완만', caution: '주의', steep: '급경사' } as const;
+
+/** What the last recompute wrote on the edge (read only; the editor's [고도 다시 계산] fills it). */
+function ElevationBadges({ edges }: { edges: readonly EditEdge[] }) {
+  const done = edges.filter((e) => e.props.elev_diff_m !== undefined);
+  if (done.length === 0) return null;
+  if (edges.length > 1) return <Text style={styles.note}>계산한 고도 값이 있는 구간 {done.length}개 (하나만 고르면 값을 보여 줍니다)</Text>;
+  const p = edges[0]!.props;
+  const sign = (v: number) => (v > 0 ? '+' : v < 0 ? '−' : '');
+  const cls = p.grade_pct === undefined ? null : gradeClass(p.grade_pct);
+  return (
+    <View style={styles.badges} accessibilityLabel="계산한 고도 값, 읽기 전용">
+      <Text style={styles.badge}><Text style={styles.badgeKey}>높이 차 </Text>{sign(p.elev_diff_m!)}{Math.abs(p.elev_diff_m!).toFixed(2)} m</Text>
+      {p.elev_sigma_m !== undefined && <Text style={styles.badge}><Text style={styles.badgeKey}>오차 </Text>±{p.elev_sigma_m.toFixed(2)} m</Text>}
+      {p.grade_pct !== undefined && cls && (
+        <Text style={[styles.badge, { borderLeftColor: GRADE_TONE[cls], borderLeftWidth: 3 }]}>
+          <Text style={styles.badgeKey}>경사 </Text>{sign(p.grade_pct)}{Math.abs(p.grade_pct).toFixed(1)}% <Text style={{ color: GRADE_TONE[cls] }}>{GRADE_WORD[cls]}</Text>
+        </Text>
+      )}
+    </View>
   );
 }
 
@@ -254,5 +333,24 @@ const styles = StyleSheet.create({
   stepper: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
   stepBtn: { width: TOUCH + 6, height: TOUCH + 6, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: 1.5, borderColor: color.line, alignItems: 'center', justifyContent: 'center' },
   stepLabel: { fontSize: font.title, fontWeight: '800', color: color.ink },
+  pressed: { opacity: 0.7 },
+  toggle: {
+    minHeight: TOUCH + 8, flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.sm, paddingHorizontal: space.lg,
+    paddingVertical: space.sm, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: 1.5, borderColor: color.line,
+  },
+  toggleOn: { borderColor: color.ink },
+  toggleText: { flex: 1 },
+  toggleLabel: { fontSize: font.label, fontWeight: '700', color: color.ink },
+  toggleHint: { fontSize: font.small, color: color.inkSoft, marginTop: 1 },
+  track: { width: 40, height: 24, borderRadius: 12, padding: 3, backgroundColor: color.line },
+  trackOn: { backgroundColor: color.ink },
+  knob: { width: 18, height: 18, borderRadius: 9, backgroundColor: color.surface },
+  knobOn: { transform: [{ translateX: 16 }] },
+  badges: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
+  badge: {
+    paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.sm, backgroundColor: color.surface, borderWidth: 1, borderColor: color.line,
+    fontSize: font.body, fontWeight: '700', color: color.ink, fontVariant: ['tabular-nums'],
+  },
+  badgeKey: { fontSize: font.small, fontWeight: '500', color: color.inkSoft },
   count: { minWidth: 60, textAlign: 'center', fontSize: font.title, fontWeight: '800', color: color.ink, fontVariant: ['tabular-nums'] },
 });

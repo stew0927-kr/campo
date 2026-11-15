@@ -15,7 +15,7 @@ import { DERIVED_ELEVATION_PROPS } from '../types.ts';
 import { setEdgeElevation, type EdgeElevationValues } from '../edit/actions/setEdgeElevation.ts';
 import type { Action } from '../edit/action.ts';
 import { metres } from '../edit/geo.ts';
-import { edgesAt, type EditState } from '../edit/state.ts';
+import { COLLECTIONS, edgesAt, type EditState } from '../edit/state.ts';
 import type { DhEdge, EdgeId, ElevationStore, HeightNodeKey } from './types.ts';
 
 /** What changed since the last recompute. Immutable: every mark returns a new value. */
@@ -61,6 +61,54 @@ export function markEditPatches(d: ElevationDirty, patches: readonly Patch[], st
     }
   }
   return { ...d, nodes, edges, buildings };
+}
+
+/**
+ * Patch-shaped paths of what differs between two states, for markEditPatches when the History entry's own patches are
+ * not at hand (the editor sees the state before and after every perform, undo, redo and drag). Records are compared by
+ * reference, as Immer keeps every untouched record, field and property value shared: [collection, key] for a record
+ * added or removed, [collection, key, field] for a changed field, [collection, key, 'props', prop] for each changed
+ * property. Undo and redo of an edit therefore mark the same things as the edit did.
+ */
+export function statePatches(prev: EditState, next: EditState): Patch[] {
+  const out: Patch[] = [];
+  for (const c of COLLECTIONS) {
+    const a = prev[c] as Record<string, object>;
+    const b = next[c] as Record<string, object>;
+    if (a === b) continue;
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      const x = a[key] as Record<string, unknown> | undefined;
+      const y = b[key] as Record<string, unknown> | undefined;
+      if (x === y) continue;
+      if (!x || !y) {
+        out.push(y ? { op: 'add', path: [c, key], value: y } : { op: 'remove', path: [c, key] });
+        continue;
+      }
+      for (const field of new Set([...Object.keys(x), ...Object.keys(y)])) {
+        if (x[field] === y[field]) continue;
+        if (field !== 'props') {
+          out.push({ op: 'replace', path: [c, key, field], value: y[field] });
+          continue;
+        }
+        const px = (x[field] ?? {}) as Record<string, unknown>;
+        const py = (y[field] ?? {}) as Record<string, unknown>;
+        for (const prop of new Set([...Object.keys(px), ...Object.keys(py)])) {
+          if (px[prop] !== py[prop]) out.push({ op: prop in py ? 'replace' : 'remove', path: [c, key, 'props', prop], value: py[prop] });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** markEditPatches for the change from `prev` to `next` (statePatches). */
+export function markStateChange(d: ElevationDirty, prev: EditState, next: EditState): ElevationDirty {
+  return prev === next ? d : markEditPatches(d, statePatches(prev, next), next);
+}
+
+/** How many campus places wait for a recompute: nodes, edges, buildings and measured height variables. */
+export function dirtyCount(d: ElevationDirty): number {
+  return d.nodes.size + d.edges.size + d.buildings.size + d.heightNodes.size;
 }
 
 /** Mark the height variables a measurement touched: both ends of every new edge and of every superseded one. */

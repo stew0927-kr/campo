@@ -3,9 +3,9 @@
 // ends, then through the graph as usual. Follows graph links only: no floor numbers here.
 import { footOnLine, lineLength } from '../edit/geo.ts';
 import type { CampusGraph, WalkLinkData } from '../graph.ts';
-import { findRoute, type NearestRoute, type Route, type RouteResult } from '../route.ts';
+import { findRoute, type NearestRoute, type Route, type RouteResult, type SlopeSegment } from '../route.ts';
 import { findNearestRestroom } from '../restroom.ts';
-import type { Profile } from '../costs.ts';
+import { gradeClass, type Profile } from '../costs.ts';
 import type { EdgeFeature, Position } from '../types.ts';
 
 /** Where a point meets the route network. */
@@ -60,6 +60,8 @@ interface Leg {
   cost: number;
   timeSec: number;
   distanceM: number;
+  /** The part of a caution / steep edge walked between the foot and the edge's end (in travel direction). */
+  slope?: SlopeSegment;
 }
 
 /** The walk link from `a` to `b` over edge `edgeId`, if the edge can be walked that way. */
@@ -89,7 +91,11 @@ function legsOf(g: CampusGraph, snap: RouteSnap, profile: Profile, leaving: bool
   ends.forEach(([a, b, share], i) => {
     const data = walkLink(g, a, b, snap.edgeId);
     if (!data || data.blocked[profile]) return;
-    legs.push({ nodeId: i === 0 ? from : to, cost: data.cost[profile] * share, timeSec: data.timeSec * share, distanceM: data.lengthM * share });
+    const cls = data.gradePct === null ? 'gentle' : gradeClass(data.gradePct);
+    const slope: SlopeSegment | undefined = data.gradePct !== null && cls !== 'gentle' && share > 0
+      ? { edgeId: snap.edgeId, from: a, to: b, gradePct: round1(data.gradePct), gradeClass: cls }
+      : undefined;
+    legs.push({ nodeId: i === 0 ? from : to, cost: data.cost[profile] * share, timeSec: data.timeSec * share, distanceM: data.lengthM * share, ...(slope ? { slope } : {}) });
   });
   return legs;
 }
@@ -123,6 +129,8 @@ export function findRouteBetween(g: CampusGraph, from: RouteEnd, to: RouteEnd, p
     cost: round1(total),
     timeSec: round1(route.timeSec + s.timeSec + e.timeSec),
     distanceM: round1(route.distanceM + s.distanceM + e.distanceM),
+    // The stretches between the feet and the graph route count too (a point picked on a steep edge).
+    slopeSegments: [...(s.slope ? [s.slope] : []), ...route.slopeSegments, ...(e.slope ? [e.slope] : [])],
     startFoot: 'snap' in from ? from.snap.foot : null,
     endFoot: 'snap' in to ? to.snap.foot : null,
   };
@@ -154,6 +162,7 @@ export function findNearestRestroomFrom(g: CampusGraph, from: RouteEnd, kind: 'a
     cost: round1(total),
     timeSec: round1(route.timeSec + s.timeSec),
     distanceM: round1(route.distanceM + s.distanceM),
+    slopeSegments: [...(s.slope ? [s.slope] : []), ...route.slopeSegments],
     startFoot: 'snap' in from ? from.snap.foot : null,
     endFoot: null,
   };

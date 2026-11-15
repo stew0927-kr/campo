@@ -3,18 +3,22 @@
 // selection.ts); the session runs them and keeps what the sensors read (survey/session.ts). This file only wires the
 // pieces and holds what is on screen.
 import { buildingById, metres, surveySource, type EditBuilding, type EditNode, type Position } from '@campo/core';
+import { DEFAULT_DH_MODEL, floorIdOfLevel, type BuildingId, type FloorId, type MeasureTarget } from '@campo/core/elevation';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Campus } from './campus.ts';
 import { buildArchive } from './export/archive.ts';
+import { isBarometerUsable } from './features/elevation/useBarometerSample.ts';
+import { measuredPressureBuffer, useMeasureFlow, type ElevationRepo } from './features/elevation/useMeasureFlow.ts';
 import { expoTileStore } from './map/expoTileStore.ts';
 import { MapCanvas, type HeadingEdit, type MapHandle, type MapMode } from './map/MapCanvas.tsx';
 import { projection } from './map/project.ts';
 import { bboxSpanM, campusBbox, createTileCache, tilesInBbox } from './map/tileCache.ts';
 import { TILE_ATTRIBUTION } from './map/tiles.ts';
-import { OUTDOOR, defaultLevel, pointTitle, scopeLabel, type Scope } from './model/scope.ts';
+import { OUTDOOR, defaultLevel, floorLabel, pointTitle, scopeLabel, type Scope } from './model/scope.ts';
+import { openElevationRepo, randomId, type LocalElevationRepo } from './storage/elevationRepo.ts';
 import { SURVEY_DIR, clearSnapshot, createSaver, type FileStore } from './storage/store.ts';
 import { lookupOsmBuilding, planDrawnBuilding, planOsmBuilding } from './survey/buildings.ts';
 import { floorCopyTargets, planCopyFloor, planMoveNode, planUnsync, syncedOnFloor } from './survey/floors.ts';
@@ -35,6 +39,7 @@ import { BuildingInfoSheet, CopySelectionSheet, EdgePropsSheet, EscalatorSheet, 
 import { SensorReadout, type SensorValues } from './ui/SensorReadout.tsx';
 import { DoorSheet, ExportSheet, FloorSheet, PointInfoSheet, PortalSheet, RestroomSheet, ScopeSheet, ShotsContext, type FloorTrip } from './ui/sheets.tsx';
 import { HistoryButtons } from './ui/HistoryButtons.tsx';
+import { MeasureCard, MeasureFab, PressureSheet, type PressureRow } from './ui/measureSheets.tsx';
 import { TOUCH, color, font, radius, space } from './ui/theme.ts';
 import { BuildingFormSheet, FloorCopySheet, PhotosSheet, SettingsSheet, type PrefetchState } from './ui/toolSheets.tsx';
 
@@ -50,7 +55,7 @@ interface Props {
 
 type Sheet =
   | 'door' | 'floor' | 'portal' | 'scope' | 'export' | 'info' | 'building' | 'copy' | 'photos' | 'settings'
-  | 'escalator' | 'restroom' | 'edgeProps' | 'copySelection' | 'buildingInfo' | 'strip' | null;
+  | 'escalator' | 'restroom' | 'edgeProps' | 'copySelection' | 'buildingInfo' | 'strip' | 'pressure' | null;
 interface Notice {
   text: string;
   tone: 'info' | 'error';
@@ -77,7 +82,15 @@ type Tool =
   | { kind: 'doorRun'; run: DoorRun }
   | { kind: 'strip'; stage: 'corridor' | 'first' | 'last'; edges: string[]; first: Position | null };
 
+const noSubscribe = () => () => {};
+const zero = () => 0;
 const NOTICE_MS = { info: 4000, error: 7000 } as const;
+/** 기압 측정: the stationary window, the settle before it, and how close a re-measurement must be to keep the spot's key. */
+const MEASURE_MS = 10_000;
+const SETTLE_MS = 2_000;
+const SAME_SPOT_M = 3;
+/** The round menu button of ActionDock (the measure button sits on top of it). */
+const DOCK_FAB = 54;
 const tileCache = createTileCache(expoTileStore);
 
 function centreOf(b: EditBuilding): Position {
@@ -137,6 +150,35 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     const timer = setTimeout(() => setNotice(null), NOTICE_MS[notice.tone]);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  // ---- 기압 측정: the local elevation store, the measure flow (core measureMachine) and the 측정된 기압 list ----
+  const [elevation, setElevation] = useState<LocalElevationRepo | null>(null);
+  const [hasBarometer, setHasBarometer] = useState(false);
+  const [measureOn, setMeasureOn] = useState(true);
+  useEffect(() => {
+    let on = true;
+    openElevationRepo(store).then((r) => on && setElevation(r), (err: Error) => notify(`고도 측정 기록을 열지 못했습니다. ${err.message}`, 'error'));
+    void isBarometerUsable().then((ok) => on && setHasBarometer(ok));
+    return () => {
+      on = false;
+    };
+  }, [store, notify]);
+  useSyncExternalStore(elevation?.subscribe ?? noSubscribe, elevation?.getRevision ?? zero);
+  const elevationRef = useRef(elevation);
+  elevationRef.current = elevation;
+  const repo = useMemo<ElevationRepo>(() => ({
+    commit: (node, result, sess) => (elevationRef.current ? elevationRef.current.commit(node, result, sess) : Promise.reject(new Error('고도 측정 기록을 아직 열지 못했습니다.'))),
+  }), []);
+  const measure = useMeasureFlow({ enabled: measureOn, repo, newId: randomId, installId: elevation?.installId ?? 'pending', settleMs: SETTLE_MS });
+  const mtag = measure.state.tag;
+  // The phone answers what the eye cannot follow: a short buzz when the 10 s are over, a double one when it is saved.
+  useEffect(() => {
+    if (mtag === 'reviewing') Vibration.vibrate(40);
+    if (mtag === 'done') Vibration.vibrate([0, 50, 70, 50]);
+    if (mtag !== 'done') return undefined;
+    const t = setTimeout(measure.actions.dismiss, 6000);
+    return () => clearTimeout(t);
+  }, [mtag]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Every change of the walk is written to the phone; the saver keeps writes from overlapping.
   const saver = useMemo(
@@ -346,7 +388,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
       const where = scope.kind === 'building' ? buildingById(state, scope.buildingId)?.props.code ?? 'indoor' : 'outdoor';
       // The time to the second keeps two exports (or two phones in one building) from sharing an id.
       const survey = session.toSurvey(`${where}-${at.slice(11, 19).replaceAll(':', '')}`, at);
-      const archive = await buildArchive(survey, (path) => store.readBytes(`${SURVEY_DIR}/${path}`));
+      const archive = await buildArchive(survey, (path) => store.readBytes(`${SURVEY_DIR}/${path}`), elevation?.archiveFiles() ?? {});
       const uri = await store.writeShared(archive.name, archive.bytes);
       if (archive.missing.length > 0) notify(`사진 ${archive.missing.length}장을 찾지 못해 빼고 묶었습니다.`, 'error');
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'application/zip', dialogTitle: '현장 기록 내보내기' });
@@ -520,6 +562,33 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     }
   };
 
+  // ---- 기압 측정: the crosshair spot as a target ----
+
+  /** The crosshair as a measure target: this floor's height plane indoors, a point outdoors (the same spot again keeps its key). */
+  const measureTarget = (): MeasureTarget => {
+    const [lng, lat] = crosshair();
+    const position = { lat: lat!, lng: lng! };
+    if (scope.kind === 'building') {
+      return { kind: 'floor', buildingId: scope.buildingId as BuildingId, floorId: floorIdOfLevel(scope.level) as FloorId, intraOffsetM: 0, position };
+    }
+    const again = elevation?.nearestOutdoor(position, SAME_SPOT_M);
+    return { kind: 'outdoor', position, influenceRadiusM: 1, ...(again ? { existingNodeKey: again.key } : {}) };
+  };
+  const measureWhere = (t: MeasureTarget | null): string => {
+    if (!t) return scope.kind === 'building' ? `${here?.props.name ?? '건물'} ${floorLabel(scope.level)}` : '바깥';
+    if (t.kind === 'floor') return `${buildingById(state, t.buildingId)?.props.name ?? t.buildingId} ${t.floorId}`;
+    return t.existingNodeKey ? '바깥 · 전에 잰 자리 다시 재기' : '바깥 · 새 지점';
+  };
+  const pressureRows = (): PressureRow[] => {
+    const outdoor = (elevation?.current().nodes ?? []).filter((n) => n.kind === 'outdoor_point').map((n) => n.key);
+    return measuredPressureBuffer.list().map((o) => {
+      const [kind, b, f] = o.nodeKey.split(':');
+      const label = kind === 'fp' ? `${buildingById(state, b!)?.props.name ?? b} ${f}` : `바깥 지점 ${outdoor.indexOf(o.nodeKey as never) + 1 || ''}`.trim();
+      return { observation: o, label };
+    });
+  };
+  const measureCardOn = !['hidden', 'idle', 'targeting'].includes(mtag);
+
   // ---- the panel ----
 
   const indoor = scope.kind === 'building';
@@ -540,6 +609,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     { id: 'osm', label: '건물 외곽선 가져오기', hint: '십자선 자리 건물의 OSM 외곽선 가져오기', onPress: addOsmBuilding },
     { id: 'draw', label: '건물 그리기', hint: '외곽선을 점으로 찍어 건물 만들기', onPress: () => setDraft([]) },
     { id: 'copy', label: '층 복사·연동', disabled: !indoor, onPress: needFloor(() => setSheet('copy')) },
+    { id: 'pressure', label: '측정된 기압', hint: '메모리에 있는 기압과 저장된 높이 차', disabled: !hasBarometer && (elevation?.current().edges.length ?? 0) === 0, onPress: () => setSheet('pressure') },
     { id: 'export', label: '내보내기', onPress: () => setSheet('export') },
     { id: 'settings', label: '설정', onPress: () => setSheet('settings') },
   ];
@@ -680,6 +750,16 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           { id: 'cancel', label: '그리기 취소', tone: 'danger', onPress: () => setDraft(null) },
         ],
       }
+      : mtag === 'targeting'
+        ? {
+          text: scope.kind === 'building'
+            ? `${measureWhere(null)}의 높이를 잽니다. 이 층 안이면 어디서 재도 됩니다. [여기서 측정]을 눌러 주세요.`
+            : '높이를 잴 자리에 십자선을 맞추고 [여기서 측정]을 눌러 주세요. 계단 위·아래처럼 높이가 바뀌는 곳을 재면 좋습니다.',
+          actions: [
+            { id: 'here', label: '여기서 측정', primary: true, onPress: () => measure.actions.confirmCrosshair(measureTarget()) },
+            { id: 'cancel', label: '취소', tone: 'danger', onPress: measure.actions.cancel },
+          ],
+        }
       : moving !== null
         ? {
           text: `${state.nodes[moving] ? pointTitle(state.nodes[moving]!) : '지점'}을(를) 십자선 자리로 옮깁니다.${state.nodes[moving]?.props.sync_group !== undefined ? ' 연동된 다른 층의 지점도 같이 옮겨집니다.' : ''}`,
@@ -691,7 +771,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
         : toolMode();
 
   /** The plain crosshair state: no tool, drawing, move, photo direction or sheet is in the way of a tap on a point. */
-  const plain = tool === null && draft === null && moving === null && !heading && sheet === null;
+  const plain = tool === null && draft === null && moving === null && !heading && sheet === null && mtag !== 'targeting' && !measureCardOn;
   const mapMode: MapMode = heading ? 'heading' : tool?.kind === 'select' ? 'select' : 'pan';
   const marks = [
     ...(tool?.kind === 'strip' && tool.first ? [{ at: tool.first, tone: 'pin' as const }] : []),
@@ -771,6 +851,28 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
       )}
 
       <ActionDock records={records} tools={tools} open={menuOpen} onToggle={() => setMenuOpen((o) => !o)} onClose={() => setMenuOpen(false)} mode={mode} onHeight={setDockHeight} />
+
+      {mtag !== 'hidden' && !menuOpen && sheet === null && !camera && !measureCardOn && (mode === null || mtag === 'targeting') && (
+        <MeasureFab
+          above={mode ? dockHeight + space.md : insets.bottom + space.md + DOCK_FAB + space.md}
+          active={mtag === 'targeting'}
+          onPress={mtag === 'targeting' ? measure.actions.cancel : measure.actions.pressFab}
+        />
+      )}
+      {measureCardOn && (
+        <MeasureCard
+          state={measure.state}
+          where={measureWhere('target' in measure.state ? measure.state.target : null)}
+          settleMs={SETTLE_MS}
+          durationMs={MEASURE_MS}
+          bottom={insets.bottom + space.md + DOCK_FAB}
+          onStart={measure.actions.start}
+          onSave={() => void measure.actions.save()}
+          onRetry={measure.actions.retry}
+          onCancel={measure.actions.cancel}
+          onDismiss={measure.actions.dismiss}
+        />
+      )}
 
       <View pointerEvents="box-none" style={sheetHidden ? styles.hidden : StyleSheet.absoluteFill}>
         <ShotsContext.Provider value={{ headings: shotHeadings, onEdit: editShot }}>
@@ -953,6 +1055,21 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
               tileCache.clear();
               setPrefetch({ running: false, done: 0, total: 0, result: null });
               notify('저장된 지도를 지웠습니다.');
+            }}
+            measure={hasBarometer ? { on: measureOn, onChange: setMeasureOn } : null}
+            onClose={closeSheet}
+          />
+        )}
+        {sheet === 'pressure' && (
+          <PressureSheet
+            rows={pressureRows()}
+            ttlMin={DEFAULT_DH_MODEL.bufferTtlMin}
+            edges={(elevation?.current().edges ?? []).filter((e) => e.qc !== 'superseded').length}
+            pending={elevation?.pending().size ?? 0}
+            onClear={() => {
+              measuredPressureBuffer.clear();
+              notify('메모리의 기압 기록을 지웠습니다. 저장된 높이 차는 그대로입니다.');
+              setSheet(null);
             }}
             onClose={closeSheet}
           />

@@ -83,6 +83,26 @@ describe('선택: the action bar', () => {
     expect(rideDirections(after, 'e_A_1_esc__A_2_esc_up')).toEqual(['forward', 'backward']);
   });
 
+  it('완전 평지 / 단절선: each only where the schema allows it, turning one on turns the other off, and the result validates', () => {
+    const ids = ['e_out_0001__out_0002', 'e_out_0002__out_0003', 'e_A_1_hall__A_1_esc']; // footway, outdoor steps, corridor
+    const flat = planEdgeEdits(start, ids, { flatExact: true });
+    if ('error' in flat) throw new Error(flat.error);
+    const s1 = createHistory(start).perform(flat);
+    expect(s1.edges['e_out_0001__out_0002']!.props.flat_exact).toBe(true);
+    expect(s1.edges['e_A_1_hall__A_1_esc']!.props.flat_exact).toBe(true);
+    expect(s1.edges['e_out_0002__out_0003']!.props.flat_exact).toBeUndefined(); // steps
+    const brk = planEdgeEdits(s1, ids, { isBreakline: true });
+    if ('error' in brk) throw new Error(brk.error);
+    const s2 = createHistory(s1).perform(brk);
+    expect(s2.edges['e_out_0001__out_0002']!.props).toMatchObject({ is_breakline: true });
+    expect('flat_exact' in s2.edges['e_out_0001__out_0002']!.props).toBe(false);
+    expect(s2.edges['e_out_0002__out_0003']!.props.is_breakline).toBe(true);
+    expect(s2.edges['e_A_1_hall__A_1_esc']!.props).toMatchObject({ flat_exact: true }); // a corridor cannot be a break line
+    expect(campusErrors(loaded, s2)).toEqual([]);
+    expect('error' in planEdgeEdits(start, ids, { flatExact: true, isBreakline: true })).toBe(true);
+    expect('error' in planEdgeEdits(start, ['e_out_0002__out_0003'], { flatExact: true })).toBe(true); // nothing it applies to
+  });
+
   it('copies only from one floor of one building', () => {
     expect(selectionFloor(start, { nodes: ['n_A_1_hall'], edges: ['e_A_1_hall__A_1_esc'], building: null })).toMatchObject({ buildingId: 'bldg_A', level: 1 });
     expect('error' in selectionFloor(start, { nodes: ['n_A_1_hall', 'n_A_2_hall'], edges: [], building: null })).toBe(true);

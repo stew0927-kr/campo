@@ -11,12 +11,15 @@ import {
   floorNodeKey,
   isBreakline,
   isClean,
+  dirtyCount,
   markEditPatches,
+  markStateChange,
   markMeasurements,
   outdoorNodeKey,
   readDerivedElevation,
   recomputeRequest,
   serializeElevationStore,
+  statePatches,
   type BarometerWindowResult,
   type DerivedElevation,
   type HeightNode,
@@ -120,6 +123,23 @@ describe('lazy recompute: edits only mark, the explicit trigger asks for the dir
     expect([...markEditPatches(emptyDirty(), flat.patches, flat.next).edges]).toEqual([GATE_PATH]);
     const floor = patchesOf(s, setProps(['bldg_A'], { ext: { floor_height_m: 4.2 } }));
     expect([...markEditPatches(emptyDirty(), floor.patches, floor.next).buildings]).toEqual(['bldg_A']);
+  });
+
+  it('markStateChange (state before and after) marks the same as the edit patches, for the edit and for its undo', async () => {
+    const s = await fixtureState();
+    for (const action of [moveNode('n_out_0002', [127.00021, 37.0004]), setProps([GATE_PATH], { flat_exact: true }), setProps(['bldg_A'], { ext: { floor_height_m: 4.2 } })]) {
+      const { next, patches } = patchesOf(s, action);
+      const byPatches = markEditPatches(emptyDirty(), patches, next);
+      expect(markStateChange(emptyDirty(), s, next)).toEqual(byPatches);
+      expect(markStateChange(emptyDirty(), next, s)).toEqual(markEditPatches(emptyDirty(), patches, s));
+      expect(dirtyCount(byPatches)).toBe(1);
+    }
+    expect(statePatches(s, s)).toEqual([]);
+    const hours = setProps([GATE_PATH], { hours: '07:00-22:00' }).apply(s);
+    expect(statePatches(s, hours).map((p) => p.path)).toEqual(expect.arrayContaining([['edges', GATE_PATH, 'props', 'hours']]));
+    expect(isClean(markStateChange(emptyDirty(), s, hours))).toBe(true);
+    const w = setEdgeElevation({ [GATE_PATH]: { elev_diff_m: 1.2, elev_sigma_m: 0.2, grade_pct: 2.6 } }).apply(s);
+    expect(isClean(markStateChange(emptyDirty(), s, w))).toBe(true);
   });
 
   it("the recompute's own write-back does not dirty anything again", async () => {

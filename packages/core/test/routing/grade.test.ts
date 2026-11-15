@@ -7,6 +7,7 @@ import {
   GRADE_PENALTY_SEC_PER_M,
   RAMP_FACTOR,
   RAMP_PENALTY_SEC,
+  STEEP_NOTE,
   WALK_SPEED_MPS,
   buildGraph,
   edgeGradePct,
@@ -141,6 +142,19 @@ describe('routing on a hill', () => {
     expect(route(g, P, Q, 'step_free').slopeSegments[0]?.gradeClass).toBe('caution');
     expect(route(g, P, Q, 'wheelchair').edgeIds).toHaveLength(2);
     expect(route(g, P, Q, 'elevator_first').edgeIds).toHaveLength(2);
+    // Caution only: the sentence says nothing about the slope.
+    expect(route(g, P, Q, 'step_free').steps.map((s) => s.text)).toEqual(['60m 걸어가세요']);
+  });
+
+  it('route-text: a walk over a steep part says 경사가 급한 길, both ways; flat detours do not', () => {
+    const g = buildGraph(hillCampus({ elev_diff_m: 6, elev_sigma_m: 0.3 }));
+    for (const [from, to] of [[P, Q], [Q, P]] as const) {
+      const [step] = route(g, from, to, 'shortest').steps;
+      expect(step?.text).toBe(`60m 걸어가세요 (${STEEP_NOTE})`);
+      expect(step?.text).toContain('경사가 급한 길');
+      expect(step?.steep).toBe(true);
+    }
+    for (const step of route(g, P, Q, 'wheelchair').steps) expect(step.steep).toBeUndefined();
   });
 
   it('a grade with too large a σ is ignored: the hill is priced as a plain footway', () => {

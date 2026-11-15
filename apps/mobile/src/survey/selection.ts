@@ -190,7 +190,15 @@ export interface EdgeAnswer {
   incline?: 'up' | 'down' | null;
   /** Escalators; bidirectional follows (reversible runs both ways). */
   conveying?: Conveying;
+  /** 완전 평지 (flat_exact): footways and corridors only. false removes it. */
+  flatExact?: boolean;
+  /** 단절선 (is_breakline): footways, steps and ramps only, never with flat_exact. false removes it. */
+  isBreakline?: boolean;
 }
+
+/** flat_exact is for footway and corridor; is_breakline for footway, steps and ramp (docs/ELEVATION_INTEGRATION.md 3장). */
+export const canFlatExact = (e: EditEdge): boolean => e.props.highway === 'footway' || e.props.highway === 'corridor';
+export const canBreakline = (e: EditEdge): boolean => e.props.highway === 'footway' || e.props.highway === 'steps' || e.props.highway === 'ramp';
 
 /** The answers of 구간 속성 on the picked edges, each only where it applies, as one action. */
 export function planEdgeEdits(state: EditState, edgeIds: readonly string[], a: EdgeAnswer): Action | { error: string } {
@@ -204,6 +212,14 @@ export function planEdgeEdits(state: EditState, edgeIds: readonly string[], a: E
   if (a.stepFree !== undefined) push(ids((e) => e.props.highway !== 'steps' && e.props.step_free !== a.stepFree), { step_free: a.stepFree });
   if (a.incline !== undefined) push(ids((e) => e.props.highway === 'steps' && e.props.conveying === undefined && (e.props.incline ?? null) !== a.incline), { incline: a.incline ?? undefined });
   if (a.conveying !== undefined) push(ids((e) => isEscalator(e.props) && e.props.conveying !== a.conveying), { conveying: a.conveying, bidirectional: a.conveying === 'reversible' });
+  if (a.flatExact === true && a.isBreakline === true) return { error: '완전 평지와 단절선은 함께 고를 수 없습니다.' };
+  // Turning one on turns the other off on the same edge (they never hold together), in the same 되돌리기.
+  if (a.flatExact !== undefined) {
+    push(ids((e) => canFlatExact(e) && (e.props.flat_exact === true) !== a.flatExact), { flat_exact: a.flatExact ? true : undefined, ...(a.flatExact ? { is_breakline: undefined } : {}) });
+  }
+  if (a.isBreakline !== undefined) {
+    push(ids((e) => canBreakline(e) && (e.props.is_breakline === true) !== a.isBreakline), { is_breakline: a.isBreakline ? true : undefined, ...(a.isBreakline ? { flat_exact: undefined } : {}) });
+  }
   if (steps.length === 0) return { error: '바뀐 내용이 없습니다.' };
   const action = compose(steps, `구간 ${edges.length}개 속성 바꾸기`);
   const reason = action.disabled(state);

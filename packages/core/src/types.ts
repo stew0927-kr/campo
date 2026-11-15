@@ -314,6 +314,10 @@ export const WARNING_CODES = {
   observationUnknownTarget: 'observation-unknown-target',
   /** W14 */
   danglingOverride: 'dangling-override',
+  /** W15 */
+  flatExactNotFlat: 'flat-exact-not-flat',
+  /** W16 */
+  steepRamp: 'steep-ramp',
 } as const;
 
 // ---- Overrides (SPEC-v0.2 §2.5) ----

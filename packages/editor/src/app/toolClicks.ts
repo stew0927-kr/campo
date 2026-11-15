@@ -174,6 +174,7 @@ export function toolClicks(env: ToolEnv): Record<Tool, ToolClick | null> {
     select: onSelect,
     'select-building': onSelectBuilding,
     path: null,
+    breakline: null,
     building: null,
     'osm-building': ({ position }) => env.importOsm(position),
     'add-node': onAddNode,

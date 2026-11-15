@@ -83,6 +83,24 @@ describe('findRouteBetween', () => {
   });
 });
 
+describe('findRouteBetween: slope of the partial edges', () => {
+  it('a point picked on a steep edge counts its stretch in slopeSegments (start and destination)', async () => {
+    const campus = await loadCampus(FIXTURE_DIR);
+    const gate = campus.features.find((f) => (f.feature as { id: string }).id === 'e_out_0001__out_0002')!.feature as { properties: Record<string, unknown> };
+    Object.assign(gate.properties, { elev_diff_m: 4.6, elev_sigma_m: 0.25 }); // about +9.6 % from the gate up
+    const hill = buildGraph(campus);
+    const snap = snapToRoutes(hill, [127.00013, 37.0002])!;
+    const up = found(findRouteBetween(hill, { snap }, { nodeId: 'n_out_0002' }, 'shortest'));
+    expect(up.slopeSegments).toEqual([expect.objectContaining({ edgeId: 'e_out_0001__out_0002', gradeClass: 'steep', from: 'n_out_0001', to: 'n_out_0002' })]);
+    expect(up.slopeSegments[0]!.gradePct).toBeGreaterThan(8);
+    const down = found(findRouteBetween(hill, { nodeId: 'n_out_0002' }, { snap }, 'shortest'));
+    expect(down.slopeSegments.map((x) => [x.from, x.to])).toEqual([['n_out_0002', 'n_out_0001']]);
+    expect(down.slopeSegments[0]!.gradePct).toBeLessThan(-8);
+    // Without elevation nothing changes.
+    expect(found(findRouteBetween(g, { snap: snapToRoutes(g, [127.00013, 37.0002])! }, { nodeId: 'n_out_0002' }, 'shortest')).slopeSegments).toEqual([]);
+  });
+});
+
 describe('elevator_first: the lift wherever there is one', () => {
   it('takes the elevator where shortest takes the stairs', () => {
     const short = found(findRoute(g, A_HALL_1, A_HALL_3, 'shortest'));

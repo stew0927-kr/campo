@@ -639,6 +639,8 @@ Turf 주의 (7.4.0 소스에서 확인):
 | W13 | 경고 | `observations`의 `target`이 존재하지 않는 구간·엘리베이터를 가리킴 |
 
 | W14 | 경고 | `overrides.json`의 `feature_id`가 존재하지 않는 Feature를 가리킴 ("overrides.json에서 이 항목을 지우세요") |
+| W15 | 경고 | `flat_exact: true` 구간의 계산한 높이 차 `|elev_diff_m|`가 `elev_sigma_m`보다 큼 (현장에서 평지인지 다시 확인) |
+| W16 | 경고 | 경사로(`highway=ramp`)의 계산한 `|grade_pct|`가 8%(`GRADE_CAUTION_MAX_PCT`)를 넘음 |
 
 - **W11 삭제됨**(decisions 2026-11-11): 바깥 계단은 평면 길이로만 계산한다. 시간이 맞지 않는 긴 바깥 계단은 측정 보정(3.9)으로 맞춘다.
 - E11의 "하나로 이어지지 않음"은 스키마 오류가 난 엘리베이터 구간도 `from` / `to`만 읽어 연결에 넣고 계산한다. 그래서 엘리베이터 구간 하나가 스키마를 어기면 스키마 오류 하나만 나오고, 정말로 끊긴 경우에만 E11이 난다.

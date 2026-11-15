@@ -76,3 +76,40 @@ export async function saveChangeset(fileName: string, text: string): Promise<{ w
   if (!res.ok || body.written === undefined) throw new Error(body.error ?? `changeset 파일을 저장하지 못했습니다 (HTTP ${res.status}).`);
   return { written: body.written };
 }
+
+// ---- 고도 (dev server only, server/elevation-api.ts) ----
+
+export interface ElevationInfo {
+  /** The elevation store text (break lines and measured Δh), or null when there is none yet. */
+  store: string | null;
+  solver: { ready: boolean; missing: string[] };
+}
+
+export async function fetchElevation(campusId: string): Promise<ElevationInfo> {
+  const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}`);
+  const body = (await res.json()) as Partial<ElevationInfo> & { error?: string };
+  if (!res.ok || !body.solver) throw new Error(body.error ?? `고도 정보를 불러오지 못했습니다 (HTTP ${res.status}).`);
+  return { store: body.store ?? null, solver: body.solver };
+}
+
+export async function saveElevationStore(campusId: string, text: string): Promise<void> {
+  const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/store`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  const body = (await res.json()) as { written?: boolean; error?: string };
+  if (!res.ok || !body.written) throw new Error(body.error ?? `불연속선을 저장하지 못했습니다 (HTTP ${res.status}).`);
+}
+
+/** Send the recompute request and the campus as it would be saved; the solver's derived/elevation.json comes back. */
+export async function requestRecompute(campusId: string, request: unknown, files: Record<string, string>): Promise<{ derived: unknown; mode: 'solved' | 'existing'; log: string }> {
+  const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/recompute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request, files }),
+  });
+  const body = (await res.json()) as { derived?: unknown; mode?: 'solved' | 'existing'; log?: string; error?: string };
+  if (!res.ok || body.derived === undefined || !body.mode) throw new Error(body.error ?? `고도를 다시 계산하지 못했습니다 (HTTP ${res.status}).`);
+  return { derived: body.derived, mode: body.mode, log: body.log ?? '' };
+}

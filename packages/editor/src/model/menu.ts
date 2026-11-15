@@ -1,6 +1,7 @@
 // The right-click menu (SPEC-v0.2 5.1 작업): what it can edit at once on the selection, and the Plan that does it (setProps).
 import { setProps, type EditState } from '@campo/core';
 import { classify } from './ops.ts';
+import { kindChangeExtras } from './elevation.ts';
 import type { PlanResult } from './plan.ts';
 
 export interface Option {
@@ -107,7 +108,17 @@ export function planMenuEdit(state: EditState, ids: readonly string[], edits: Me
   }
   const steps: Array<() => ReturnType<typeof setProps>> = [];
   if (sel.nodes.length > 0 && Object.keys(nodePatch).length > 0) steps.push(() => setProps(sel.nodes, nodePatch));
-  if (sel.edges.length > 0 && Object.keys(edgePatch).length > 0) steps.push(() => setProps(sel.edges, edgePatch));
+  if (sel.edges.length > 0 && Object.keys(edgePatch).length > 0) {
+    // A footway turned into steps (or anything else) is no longer "checked level": flat_exact goes with it, and
+    // is_breakline where the new kind cannot have one (ELEVATION_INTEGRATION.md 3장). Same entry, one Ctrl+Z.
+    const extras = edits.kind === undefined ? [] : sel.edges.flatMap((id) => {
+      const extra = kindChangeExtras(state.edges[id]!.props, edits.kind!);
+      return Object.keys(extra).length > 0 ? [{ id, extra }] : [];
+    });
+    const plain = sel.edges.filter((id) => !extras.some((x) => x.id === id));
+    if (plain.length > 0) steps.push(() => setProps(plain, edgePatch));
+    for (const { id, extra } of extras) steps.push(() => setProps([id], { ...edgePatch, ...extra }));
+  }
   if (steps.length === 0) return { error: '바꿀 속성이 없습니다.' };
   const what = edits.kind !== undefined ? '종류' : edits.name !== undefined ? '이름' : 'step_free';
   return { annotation: `${what} 바꾸기`, steps };

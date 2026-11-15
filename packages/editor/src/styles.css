@@ -538,3 +538,48 @@ button.check-item:hover { background: var(--chrome); }
 .disclosure-summary { color: var(--muted); font-size: var(--text-s); font-weight: 400; }
 .disclosure:has(.disclosure-toggle[aria-expanded="false"]) { padding-bottom: 4px; }
 .disclosure-body { display: flex; flex-direction: column; gap: inherit; }
+
+/* ---- 고도: 평지 확인 · 단절선, 계산 값, 경사 구간, 불연속선, 다시 계산 ---- */
+:root { --breakline: #6b4423; --slope-caution: #d9a100; --slope-steep: #c92a2a; --grade-gentle: #1f8f68; }
+.elev { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px 12px; border: 1px solid var(--rule); border-radius: 6px; }
+.elev-legend { padding: 0 4px; font-weight: 600; }
+.elev-flag > span { display: flex; flex-direction: column; gap: 1px; }
+.elev-help { color: var(--muted); font-size: var(--text-s); }
+.elev-flag.is-blocked { color: var(--muted); cursor: not-allowed; }
+.elev-values { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--rule); }
+.elev-badge {
+  display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px; border-radius: 4px;
+  background: var(--chrome); font-variant-numeric: tabular-nums; font-weight: 600; cursor: default;
+}
+.elev-badge b { color: var(--muted); font-size: 11px; font-weight: 500; }
+.elev-badge i { font-style: normal; font-size: 11px; }
+.elev-grade { --grade: var(--grade-gentle); box-shadow: inset 3px 0 0 var(--grade); }
+.elev-grade i { color: var(--grade); }
+.grade-caution { --grade: #a87700; }
+.grade-steep { --grade: var(--slope-steep); }
+
+.route-slope { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; font-size: var(--text-s); }
+.slope-chip { padding: 1px 8px 1px 18px; border-radius: 9px; font-weight: 600; position: relative; background: var(--chrome); }
+.slope-chip::before {
+  content: ""; position: absolute; left: 6px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 1px;
+  background: repeating-linear-gradient(90deg, var(--slope) 0 2px, transparent 2px 4px);
+}
+.slope-caution { --slope: var(--slope-caution); color: #7a5600; }
+.slope-steep { --slope: var(--slope-steep); color: var(--slope-steep); }
+.slope-max { color: var(--muted); }
+.route-steps li.step-steep::marker { color: var(--slope-steep); font-weight: 700; }
+
+.status-elev { display: inline-flex; align-items: center; gap: 8px; color: #ffe08a; }
+.status-elev-run {
+  height: 20px; padding: 0 10px; border: 1px solid #ffe08a; border-radius: 10px; background: transparent;
+  color: #ffe08a; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.status-elev-run:hover:not(:disabled) { background: #ffe08a; color: var(--ink); }
+.status-elev-run:disabled { opacity: 0.6; cursor: progress; }
+
+.breakline-form { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.breakline-list { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.breakline-list li { display: inline-flex; align-items: center; gap: 5px; padding: 1px 2px 1px 8px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); font-size: var(--text-s); }
+.breakline-swatch { width: 14px; height: 3px; background: repeating-linear-gradient(90deg, var(--breakline) 0 3px, transparent 3px 5px); }
+.breakline-remove { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.breakline-remove:hover { background: var(--chrome); color: var(--danger); }

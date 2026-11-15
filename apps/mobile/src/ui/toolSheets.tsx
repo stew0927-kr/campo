@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { floorLabel } from '../model/scope.ts';
 import { parseLevelRange } from '../survey/buildings.ts';
 import { BottomSheet } from './BottomSheet.tsx';
-import { BigButton, FieldLabel } from './controls.tsx';
+import { BigButton, Choice, FieldLabel } from './controls.tsx';
 import { compassWord } from './dial.ts';
 import { TOUCH, color, font, radius, space } from './theme.ts';
 
@@ -138,14 +138,23 @@ interface SettingsProps {
   onPrefetch: () => void;
   onCancel: () => void;
   onClear: () => void;
+  /** 고도 측정 버튼 (the measure FAB) on the map. null: this phone has no barometer. */
+  measure: { on: boolean; onChange: (on: boolean) => void } | null;
   onClose: () => void;
 }
 
 const mb = (bytes: number): string => `${(bytes / 1_000_000).toFixed(1)} MB`;
 
-export function SettingsSheet({ usage, plan, prefetch, onPrefetch, onCancel, onClear, onClose }: SettingsProps) {
+export function SettingsSheet({ usage, plan, prefetch, onPrefetch, onCancel, onClear, measure, onClose }: SettingsProps) {
   return (
     <BottomSheet title="설정" onClose={onClose}>
+      <FieldLabel>높이 재기 (기압)</FieldLabel>
+      {measure ? (
+        <>
+          <Choice label="높이 재기 버튼" value={measure.on} onChange={measure.onChange} options={[{ value: true, label: '지도에 보이기' }, { value: false, label: '숨기기' }]} />
+          <Text style={styles.note}>지도 오른쪽 아래, 메뉴 버튼 위에 높이 재기 버튼이 생깁니다. 기압은 메모리에만 두고 높이 차만 저장합니다.</Text>
+        </>
+      ) : <Text style={styles.note}>이 휴대폰에는 기압 센서가 없어 높이를 잴 수 없습니다.</Text>}
       <FieldLabel>지도 배경 (오프라인)</FieldLabel>
       <Text style={styles.lead}>한 번 받은 지도 타일은 이 기기에 저장되어 다시 받지 않습니다. 현재 {usage.files}장, {mb(usage.bytes)}.</Text>
       <Text style={styles.note}>

@@ -99,7 +99,7 @@
 ### 4.4 결과
 
 `WalkLinkData.gradePct`(링크 방향 %, 없으면 null)와 `Route.slopeSegments`(경로 위 주의·급경사 구간: edgeId, from, to,
-gradePct, gradeClass)가 추가됐다. 안내 문장(route-text)은 아직 바꾸지 않았다(2차).
+gradePct, gradeClass)가 추가됐다. 안내 문장(route-text)은 걷기·경사로 단계에 급경사(8% 초과) 구간이 있으면 문장 끝에 "(경사가 급한 길입니다)"를 붙이고 `RouteStep.steep: true`를 둔다(2차, 12장).
 
 ## 5. 솔버 규칙 (campo_height_solver.py)
 
@@ -225,7 +225,7 @@ SPEC-v0.2 9장은 "경사도 계산, 고도 데이터 합치기"를 v0.2 범위 
 원본에 들어가지 않고, 지도 원본에는 **사람이 확인한 사실**(`flat_exact`, `is_breakline`)과 **재계산이 쓰는 파생 값**
 (`elev_*`, `grade_pct`)만 들어간다. docs/decisions.md 2026-11-15 항목 참고.
 
-## 12. 2차 작업: 화면 연결 (이번 범위 밖)
+## 12. 2차 작업: 화면 연결
 
 | 할 일 | 위치 | 쓸 것 |
 |---|---|---|
@@ -240,3 +240,18 @@ SPEC-v0.2 9장은 "경사도 계산, 고도 데이터 합치기"를 v0.2 범위 
 | 검사 경고: flat_exact 구간의 계산 Δh가 σ 밖, 경사로 grade가 8% 초과 | packages/core validate | 새 경고 코드 |
 | SPEC-v0.2 3.4 프로필 표에 경사 벌점 반영 | docs | 4.3장 |
 | σ 모델·층고 prior·DEM σ를 팀 실측으로 다시 맞춤 | tools/elevation | ELEVATION_IMPLEMENTATION.md 4·7장 |
+
+### 12.1 2차 작업 결과 (2026-11-15)
+
+| 할 일 | 상태 | 구현 |
+|---|---|---|
+| dirty 표시, "고도 다시 계산 필요 N곳" | 완료 | `app/useElevation.ts`: 화면 상태가 바뀔 때마다(동작, 되돌리기, 다시 하기, 끌기) core `markStateChange`(이전·다음 상태의 레코드를 참조로 비교해 패치 경로를 만든 뒤 `markEditPatches`). 개수는 `dirtyCount`, 상태 표시줄 `StatusBar` |
+| 고도 다시 계산 | 완료 | `server/elevation-api.ts` `POST /api/elevation/:id/recompute`: 저장 전 캠퍼스 파일을 임시 폴더에 쓰고 `--dirty`(+ 이전 residual·derived)로 솔버 실행. 폴더 `derived/<캠퍼스>/`(`CAMPO_ELEVATION_DIR`)에 `store.json`, `dem.json`(`CAMPO_ELEVATION_DEM`)이 없으면 이전 `elevation.json`을 그대로 읽는다. 결과는 `planRecomputeResult`(→ `applyDerivedElevation`) 이력 한 줄, 그다음 `clearDirty` |
+| 속성 패널 토글·읽기 전용 값, 종류 변경 시 flat_exact 지움 | 완료 | `PropertiesPanel` 고도 칸(스키마가 막는 토글은 이유와 함께 흐리게), `model/menu.ts` 종류 바꾸기가 `kindChangeExtras`로 같은 이력에서 flat_exact·is_breakline을 지움 |
+| 경로 테스트 경사 구간, 안내 문장 | 완료 | 지도에 주의(노랑)·급경사(빨강) 줄무늬(`SLOPE_LAYERS`), 경로 카드에 개수와 가장 가파른 곳, route-text `STEEP_NOTE` |
+| 불연속선 그리기 | 완료 | 도구 `breakline`(B, 바깥): 그린 선은 지도 데이터가 아니라 `store.json`의 `breaklines`(`PUT /api/elevation/:id/store`, 절대 기압이 든 파일은 거부). 그리거나 지우면 30 m 안 지점이 dirty. 지도에는 그린 선과 불연속선 구간(바깥 계단, is_breakline)을 갈색 점선으로 표시 |
+| 측정 FAB·카운트다운·"측정된 기압" | 완료 | `ui/measureSheets.tsx`: 메뉴 버튼 위 FAB → 십자선 [여기서 측정](층 안이면 그 층 평면, 바깥이면 3 m 안에서 전에 잰 지점을 다시 씀) → 안정화·10초 링 → 결과(좋음·보통·다시), 끝날 때 진동. 메뉴 "측정된 기압"은 메모리 버퍼 목록과 남은 시간, 기록 지우기 |
+| `ElevationRepo` | 완료 | `storage/elevationRepo.ts`: `elevation/store.json`(`serializeElevationStore`, 임시 파일을 거쳐 씀), `elevation/dirty.json`(`markMeasurements`의 heightNodes), 설치 id. 내보내기 zip에 `elevation_store.json`, `elevation_dirty.json`(Δh·σ·Δt만) |
+| `motionPermission` | 완료 | app.json 문구 |
+| 검사 경고 | 완료 | W15 `flat-exact-not-flat`, W16 `steep-ramp`(SPEC-v0.2 8장) |
+| 남은 일 | — | 편집기 현장 기록 불러오기가 zip의 `elevation_store.json`을 `derived/<캠퍼스>/store.json`에 합치는 것(지금은 손으로 복사), SPEC-v0.2 3.4 프로필 표, σ 모델 재추정 |

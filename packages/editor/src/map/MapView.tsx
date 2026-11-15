@@ -18,8 +18,9 @@ import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } fro
 import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
-  DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, WAY_COLORS,
-  dragGeoJSON, dragMembers, hideInData, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON, type RouteLine,
+  BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, PREVIEW_LAYERS, PREVIEW_SOURCE,
+  ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
+  dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON, type BreaklineShape, type RouteLine,
 } from './layers.ts';
 import { registerBeltIcons, registerRestroomIcons, registerRoutePins } from './icons.ts';
 
@@ -68,6 +69,11 @@ interface Props {
   focus: FocusRequest | null;
   /** What 길 그리기 drew, and the scope its first click fixed. */
   onPathDrawn: (vertices: PathVertex[], scope: Scope) => void;
+  /** What 불연속선 그리기 drew (plain map positions, nothing snapped). */
+  onBreaklineDrawn: (coords: Position[]) => void;
+  /** Break lines, and the caution / steep parts of the routes shown. */
+  breaklines: readonly BreaklineShape[];
+  slopes: readonly { cls: 'caution' | 'steep'; coordinates: Position[] }[];
   /** Preview under the pointer while a placing tool is active (null: none). */
   hover: ((position: Position, scope: Scope) => Preview) | null;
   /** Preview that stays (the doors of a 강의실 자동 연결). */
@@ -100,7 +106,7 @@ function applicable(v: ReturnType<typeof viewLimits>) {
 setWorkerUrl(workerUrl);
 
 const KIND_COLOR: Record<OutdoorKind, string> = { flat: WAY_COLORS.footway, steps: WAY_COLORS.steps, ramp: WAY_COLORS.ramp };
-const DRAW_MODE: Partial<Record<Tool, string>> = { path: 'linestring', building: 'polygon' };
+const DRAW_MODE: Partial<Record<Tool, string>> = { path: 'linestring', building: 'polygon', breakline: 'linestring' };
 
 interface ActiveDrag {
   ctl: NodeDrag | HandleDrag;
@@ -472,12 +478,15 @@ export function MapView(props: Props) {
       map.addSource(ROUTE_SOURCE, { type: 'geojson', data: routesGeoJSON(latest.current.routes) });
       map.addSource(DRAG_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
+      map.addSource(ELEVATION_SOURCE, { type: 'geojson', data: elevationGeoJSON(latest.current.breaklines, latest.current.slopes) });
       registerRestroomIcons(map);
       registerBeltIcons(map);
       registerRoutePins(map);
       // Routes sit above the faded data but below the points, so the points stay clickable and readable.
+      // Break lines lie under everything drawn; the slope stripes sit on the routes.
+      for (const layer of BREAKLINE_LAYERS) map.addLayer(layer);
       for (const layer of DATA_LAYERS) {
-        if (layer.id === 'campo-nodes-highlight') for (const r of ROUTE_LAYERS) map.addLayer(r);
+        if (layer.id === 'campo-nodes-highlight') for (const r of [...ROUTE_LAYERS, ...SLOPE_LAYERS]) map.addLayer(r);
         map.addLayer(layer);
       }
       for (const layer of PREVIEW_LAYERS) map.addLayer(layer);
@@ -489,6 +498,7 @@ export function MapView(props: Props) {
           new TerraDrawLineStringMode({
             snapping: {
               toCustom: (ev: TerraDrawMouseEvent) => {
+                if (latest.current.tool === 'breakline') return undefined; // a wall is drawn where it is, not onto the paths
                 const sc = pathScope.current ?? autoScope([ev.lng, ev.lat]);
                 return snapPath({ x: ev.containerX, y: ev.containerY }, sc)?.coord;
               },
@@ -514,7 +524,9 @@ export function MapView(props: Props) {
       draw.on('finish', (id) => {
         const drawn = draw.getSnapshotFeature(id);
         draw.removeFeatures([id]);
-        if (drawn?.geometry.type === 'LineString') {
+        if (drawn?.geometry.type === 'LineString' && latest.current.tool === 'breakline') {
+          latest.current.onBreaklineDrawn((drawn.geometry.coordinates as Position[]).map(([x, y]) => [x!, y!]));
+        } else if (drawn?.geometry.type === 'LineString') {
           const coords = drawn.geometry.coordinates as Position[];
           const sc = pathScope.current ?? autoScope(coords[0]!);
           pathScope.current = null;
@@ -578,6 +590,10 @@ export function MapView(props: Props) {
   }, [routes]);
 
   useEffect(() => {
+    whenReady((map) => (map.getSource(ELEVATION_SOURCE) as GeoJSONSource).setData(elevationGeoJSON(props.breaklines, props.slopes)));
+  }, [props.breaklines, props.slopes]);
+
+  useEffect(() => {
     if (focus) whenReady((map) => map.flyTo({ center: focus.position, zoom: Math.max(map.getZoom(), 19), duration: 600 }));
   }, [focus]);
 
@@ -594,8 +610,8 @@ export function MapView(props: Props) {
   }, [props.previewShapes]);
 
   useEffect(() => {
-    whenReady(() => drawRef.current?.setModeStyles('linestring', lineStyles(KIND_COLOR[outdoorKind])));
-  }, [outdoorKind]);
+    whenReady(() => drawRef.current?.setModeStyles('linestring', lineStyles(tool === 'breakline' ? ELEVATION_COLORS.breakline : KIND_COLOR[outdoorKind])));
+  }, [outdoorKind, tool]);
 
   useEffect(() => {
     whenReady((map) => {

@@ -133,6 +133,8 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     recompute: () => void recompute(),
     solver,
     breaklines: store?.breaklines ?? [],
+    /** The recompute's height estimates (measured floor planes give the 3D view its floor heights). */
+    estimates: store?.estimates ?? [],
     addBreakline,
     removeBreakline,
     breaklineShapes,

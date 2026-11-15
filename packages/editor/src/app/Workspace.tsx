@@ -40,6 +40,9 @@ import { CrossPicker } from '../ui/CrossPicker.tsx';
 import { FloorPicker } from '../ui/FloorPicker.tsx';
 import { HistoryButtons } from '../ui/HistoryButtons.tsx';
 import { OutlineForm } from '../ui/OutlineForm.tsx';
+import { View3DButton } from '../ui/View3DButton.tsx';
+import { measuredFloorLevels } from '@campo/core';
+import { stackGeoJSON } from '../map/layers.ts';
 import { HelpDialog } from '../ui/HelpDialog.tsx';
 import { MeasurePanel } from '../ui/MeasurePanel.tsx';
 import { PropertiesPanel } from '../ui/PropertiesPanel.tsx';
@@ -98,6 +101,8 @@ export function Workspace({ session }: { session: Session }) {
   const [helpOpen, setHelpOpen] = useState(false);
   /** 외곽선 수정: the outline being edited (one history entry on 완료). */
   const [outline, setOutline] = useState<OutlineDraft | null>(null);
+  /** 3D 보기: the map tilted with every building's floors stacked by height. */
+  const [view3d, setView3d] = useState(false);
   /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
   const [obsRev, setObsRev] = useState(0);
   /** Field surveys imported so far (data/surveys): their photos and readings are shown under 상세 정보. */
@@ -598,6 +603,11 @@ export function Workspace({ session }: { session: Session }) {
   ]);
 
   // ---- What the map shows ----
+  /** 3D 보기: floors stacked by height (measured floor planes first, then the building's floor height, then 3.9 m). */
+  const stack = useMemo(
+    () => (view3d ? stackGeoJSON(state, ui.scope, (id) => measuredFloorLevels(elevation.estimates, id)) : { type: 'FeatureCollection' as const, features: [] }),
+    [view3d, state, ui.scope, elevation.estimates],
+  );
   const reportsOpen = ui.panelTab === 'reports';
   const highlight = useMemo(
     () => new Set([ui.pickFrom, ...ui.selection, ...(inStrip ? strip.edgeIds : []), ...(reportsOpen ? reports.highlight : [])].filter((id): id is string => !!id)),
@@ -796,6 +806,8 @@ export function Workspace({ session }: { session: Session }) {
           }}
           onContextMenu={onContextMenu}
           outline={outlineView}
+          view3d={view3d}
+          stack={stack}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
           beginHandleDrag={beginHandleDrag}
@@ -830,6 +842,10 @@ export function Workspace({ session }: { session: Session }) {
             />
           ))}
         <HistoryButtons blocked={{ undo: operations.undo.blocked, redo: operations.redo.blocked }} onRun={runOperation} />
+        <View3DButton on={view3d} onToggle={() => {
+          setView3d((v) => !v);
+          info(view3d ? '평면 지도로 돌아왔습니다.' : '3D 보기입니다. 건물의 층을 층고대로 쌓았고, 지금 보는 층은 노란색입니다. 오른쪽 버튼으로 끌면 지도를 돌릴 수 있습니다.');
+        }} />
         {floorBuilding && !crossFrom && (
           <FloorPicker
             building={floorBuilding}

@@ -626,3 +626,18 @@ button.check-item:hover { background: var(--chrome); }
 .outline-floors { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
 .outline-floors li { display: flex; align-items: center; gap: 6px; }
 .outline-floors li span { min-width: 48px; font-weight: 600; color: var(--ink); }
+
+/* 3D 보기: a pill beside 되돌리기 / 다시 하기. Off it is a plain floating control; on it fills with the ink colour and glows
+   in the floor-shown yellow, the same yellow as the floor it lifts out of the stack. */
+.view3d-btn {
+  position: absolute; top: 10px; left: 148px; z-index: 2; height: 36px; padding: 0 12px 0 9px; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--rule); border-radius: 18px; background: var(--surface); color: var(--ink); cursor: pointer;
+  box-shadow: 0 2px 8px rgb(30 41 51 / 0.18); transition: background 0.15s, color 0.15s, box-shadow 0.15s, transform 0.12s;
+}
+.view3d-label { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; }
+.view3d-btn:hover { box-shadow: 0 3px 12px rgb(30 41 51 / 0.26); }
+.view3d-btn:active { transform: scale(0.96); }
+.view3d-btn:focus-visible { outline: 2px solid #0b5fff; outline-offset: 2px; }
+.view3d-btn[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #f2b705; box-shadow: 0 0 0 3px rgb(242 183 5 / 0.35), 0 4px 14px rgb(30 41 51 / 0.35); }
+.view3d-btn[aria-pressed="true"] .view3d-label { color: #fff; }
+@media (prefers-reduced-motion: reduce) { .view3d-btn { transition: none; } }

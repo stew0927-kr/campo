@@ -19,7 +19,7 @@ import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
   BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, OUTLINE_LAYERS, OUTLINE_SOURCE,
-  PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
+  PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, STACK_LAYERS, STACK_SOURCE, WAY_COLORS,
   dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
   type BreaklineShape, type OutlineHover, type RouteLine,
 } from './layers.ts';
@@ -109,7 +109,14 @@ interface Props {
   onDragEnd: (result: DragResult | null) => void;
   /** 외곽선 수정 is on: corners drag, right-clicks add and remove corners, and nothing else on the map reacts. */
   outline: OutlineEditView | null;
+  /** 3D 보기: the map tilts and every building's floors stand as stacked slabs (stack: layers.ts stackGeoJSON). */
+  view3d: boolean;
+  stack: FeatureCollection;
 }
+
+/** How far the map tilts in 3D 보기, and how long the tilt (and the way back to flat) takes. */
+const PITCH_3D = 52;
+const PITCH_MS = 900;
 
 /** Constructor options for the limits; a limit that is not declared is left out (MapLibre's default stays). */
 function applicable(v: ReturnType<typeof viewLimits>) {
@@ -587,6 +594,7 @@ export function MapView(props: Props) {
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
       map.addSource(ELEVATION_SOURCE, { type: 'geojson', data: elevationGeoJSON(latest.current.breaklines, latest.current.slopes) });
       map.addSource(OUTLINE_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addSource(STACK_SOURCE, { type: 'geojson', data: latest.current.stack });
       registerPictograms(map);
       registerBreaklineTooth(map);
       registerBeltIcons(map);
@@ -594,6 +602,8 @@ export function MapView(props: Props) {
       // Routes sit above the faded data but below the points, so the points stay clickable and readable.
       // Break lines lie under everything drawn; the slope stripes sit on the routes.
       for (const layer of BREAKLINE_LAYERS) map.addLayer(layer);
+      // The 3D slabs stand under the drawn data: the paths and points of the floor shown stay on top and clickable.
+      for (const layer of STACK_LAYERS) map.addLayer(layer);
       for (const layer of DATA_LAYERS) {
         if (layer.id === 'campo-nodes-highlight') for (const r of [...ROUTE_LAYERS, ...SLOPE_LAYERS]) map.addLayer(r);
         map.addLayer(layer);
@@ -719,6 +729,18 @@ export function MapView(props: Props) {
     pushPreview();
   }, [props.previewShapes]);
 
+  // 3D 보기: tilt in (and turnable with the right button) or back to a flat, north-up map; the slabs show only while tilted.
+  useEffect(() => {
+    whenReady((map) => {
+      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+      for (const layer of STACK_LAYERS) map.setLayoutProperty(layer.id, 'visibility', props.view3d ? 'visible' : 'none');
+      map.easeTo({ pitch: props.view3d ? PITCH_3D : 0, ...(props.view3d ? {} : { bearing: 0 }), duration: reduce ? 0 : PITCH_MS });
+    });
+  }, [props.view3d]);
+  useEffect(() => {
+    whenReady((map) => (map.getSource(STACK_SOURCE) as GeoJSONSource).setData(props.stack));
+  }, [props.stack]);
+
   // 외곽선 수정: the draft as it is now (after a move, an added or removed corner, 되돌리기); off clears it.
   useEffect(() => {
     if (!props.outline) {
@@ -749,6 +771,7 @@ export function MapView(props: Props) {
       className="map"
       data-tool={tool}
       data-outline={props.outline ? 'true' : undefined}
+      data-3d={props.view3d ? 'true' : undefined}
       role="application"
       aria-label="캠퍼스 지도. 도구를 고른 뒤 지도를 눌러 그립니다."
     />

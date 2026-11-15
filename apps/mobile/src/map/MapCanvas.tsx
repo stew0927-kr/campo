@@ -9,8 +9,10 @@
 //
 // The map keeps its own view. Dragging re-renders this component only (the screen around it reads the crosshair through
 // the handle when a record is made), and the drawn Features are redrawn only when the data, the floor or the zoom step changes.
-import { beltEndIds, buildingById, edgeCoords, isEscalator, outlineOfLevel, pictogramOf, type EditState, type Position } from '@campo/core';
-import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from 'react';
+import {
+  LAYER_STACK_ICON, STACK_COLORS, beltEndIds, buildingById, buildingStack, edgeCoords, isEscalator, outlineOfLevel, pictogramOf, type EditState, type Position,
+} from '@campo/core';
+import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
 import { Image, PanResponder, Vibration, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, G, Line, Path, Polygon, Polyline, Rect, Text as SvgText } from 'react-native-svg';
 import { nodeInScope, type Scope } from '../model/scope.ts';
@@ -91,7 +93,15 @@ interface Props {
   onPinTap?: (key: string) => void;
   /** 외곽선 수정: one finger on a corner drags it (before the map pans), a tap on a side adds a corner there, a tap on a corner picks it. */
   outline?: OutlineEdit | null;
+  /** 3D 보기 (2.5D): every building's floors drawn as plates lifted up the screen by their height; the button sits above the compass. */
+  view3d?: boolean;
+  onToggle3d?: () => void;
+  /** Measured floor heights of a building (level → metres), when the phone has the recompute's estimates. */
+  floorLevels?: (buildingId: string) => ReadonlyMap<number, number>;
 }
+
+/** Floor heights are drawn at this share of the horizontal scale: an oblique view, steep enough to read, low enough to keep the map. */
+const LIFT = 0.8;
 
 /** The outline being edited on the map. */
 export interface OutlineEdit {
@@ -208,7 +218,7 @@ const unturned = (v: MapView): MapView => ({ x: v.x, y: v.y, scale: v.scale });
 export function MapCanvas({
   state, base, projection, center, scope, anchorId, handle, tileCache, draft = null, movingId = null, onSnap,
   mode = 'pan', selection = null, onTapHit, onBoxPick, dragNodeId = null, onNodeMove, onNodeTap, liftNodes = false, heading = null, highlightEdges, marks, bottomInset = 0,
-  escalatorSpots, pins = null, pinSelected = null, onPinTap, outline = null,
+  escalatorSpots, pins = null, pinSelected = null, onPinTap, outline = null, view3d = false, onToggle3d, floorLevels,
 }: Props) {
   /** The corner being dragged and where it is now (map metres); null when none is. */
   const [cornerDrag, setCornerDrag] = useState<{ index: number; xy: XY } | null>(null);
@@ -580,6 +590,7 @@ export function MapCanvas({
               {anchor && <Circle cx={anchor.xy[0]} cy={anchor.xy[1]} r={15 / view.scale} fill="none" stroke={color.anchor} strokeWidth={3.5 / view.scale} />}
               {outline && <OutlineDraft outline={outline} drag={cornerDrag} projection={projection} px={1 / view.scale} />}
               {snap && snap.id !== anchorId && mode !== 'select' && <Circle cx={snap.xy[0]} cy={snap.xy[1]} r={(BADGE_DP / 2 + 4) / view.scale} fill="none" stroke={color.ok} strokeWidth={3 / view.scale} />}
+              {view3d && <Stack25D state={state} projection={projection} scope={scope} px={1 / steppedScale(view.scale)} turn={turn} floorLevels={floorLevels} />}
               <Pictograms state={state} base={base} projection={projection} scope={scope} px={1 / steppedScale(view.scale)} turn={turn} spots={escalatorSpots} />
               {pins?.map((p) => <Pin key={p.key} pin={p} xy={projection.toXY(p.at)} turn={turn} px={1 / view.scale} selected={p.key === pinSelected} />)}
             </G>
@@ -590,7 +601,7 @@ export function MapCanvas({
         </>
       )}
     </View>
-      {size && view && <ScaleAndCompass scale={view.scale} turn={turn} bottom={bottomInset + space.md} onNorth={turnNorth} />}
+      {size && view && <ScaleAndCompass scale={view.scale} turn={turn} bottom={bottomInset + space.md} onNorth={turnNorth} view3d={view3d} onToggle3d={onToggle3d} />}
     </View>
   );
 }
@@ -704,6 +715,59 @@ const Pictograms = memo(function Pictograms({ state, base, projection, scope, px
   );
 });
 
+/**
+ * 3D 보기 (2.5D): every building's floors (core buildingStack: measured height, the building's, else 3.9 m) as plates
+ * drawn at their floor height, lifted straight up the screen at whatever turn the map has, with thin vertical lines at
+ * the corners between a floor and the next. Basements go down the screen, darker and dashed; the floor shown is yellow.
+ * Drawn flat on the map (taps and the crosshair still work on the ground): the plates are a picture of the building.
+ */
+const Stack25D = memo(function Stack25D({ state, projection, scope, px, turn, floorLevels }: {
+  state: EditState; projection: Projection; scope: Scope; px: number; turn: number; floorLevels: ((buildingId: string) => ReadonlyMap<number, number>) | undefined;
+}) {
+  const t = (turn * Math.PI) / 180;
+  // Straight up the screen, in map metres per metre of height (mapMatrix's inverse applied to the screen's up).
+  const [ux, uy] = [Math.sin(t) * LIFT, Math.cos(t) * LIFT];
+  const at = (p: Position, h: number): XY => {
+    const [x, y] = projection.toXY(p);
+    return [x + ux * h, y + uy * h];
+  };
+  const ring = (pts: readonly XY[]) => pts.map((q) => q.join(',')).join(' ');
+  const out: ReactElement[] = [];
+  for (const b of Object.values(state.buildings)) {
+    const stack = buildingStack(b, floorLevels?.(b.id));
+    const here = scope.kind === 'building' && scope.buildingId === b.id;
+    stack.forEach((f, i) => {
+      const corners = (f.outline[0] ?? []).slice(0, -1);
+      const selected = here && scope.kind === 'building' && scope.level === f.level;
+      const below = f.level < 0;
+      const tint = selected ? STACK_COLORS.selected : below ? STACK_COLORS.below : STACK_COLORS.floor;
+      const dash = below ? { strokeDasharray: [4 * px, 3 * px] } : {};
+      // Corner posts from this floor up to the next (the last floor up to its roof).
+      for (const [j, c] of corners.entries()) {
+        const [a, z] = [at(c, f.baseM), at(c, f.topM)];
+        out.push(<Line key={`${b.id}:${f.level}:p${j}`} x1={a[0]} y1={a[1]} x2={z[0]} y2={z[1]} stroke={STACK_COLORS.edge} strokeOpacity={here ? 0.45 : 0.25} strokeWidth={0.8 * px} {...dash} />);
+      }
+      out.push(
+        <Polygon
+          key={`${b.id}:${f.level}`}
+          points={ring(corners.map((c) => at(c, f.baseM)))}
+          fill={tint}
+          fillOpacity={selected ? 0.62 : below ? 0.32 : here ? 0.4 : 0.26}
+          stroke={selected ? '#9C7400' : STACK_COLORS.edge}
+          strokeOpacity={selected ? 1 : 0.55}
+          strokeWidth={(selected ? 2.2 : 1) * px}
+          strokeLinejoin="round"
+          {...dash}
+        />,
+      );
+      if (i === stack.length - 1) {
+        out.push(<Polygon key={`${b.id}:roof`} points={ring(corners.map((c) => at(c, f.topM)))} fill="none" stroke={STACK_COLORS.edge} strokeOpacity={0.5} strokeWidth={1 * px} strokeLinejoin="round" />);
+      }
+    });
+  }
+  return <>{out}</>;
+});
+
 /** A 측정된 기압 pin: a dot on the spot, and a pill above it with the time its pressure stays in memory (or 저장됨). */
 function Pin({ pin, xy, turn, px, selected }: { pin: PressurePin; xy: XY; turn: number; px: number; selected: boolean }) {
   const live = pin.leftMs !== null;
@@ -814,11 +878,28 @@ function Fan({ at, deg, guides, turn }: { at: XY; deg: number; guides: readonly 
 }
 
 /** Lower left: a scale bar in metres and a compass that shows where north is; a tap on it turns the map back to north. */
-function ScaleAndCompass({ scale, turn, bottom, onNorth }: { scale: number; turn: number; bottom: number; onNorth: () => void }) {
+function ScaleAndCompass({ scale, turn, bottom, onNorth, view3d, onToggle3d }: { scale: number; turn: number; bottom: number; onNorth: () => void; view3d: boolean; onToggle3d: (() => void) | undefined }) {
   const bar = scaleBar(scale);
   const north = Math.round(turn) % 360 === 0;
   return (
     <View pointerEvents="box-none" style={[styles.corner, { bottom }]}>
+      <View pointerEvents="box-none" style={styles.cornerColumn}>
+      {onToggle3d && (
+        <Pressable
+          onPress={onToggle3d}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: view3d }}
+          accessibilityLabel={view3d ? '3D 보기 켜짐. 눌러서 평면 지도로' : '3D 보기. 건물의 층을 층고대로 쌓아 봅니다'}
+          style={({ pressed }) => [styles.compass, view3d && styles.view3dOn, pressed && { opacity: 0.7 }]}
+          hitSlop={6}
+        >
+          <Svg width={24} height={24} viewBox="0 0 24 24">
+            {LAYER_STACK_ICON.map((icon, i) => (
+              <Path key={i} d={icon.d} fill={view3d ? STACK_COLORS.selected : color.ink} fillOpacity={icon.opacity} stroke={view3d ? STACK_COLORS.selected : color.ink} strokeWidth={1.2} strokeLinejoin="round" />
+            ))}
+          </Svg>
+        </Pressable>
+      )}
       <Pressable
         onPress={onNorth}
         accessibilityRole="button"
@@ -834,6 +915,7 @@ function ScaleAndCompass({ scale, turn, bottom, onNorth }: { scale: number; turn
           <Circle cx={17} cy={17} r={2.2} fill={color.surface} />
         </Svg>
       </Pressable>
+      </View>
       <View style={styles.scale} accessibilityLabel={`축척 ${bar.label}`}>
         <Text style={styles.scaleLabel}>{bar.label}</Text>
         <View style={[styles.scaleBar, { width: bar.px }]} />
@@ -887,6 +969,9 @@ const Crosshair = memo(function Crosshair({ size, snapped }: { size: Size; snapp
 
 const styles = StyleSheet.create({
   corner: { position: 'absolute', left: space.md, flexDirection: 'row', alignItems: 'flex-end', gap: space.md },
+  cornerColumn: { gap: space.sm },
+  // 3D 보기 on: the ink button with the yellow stack and a yellow glow (the floor shown is the same yellow on the map).
+  view3dOn: { backgroundColor: color.ink, borderColor: STACK_COLORS.selected, borderWidth: 2, shadowColor: STACK_COLORS.selected, shadowOpacity: 0.7, shadowRadius: 8, elevation: 8 },
   compass: {
     width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.94)',
     borderWidth: 1, borderColor: color.line, elevation: 3, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, shadowOffset: { width: 0, height: 1 },

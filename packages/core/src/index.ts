@@ -14,6 +14,7 @@ export { ENDPOINT_TOLERANCE_M, isClassroomDoor, isValidFeature, mapLimitsProblem
 export * from './costs.ts';
 export * from './pictograms.ts';
 export * from './outline.ts';
+export * from './buildingStack.ts';
 export * from './calibration/index.ts';
 export {
   buildGraph,

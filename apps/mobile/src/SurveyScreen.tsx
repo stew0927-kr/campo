@@ -3,7 +3,7 @@
 // selection.ts); the session runs them and keeps what the sensors read (survey/session.ts). This file only wires the
 // pieces and holds what is on screen.
 import {
-  buildingById, closeRing, hasFloorOutline, insertCorner, metres, moveCorner, outlineOfLevel, removeCorner, resetFloorOutline, ringCorners,
+  buildingById, closeRing, measuredFloorLevels, hasFloorOutline, insertCorner, metres, moveCorner, outlineOfLevel, removeCorner, resetFloorOutline, ringCorners,
   setBuildingOutline, surveySource, type EditBuilding, type EditNode, type Position,
 } from '@campo/core';
 import { DEFAULT_DH_MODEL, floorIdOfLevel, type BuildingId, type FloorId, type MeasureTarget } from '@campo/core/elevation';
@@ -143,6 +143,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   const [linkFrom, setLinkFrom] = useState<{ nodeId: string; kind: VerticalPointKind } | null>(null);
   /** 측정된 기압 shown on the map, the pin tapped, and the clock the pins count down with. */
   const [pressureView, setPressureView] = useState(false);
+  /** 3D 보기: the floors of every building stacked by height over the map (2.5D). */
+  const [view3d, setView3d] = useState(false);
   const [pinKey, setPinKey] = useState<string | null>(null);
   const [pinNow, setPinNow] = useState(Date.now());
   useEffect(() => {
@@ -936,6 +938,12 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
       <MapCanvas
         state={state} base={session.base} projection={proj} center={campus.center} scope={scope} anchorId={anchorId} handle={map} tileCache={tileCache}
         draft={draft} movingId={moving} onSnap={setSnappedId}
+        view3d={view3d}
+        onToggle3d={() => {
+          setView3d((v) => !v);
+          notify(view3d ? '평면 지도로 돌아왔습니다.' : '3D 보기입니다. 건물의 층을 층고대로 쌓았고, 지금 층은 노란색입니다. 지도는 그대로 옮기고 확대할 수 있습니다.');
+        }}
+        floorLevels={(id) => measuredFloorLevels(elevation?.current().estimates, id)}
         mode={mapMode}
         selection={tool?.kind === 'select' || tool?.kind === 'timer' ? (tool.kind === 'timer' ? { nodes: [], edges: [timerEdge(tool)], building: null } : selection) : null}
         onTapHit={(hit) => {

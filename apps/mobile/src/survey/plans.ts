@@ -329,10 +329,14 @@ export function planEscalator(input: PlanInput, opts: EscalatorOptions): Plan {
     && ((e.props.from === lower && e.props.to === upper) || (e.props.from === upper && e.props.to === lower)));
 
   // The belt the surveyor rode: up = forward (lower → upper as drawn), down = backward.
+  // A belt carries the surveyor from start to end when it runs along its drawing that way, or against it the other way.
+  // Belts that only run the other way are not this ride: the belt ridden is added beside them.
+  const followed = already.find((e) => e.props.conveying === 'reversible' || e.props.conveying === (e.props.from === startId ? 'forward' : 'backward'))?.id;
   let rideId: string | undefined;
-  if (already.length > 0) {
-    // A belt carries the surveyor from start to end when it runs along its drawing that way, or against it the other way.
-    rideId = already.find((e) => e.props.conveying === 'reversible' || e.props.conveying === (e.props.from === startId ? 'forward' : 'backward'))?.id;
+  if (followed !== undefined) {
+    rideId = followed;
+  } else if (already.length > 0) {
+    rideId = b.edge(belt(opts.rodeUp ? 'forward' : 'backward'));
   } else if (opts.belt === 'reversible') {
     rideId = b.edge(belt('reversible'));
   } else {
@@ -350,7 +354,7 @@ export function planEscalator(input: PlanInput, opts: EscalatorOptions): Plan {
     scope: to,
     featureId: startId,
     ...(rideId !== undefined ? { edgeId: rideId, edgeReversed: ridden ? ridden.props.from !== startId : !opts.rodeUp } : {}),
-    notices: already.length > 0 ? ['이미 있는 에스컬레이터를 따라 이동했습니다.'] : [],
+    notices: followed !== undefined ? ['이미 있는 에스컬레이터를 따라 이동했습니다.'] : [],
   };
 }
 

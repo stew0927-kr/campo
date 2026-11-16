@@ -92,6 +92,25 @@ export interface SessionInit {
   startedAt: string;
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** Whether every field restore reads has the type it is written with (a hand-edited or damaged file may not). */
+function snapshotShapeOk(s: SessionSnapshot): boolean {
+  const v = s as unknown as Record<string, unknown>;
+  const scope = v['scope'];
+  const scopeOk = isRecord(scope) && (scope['kind'] === 'outdoor' ||
+    (scope['kind'] === 'building' && typeof scope['buildingId'] === 'string' && Number.isFinite(scope['level'])));
+  const seq = v['photoSeq'];
+  return typeof v['startedAt'] === 'string' &&
+    (v['changeset'] === null || isRecord(v['changeset'])) &&
+    (v['anchorId'] === null || typeof v['anchorId'] === 'string') &&
+    scopeOk &&
+    isRecord(v['attachments']) &&
+    Array.isArray(v['vertical']) &&
+    (v['timings'] === undefined || Array.isArray(v['timings'])) &&
+    typeof seq === 'number' && Number.isInteger(seq) && seq >= 0;
+}
+
 export class SurveySession {
   readonly campus: string;
   readonly base: EditState;
@@ -130,13 +149,19 @@ export class SurveySession {
   static restore(init: Omit<SessionInit, 'startedAt'>, snapshot: SessionSnapshot): { session: SurveySession } | { error: string } {
     if (snapshot.version !== SNAPSHOT_VERSION) return { error: '저장된 조사가 이 앱 버전과 맞지 않습니다.' };
     if (snapshot.campus !== init.campus) return { error: `저장된 조사는 다른 캠퍼스(${snapshot.campus})의 것입니다.` };
+    // The file parsed as JSON, but a damaged field would throw here or later on the map; the 'stale' screen can clear it.
+    if (!snapshotShapeOk(snapshot)) return { error: '저장된 조사 파일이 손상되었습니다.' };
     const session = new SurveySession({ ...init, startedAt: snapshot.startedAt });
     if (snapshot.changeset) {
-      const action = applyChangeset(snapshot.changeset);
-      const reason = action.disabled(init.base);
-      if (reason !== false) return { error: reason };
-      // One history with one baseline, the bundled campus. Undo stops here because this run's trail is empty.
-      session.history.perform(action);
+      try {
+        const action = applyChangeset(snapshot.changeset);
+        const reason = action.disabled(init.base);
+        if (reason !== false) return { error: reason };
+        // One history with one baseline, the bundled campus. Undo stops here because this run's trail is empty.
+        session.history.perform(action);
+      } catch {
+        return { error: '저장된 조사의 지도 변경 내용을 읽지 못했습니다.' };
+      }
     }
     const anchorId = snapshot.anchorId !== null && snapshot.anchorId in session.state.nodes ? snapshot.anchorId : null;
     session.place = { anchorId, scope: snapshot.scope, edited: false, pressure: null };

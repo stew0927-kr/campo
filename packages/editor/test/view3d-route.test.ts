@@ -25,6 +25,9 @@ describe('높이 과장', () => {
     expect(clampExaggeration(2.345)).toBe(2.3);
     expect(clampExaggeration(0.1)).toBe(EXAGGERATION_MIN);
     expect(clampExaggeration(99)).toBe(EXAGGERATION_MAX);
+    expect([EXAGGERATION_MIN, EXAGGERATION_MAX]).toEqual([0.5, 2.5]);
+    expect(clampExaggeration(2.6)).toBe(2.5);
+    expect(clampExaggeration(2.5)).toBe(2.5);
     expect(clampExaggeration(Number('abc'))).toBe(1);
   });
   it('multiplies the relief, its mesh and the floors by the same factor', () => {

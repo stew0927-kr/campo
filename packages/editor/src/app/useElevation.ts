@@ -7,7 +7,10 @@
 //    dirties the campus points near it.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EditState, PointRouteResult, Position } from '@campo/core';
-import { clearDirty, dirtyCount, emptyDirty, isBreakline, isClean, markStateChange, recomputeRequest, type ElevationDirty, type ElevationStore } from '@campo/core/elevation';
+import {
+  boxOf, clearDirty, dirtyCount, emptyDirty, isBreakline, isClean, markBreakline, markStateChange, recomputeRequest,
+  type BreakLine, type ElevationDirty, type ElevationStore, type LngLatBox,
+} from '@campo/core/elevation';
 import { fetchElevation, requestRecompute, saveElevationStore } from '../api.ts';
 import type { BreaklineShape } from '../map/layers.ts';
 import {
@@ -27,9 +30,14 @@ interface Env {
   routes: readonly { kind: RouteKind; result: PointRouteResult }[];
   shown: readonly RouteKind[];
   nearest: PointRouteResult | null;
+  /** The solver wrote new files (corrected_dem …): the 지형 3D grid of the screen is read again. */
+  onSolved?: () => void;
 }
 
-export function useElevation({ session, state, perform, info, fail, routes, shown, nearest }: Env) {
+/** The area a drawn line covers (null: no points). */
+const lineBox = (line: BreakLine | undefined): LngLatBox | null => (line ? boxOf(line.coordinates) : null);
+
+export function useElevation({ session, state, perform, info, fail, routes, shown, nearest, onSolved }: Env) {
   const [dirty, setDirty] = useState<ElevationDirty>(emptyDirty);
   const [busy, setBusy] = useState(false);
   const [store, setStore] = useState<ElevationStore | null>(null);
@@ -72,6 +80,7 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     info(`고도를 다시 계산하는 중입니다 (구간 ${req.campusEdges.length}개)…`);
     try {
       const answer = await requestRecompute(session.campusId, req, stateToFiles(state, session.meta, session.passthrough));
+      if (answer.mode === 'solved') onSolved?.();
       const plan = planRecomputeResult(state, req, answer.derived);
       // Only what the request covered is cleared; marks made while the solver ran stay.
       setDirty((d) => clearDirty(d, req));
@@ -92,12 +101,16 @@ export function useElevation({ session, state, perform, info, fail, routes, show
   /** The store as last written (edits made in quick succession build on each other, not on a stale render). */
   const current = useRef<ElevationStore | null>(store);
   current.current = store ?? current.current;
-  const writeStore = async (next: ElevationStore, done: string, near: string[]): Promise<boolean> => {
+  /**
+   * Save the store and mark the change for the next recompute: the campus points near the line, and the line itself with the
+   * areas it covered (so a recompute is due even where no campus point is near, and the solver knows where to look).
+   */
+  const writeStore = async (next: ElevationStore, done: string, near: string[], lineId: string, areas: (LngLatBox | null)[]): Promise<boolean> => {
     try {
       await saveElevationStore(session.campusId, storeText(next));
       current.current = next;
       setStore(next);
-      setDirty((d) => ({ ...d, nodes: new Set([...d.nodes, ...near]) }));
+      setDirty((d) => markBreakline({ ...d, nodes: new Set([...d.nodes, ...near]) }, lineId, areas));
       info(done);
       return true;
     } catch (err) {
@@ -115,14 +128,14 @@ export function useElevation({ session, state, perform, info, fail, routes, show
       return null;
     }
     const line = next.breaklines!.at(-1)!;
-    const ok = await writeStore(next, `고도 단절선을 그렸습니다(꺾은점 ${line.coordinates.length}개). 지도에서 낮은 쪽 면을 눌러 정해 주세요.`, nodesNearLine(state, line));
+    const ok = await writeStore(next, `고도 단절선을 그렸습니다(꺾은점 ${line.coordinates.length}개). 지도에서 낮은 쪽 면을 눌러 정해 주세요.`, nodesNearLine(state, line), id, [lineBox(line)]);
     return ok ? id : null;
   };
   const removeBreakline = (id: string) => {
     const base = current.current;
     const line = base?.breaklines?.find((b) => b.id === id);
     if (!base || !line) return;
-    void writeStore(withoutBreakline(base, id), '고도 단절선을 지웠습니다. 고도를 다시 계산하면 반영됩니다.', nodesNearLine(state, line));
+    void writeStore(withoutBreakline(base, id), '고도 단절선을 지웠습니다. 고도를 다시 계산하면 반영됩니다.', nodesNearLine(state, line), id, [lineBox(line)]);
   };
   /** Change a drawn line (low side, drop, points); `done` is the notice. The points near the old and the new line are dirtied. */
   const updateBreakline = (id: string, patch: BreaklinePatch, done: string) => {
@@ -133,7 +146,7 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     if ('error' in next) return fail(next.error);
     const after = next.breaklines!.find((b) => b.id === id)!;
     const near = patch.coordinates ? [...nodesNearLine(state, before), ...nodesNearLine(state, after)] : nodesNearLine(state, after);
-    void writeStore(next, `${done} 고도를 다시 계산하면 반영됩니다.`, near);
+    void writeStore(next, `${done} 고도를 다시 계산하면 반영됩니다.`, near, id, [lineBox(before), lineBox(after)]);
   };
 
   /** Drawn break lines and the campus edges that act as one (outdoor steps, is_breakline), for the map. */

@@ -145,6 +145,16 @@ export function Workspace({ session }: { session: Session }) {
       },
     );
   };
+  /** After 고도 다시 계산 wrote new files: the grid is read again (if it was ever asked for), so 지형 3D shows the corrected relief. */
+  const reloadTerrain = () => {
+    if (terrainGrid === undefined) return;
+    fetchTerrain(session.campusId).then(
+      (grid) => {
+        if (grid) setTerrainGrid(grid);
+      },
+      () => info('다시 계산한 지형을 불러오지 못했습니다. 지형 3D를 껐다 켜 보세요.'),
+    );
+  };
   /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
   const [obsRev, setObsRev] = useState(0);
   /** Field surveys imported so far (data/surveys): their photos and readings are shown under 상세 정보. */
@@ -200,7 +210,7 @@ export function Workspace({ session }: { session: Session }) {
   };
 
   // ---- 고도: dirty marks, 고도 다시 계산, 불연속선, the slope parts of the routes (useElevation.ts) ----
-  const elevation = useElevation({ session, state, perform, info, fail, routes: routeResults, shown: routeShown, nearest: nearest?.result ?? null });
+  const elevation = useElevation({ session, state, perform, info, fail, routes: routeResults, shown: routeShown, nearest: nearest?.result ?? null, onSolved: reloadTerrain });
 
   // ---- 고도 단절선 selected for editing: its side, drop and points go to the elevation store (not the edit history) ----
   const selectedLine = lineSel ? elevation.breaklines.find((b) => b.id === lineSel) : undefined;

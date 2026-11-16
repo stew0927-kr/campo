@@ -707,13 +707,38 @@ def derived_elevation(cm: CampusModel, res: SolveResult, run_id: str, solved_at_
             "nodes": dict(sorted(nodes.items())), "edges": dict(sorted(edges.items()))}
 
 
-def dirty_seeds(req: dict, cm: Optional[CampusModel], keys: Iterable[str]) -> set[str]:
-    """RecomputeRequest(packages/core elevation recomputeRequest) → 다시 풀 성분을 고르는 변수 key."""
+def breakline_boxes(req: dict, project: Optional[Callable[[float, float], tuple[float, float]]]) -> list[tuple[float, float, float, float]]:
+    """
+    RecomputeRequest.breaklines[].boxes (WGS84 [minLng, minLat, maxLng, maxLat]: where a 고도 단절선 was drawn, changed or
+    removed, before and after) → 격자 CRS의 (xmin, ymin, xmax, ymax). 투영 함수가 없으면 빈 목록.
+    """
+    out = []
+    if project is None:
+        return out
+    for line in req.get("breaklines", []) or []:
+        for b in line.get("boxes", []) or []:
+            if len(b) != 4:
+                continue
+            xs, ys = zip(*(project(lng, lat) for lng in (b[0], b[2]) for lat in (b[1], b[3])))
+            out.append((min(xs), min(ys), max(xs), max(ys)))
+    return out
+
+
+def dirty_seeds(req: dict, cm: Optional[CampusModel], keys: Iterable[str],
+                project: Optional[Callable[[float, float], tuple[float, float]]] = None) -> set[str]:
+    """
+    RecomputeRequest(packages/core elevation recomputeRequest) → 다시 풀 성분을 고르는 변수 key.
+    고도 단절선이 바뀐 곳(req.breaklines)을 지나는 캠퍼스 구간은 그 구간 변수까지(breakline_drop 제약이 생기거나 사라진다).
+    """
     seeds = set(req.get("heightNodes", []))
     if cm is not None:
         seeds |= {cm.var_of[n] for n in req.get("campusNodes", []) if n in cm.var_of}
         for eid in req.get("campusEdges", []):
             seeds |= set(cm.edge_vars.get(eid, ()))
+        for x0, y0, x1, y1 in breakline_boxes(req, project):
+            for eid, ((ax, ay), (bx, by)) in cm.edge_xy.items():
+                if max(ax, bx) >= x0 and min(ax, bx) <= x1 and max(ay, by) >= y0 and min(ay, by) <= y1:
+                    seeds |= set(cm.edge_vars.get(eid, ()))
     for bid in req.get("buildings", []):
         seeds |= {k for k in keys if k.startswith(f"fp:{bid}:")}
     return seeds
@@ -881,6 +906,20 @@ def dirty_tiles(grid: Grid, changed: list[ResidualCenter], tile: int = 64) -> se
     return out
 
 
+def box_tiles(grid: Grid, boxes: Iterable[tuple[float, float, float, float]], reach: float, tile: int = 64) -> set[tuple[int, int]]:
+    """격자 평면 상자(xmin, ymin, xmax, ymax)를 reach만큼 넓힌 곳과 겹치는 타일 (tile_row, tile_col) 집합."""
+    out = set()
+    for x0, y0, x1, y1 in boxes:
+        c0, r0 = grid.xy_to_colrow(x0 - reach, y1 + reach)
+        c1, r1 = grid.xy_to_colrow(x1 + reach, y0 - reach)
+        cmin, cmax = max(int(math.floor(c0)), 0), min(int(math.ceil(c1)), grid.width - 1)
+        rmin, rmax = max(int(math.floor(r0)), 0), min(int(math.ceil(r1)), grid.height - 1)
+        for tr in range(rmin // tile, rmax // tile + 1):
+            for tc in range(cmin // tile, cmax // tile + 1):
+                out.add((tr, tc))
+    return out
+
+
 def update_tiles(grid: Grid, z: np.ndarray, centers: list[ResidualCenter], tiles: set[tuple[int, int]],
                  tile: int = 64, **kw) -> np.ndarray:
     """fusion 잔차장의 국소 재계산(컴팩트 지지 덕분에 전체 재계산과 정확히 같다)."""
@@ -1041,8 +1080,11 @@ def main(argv=None):
     for line in bl_log:
         print(line)
     restrict = None
+    line_boxes: list[tuple[float, float, float, float]] = []
     if a.dirty:
-        restrict = dirty_seeds(json.loads(Path(a.dirty).read_text(encoding="utf-8")), cm, [n.key for n in nodes])
+        req = json.loads(Path(a.dirty).read_text(encoding="utf-8"))
+        restrict = dirty_seeds(req, cm, [n.key for n in nodes], tf.transform)
+        line_boxes = breakline_boxes(req, tf.transform)
     res = solve_heights(nodes, edges, dem=grid, sigma_dem=a.sigma_dem, alpha=a.alpha, huber_k=a.huber_k,
                         soft_flat=soft, soft_flat_max_grade=a.soft_flat_max_grade, sigma_dem_scale=scale, restrict_to=restrict)
     for line in res.log:
@@ -1059,6 +1101,9 @@ def main(argv=None):
     if restrict is not None and a.previous_residual:
         z_prev = Grid.load(a.previous_residual).data
         tiles = dirty_tiles(grid, [c for c in centers if c.key in res.solved])
+        # A 고도 단절선 changed: every tile a centre could reach across it is redone, even where no point of the campus is near.
+        # (Without any centre, the default influence radius.)
+        tiles |= box_tiles(grid, line_boxes, max([c.radius for c in centers], default=30.0))
         z = update_tiles(grid, z_prev, centers, tiles, **kw)
         print(f"residual field: {len(tiles)} dirty tile(s) updated")
     else:

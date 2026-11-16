@@ -18,6 +18,9 @@ import { metres } from '../edit/geo.ts';
 import { COLLECTIONS, edgesAt, type EditState } from '../edit/state.ts';
 import type { DhEdge, EdgeId, ElevationStore, HeightNodeKey } from './types.ts';
 
+/** A map area in [minLng, minLat, maxLng, maxLat]. */
+export type LngLatBox = readonly [number, number, number, number];
+
 /** What changed since the last recompute. Immutable: every mark returns a new value. */
 export interface ElevationDirty {
   readonly nodes: ReadonlySet<string>;
@@ -26,14 +29,36 @@ export interface ElevationDirty {
   readonly buildings: ReadonlySet<string>;
   /** Measured height variables (op:…, fp:…) that got or lost an edge. */
   readonly heightNodes: ReadonlySet<HeightNodeKey>;
+  /**
+   * 고도 단절선 drawn, changed (low side, drop, points) or removed: line id → the areas it covered before and after
+   * (the places whose heights and residual field depend on it). A change dirties the recompute whether or not any
+   * campus point is near the line.
+   */
+  readonly breaklines: ReadonlyMap<string, readonly LngLatBox[]>;
 }
 
 export function emptyDirty(): ElevationDirty {
-  return { nodes: new Set(), edges: new Set(), buildings: new Set(), heightNodes: new Set() };
+  return { nodes: new Set(), edges: new Set(), buildings: new Set(), heightNodes: new Set(), breaklines: new Map() };
 }
 
 export function isClean(d: ElevationDirty): boolean {
-  return d.nodes.size === 0 && d.edges.size === 0 && d.buildings.size === 0 && d.heightNodes.size === 0;
+  return d.nodes.size === 0 && d.edges.size === 0 && d.buildings.size === 0 && d.heightNodes.size === 0 && d.breaklines.size === 0;
+}
+
+/** The area of a line's points as a box (null: no points). */
+export function boxOf(points: readonly { lng: number; lat: number }[]): LngLatBox | null {
+  if (points.length === 0) return null;
+  return [
+    Math.min(...points.map((p) => p.lng)), Math.min(...points.map((p) => p.lat)),
+    Math.max(...points.map((p) => p.lng)), Math.max(...points.map((p) => p.lat)),
+  ];
+}
+
+/** Mark a 고도 단절선 change: the line id and the areas it covered (before and after; boxes already marked for the id are kept). */
+export function markBreakline(d: ElevationDirty, id: string, boxes: readonly (LngLatBox | null)[]): ElevationDirty {
+  const merged = [...(d.breaklines.get(id) ?? [])];
+  for (const b of boxes) if (b && !merged.some((m) => m.every((v, i) => v === b[i]))) merged.push(b);
+  return { ...d, breaklines: new Map(d.breaklines).set(id, merged) };
 }
 
 /** Edge properties the height solver reads. Anything else (hours, covered, the derived values themselves) is not an input. */
@@ -106,9 +131,9 @@ export function markStateChange(d: ElevationDirty, prev: EditState, next: EditSt
   return prev === next ? d : markEditPatches(d, statePatches(prev, next), next);
 }
 
-/** How many campus places wait for a recompute: nodes, edges, buildings and measured height variables. */
+/** How many places wait for a recompute: nodes, edges, buildings, measured height variables and changed 고도 단절선. */
 export function dirtyCount(d: ElevationDirty): number {
-  return d.nodes.size + d.edges.size + d.buildings.size + d.heightNodes.size;
+  return d.nodes.size + d.edges.size + d.buildings.size + d.heightNodes.size + d.breaklines.size;
 }
 
 /** Mark the height variables a measurement touched: both ends of every new edge and of every superseded one. */
@@ -135,6 +160,8 @@ export interface RecomputeRequest {
   /** Campus edges that changed, and every edge at a listed node. Their derived values are rewritten (or removed). */
   campusEdges: string[];
   buildings: string[];
+  /** 고도 단절선 changed (drawn, edited, removed) and the areas they covered: the solver redoes the crossing edges and the residual field there. */
+  breaklines: { id: string; boxes: LngLatBox[] }[];
 }
 
 /** What to send to the solver for `d`, expanded over `state`: a changed node dirties its edges, a changed edge its ends. */
@@ -154,6 +181,7 @@ export function recomputeRequest(d: ElevationDirty, state: EditState): Recompute
     campusNodes: sorted([...nodes].filter((id) => id in state.nodes)),
     campusEdges: sorted(edges),
     buildings: sorted(d.buildings),
+    breaklines: [...d.breaklines].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, boxes]) => ({ id, boxes: boxes.map((b): LngLatBox => [...b]) })),
   };
 }
 
@@ -165,6 +193,11 @@ export function clearDirty(d: ElevationDirty, req: RecomputeRequest): ElevationD
     edges: minus(d.edges, req.campusEdges),
     buildings: minus(d.buildings, req.buildings),
     heightNodes: minus(d.heightNodes, req.heightNodes),
+    // A line edited again while the solver ran (other areas than the request's) stays marked.
+    breaklines: new Map([...d.breaklines].filter(([id, boxes]) => {
+      const sent = req.breaklines.find((b) => b.id === id);
+      return !sent || JSON.stringify(sent.boxes) !== JSON.stringify(boxes);
+    })),
   };
 }
 

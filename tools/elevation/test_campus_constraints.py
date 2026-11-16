@@ -398,3 +398,52 @@ def test_cli_with_campus_writes_derived_and_dirty_run_matches_full(tmp_path):
     z_full = Grid.load(tmp_path / "full" / "residual_field.json").data
     z_inc = Grid.load(tmp_path / "inc" / "residual_field.json").data
     assert np.allclose(z_full, z_inc, atol=1e-5)  # float32 files
+
+
+def test_dirty_run_for_a_changed_breakline_only_matches_a_full_run(tmp_path):
+    """A 고도 단절선 drawn where no campus point is near: the request lists only the line (no node, no edge), and the dirty run
+    still redoes the edge it crosses and the residual tiles around it, exactly as a full run does."""
+    from pyproj import Transformer
+    to_grid = Transformer.from_crs("EPSG:4326", "EPSG:5186", always_xy=True)
+    to_ll = Transformer.from_crs("EPSG:5186", "EPSG:4326", always_xy=True)
+    gx, gy = to_grid.transform(127.045, 37.557)
+    lonlat = lambda dx, dy: to_ll.transform(gx + dx, gy + dy)  # noqa: E731
+
+    xs = gx - 50 + (np.arange(140) + 0.5)
+    ys = gy + 60 - (np.arange(120) + 0.5)
+    X, Y = np.meshgrid(xs, ys)
+    Grid(25.0 + 0.002 * (X - gx) + (3.2 / 15) * np.clip(Y - gy - 15, 0, 15), gx - 50, gy + 60, 1.0).save(tmp_path / "dem")
+    camp = tmp_path / "campus"
+    write_campus(camp, lonlat)
+    store = {"schemaVersion": 1, "positionCrs": "EPSG:4326", "verticalDatum": "KVD_INCHEON_MSL", "nodes": [], "sessions": [],
+             "edges": []}
+    (tmp_path / "store.json").write_text(json.dumps(store), encoding="utf-8")
+    common = ["--dem", tmp_path / "dem.json", "--campus", camp]
+
+    run_cli(*common, "--store", tmp_path / "store.json", "--out", tmp_path / "before", "--derived-out", tmp_path / "before" / "elevation.json")
+
+    # A wall across e_12 half way (x = 20 m), its west side low by 1.2 m: 20 m from both ends of the edge.
+    a, b = lonlat(20, -10), lonlat(20, 10)
+    store["breaklines"] = [{"id": "bl-1", "coordinates": [{"lng": a[0], "lat": a[1]}, {"lng": b[0], "lat": b[1]}], "source": "manual",
+                            "createdAt": 0, "lowSide": "left", "dropM": 1.2}]
+    (tmp_path / "store_line.json").write_text(json.dumps(store), encoding="utf-8")
+    run_cli(*common, "--store", tmp_path / "store_line.json", "--out", tmp_path / "full", "--derived-out", tmp_path / "full" / "elevation.json")
+
+    lo, hi = lonlat(19, -11), lonlat(21, 11)
+    (tmp_path / "dirty.json").write_text(json.dumps({
+        "format": "campo-elevation-dirty/1", "heightNodes": [], "campusNodes": [], "campusEdges": [], "buildings": [],
+        "breaklines": [{"id": "bl-1", "boxes": [[min(lo[0], hi[0]), min(lo[1], hi[1]), max(lo[0], hi[0]), max(lo[1], hi[1])]]}]}), encoding="utf-8")
+    run_cli(*common, "--store", tmp_path / "store_line.json", "--out", tmp_path / "inc", "--derived-out", tmp_path / "inc" / "elevation.json",
+            "--dirty", tmp_path / "dirty.json", "--previous-residual", tmp_path / "before" / "residual_field.json",
+            "--previous-derived", tmp_path / "before" / "elevation.json")
+
+    z_before = Grid.load(tmp_path / "before" / "corrected_dem.json").data
+    z_full = Grid.load(tmp_path / "full" / "corrected_dem.json").data
+    z_inc = Grid.load(tmp_path / "inc" / "corrected_dem.json").data
+    assert not np.allclose(z_before, z_full, atol=1e-3)  # the line changes the relief
+    assert np.allclose(z_full, z_inc, atol=1e-4)
+    d_full = json.loads((tmp_path / "full" / "elevation.json").read_text(encoding="utf-8"))
+    d_inc = json.loads((tmp_path / "inc" / "elevation.json").read_text(encoding="utf-8"))
+    d_before = json.loads((tmp_path / "before" / "elevation.json").read_text(encoding="utf-8"))
+    assert d_full["edges"]["e_12"] != d_before["edges"]["e_12"]  # the drop constrains the edge across the wall
+    assert d_inc["edges"] == d_full["edges"] and d_inc["nodes"] == d_full["nodes"]

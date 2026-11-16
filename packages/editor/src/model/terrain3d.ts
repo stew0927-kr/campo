@@ -129,7 +129,7 @@ export function terrainTop(grid: TerrainGrid): number {
 
 /** The range of 높이 과장 (the 3D view's height exaggeration), and a value typed in brought into it (1 when not a number). */
 export const EXAGGERATION_MIN = 0.5;
-export const EXAGGERATION_MAX = 5;
+export const EXAGGERATION_MAX = 2.5;
 export function clampExaggeration(v: number): number {
   if (!Number.isFinite(v)) return 1;
   return Math.round(Math.min(EXAGGERATION_MAX, Math.max(EXAGGERATION_MIN, v)) * 10) / 10;

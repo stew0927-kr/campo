@@ -5,6 +5,7 @@ import {
   PressureSessionBuffer,
   addMeasurement,
   applyDerivedElevation,
+  boxOf,
   clearDirty,
   emptyDirty,
   emptyElevationStore,
@@ -12,6 +13,7 @@ import {
   isBreakline,
   isClean,
   dirtyCount,
+  markBreakline,
   markEditPatches,
   markStateChange,
   markMeasurements,
@@ -169,6 +171,28 @@ describe('lazy recompute: edits only mark, the explicit trigger asks for the dir
     const s = await fixtureState();
     const w = patchesOf(s, setEdgeElevation({ [GATE_PATH]: { elev_diff_m: 1.2, elev_sigma_m: 0.2, grade_pct: 2.6 } }));
     expect(isClean(markEditPatches(emptyDirty(), w.patches, w.next))).toBe(true);
+  });
+
+  it('a changed 고도 단절선 is a dirty place of its own: no campus point near it is needed, the request carries its areas, clearDirty keeps a newer edit', async () => {
+    const s = await fixtureState();
+    const box = boxOf([{ lng: 127.01, lat: 37.01 }, { lng: 127.0102, lat: 37.0103 }]);
+    expect(box).toEqual([127.01, 37.01, 127.0102, 37.0103]);
+    expect(boxOf([])).toBeNull();
+    let d = markBreakline(emptyDirty(), 'bl-1', [box]);
+    expect(isClean(d)).toBe(false);
+    expect(dirtyCount(d)).toBe(1);
+    // The same line again adds its new area (the old one stays), and the same area is not listed twice.
+    d = markBreakline(markBreakline(d, 'bl-1', [box]), 'bl-1', [[127.02, 37.02, 127.03, 37.03]]);
+    expect(dirtyCount(d)).toBe(1);
+    expect(d.breaklines.get('bl-1')).toHaveLength(2);
+    const req = recomputeRequest(d, s);
+    expect(req.breaklines).toEqual([{ id: 'bl-1', boxes: [[127.01, 37.01, 127.0102, 37.0103], [127.02, 37.02, 127.03, 37.03]] }]);
+    expect(req.campusNodes).toEqual([]);
+    expect(isClean(clearDirty(d, req))).toBe(true);
+    // Edited again while the solver ran: the new area stays marked.
+    const later = markBreakline(d, 'bl-1', [[127.05, 37.05, 127.06, 37.06]]);
+    expect(dirtyCount(clearDirty(later, req))).toBe(1);
+    expect(isClean(emptyDirty())).toBe(true);
   });
 
   it('a measurement marks both height variables of the new and the superseded edges', () => {

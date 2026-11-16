@@ -209,6 +209,8 @@ export function nodesNearLine(state: EditState, line: BreakLine): string[] {
 export interface SlopeLine {
   cls: 'caution' | 'steep';
   coordinates: Position[];
+  /** The nodes at its two ends in travel direction (the 3D view puts the line at their heights). */
+  ends?: [string, string];
 }
 
 /** The slope segments of a route as lines in travel direction (the edge's own vertices). */
@@ -219,7 +221,7 @@ export function slopeLines(state: EditState, segments: readonly SlopeSegment[]):
     const b = state.nodes[s.to]?.coord;
     if (!e || !a || !b) return [];
     const inner = e.props.from === s.from ? e.vertices : [...e.vertices].reverse();
-    return [{ cls: s.gradeClass, coordinates: [a, ...inner, b] }];
+    return [{ cls: s.gradeClass, coordinates: [a, ...inner, b], ends: [s.from, s.to] }];
   });
 }
 

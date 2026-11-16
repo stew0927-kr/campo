@@ -109,13 +109,30 @@ export function terrainBase(grid: TerrainGrid): number {
  * Without a grid everything is at 0 (flat ground).
  */
 export type Ground = (p: Position) => number;
-export function groundOf(grid: TerrainGrid | null): Ground {
+/** `k`: the height exaggeration of the 3D view (1: true heights). */
+export function groundOf(grid: TerrainGrid | null, k = 1): Ground {
   if (!grid) return () => 0;
   const base = terrainBase(grid);
   return (p) => {
     const h = sampleTerrain(grid, p);
-    return h === null ? 0 : h - base;
+    return h === null ? 0 : (h - base) * k;
   };
+}
+
+/** The highest height of the grid above its lowest point (0 without data). */
+export function terrainTop(grid: TerrainGrid): number {
+  const base = terrainBase(grid);
+  let max = -Infinity;
+  for (const h of grid.z) if (h !== null && h > max) max = h;
+  return Number.isFinite(max) ? max - base : 0;
+}
+
+/** The range of 높이 과장 (the 3D view's height exaggeration), and a value typed in brought into it (1 when not a number). */
+export const EXAGGERATION_MIN = 0.5;
+export const EXAGGERATION_MAX = 5;
+export function clampExaggeration(v: number): number {
+  if (!Number.isFinite(v)) return 1;
+  return Math.round(Math.min(EXAGGERATION_MAX, Math.max(EXAGGERATION_MIN, v)) * 10) / 10;
 }
 
 /** A made-up gentle hill around `center` (± 300 m, rising 18 m to the north-east), for trying the view without a grid. */
@@ -140,14 +157,14 @@ export interface TerrainCell {
   z: number;
 }
 
-/** The surface as triangles (two per cell between cell centres, every `step` cells), z above the grid's lowest point. */
-export function terrainMesh(grid: TerrainGrid, step = 1): TerrainCell[] {
+/** The surface as triangles (two per cell between cell centres, every `step` cells), z above the grid's lowest point (× k). */
+export function terrainMesh(grid: TerrainGrid, step = 1, k = 1): TerrainCell[] {
   const base = terrainBase(grid);
   const vertex = (r: number, c: number): [number, number, number] | null => {
     const h = grid.z[r * grid.width + c];
     if (h === null || h === undefined) return null;
     const [lng, lat] = fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res);
-    return [lng, lat, h - base];
+    return [lng, lat, (h - base) * k];
   };
   const cells: TerrainCell[] = [];
   for (let r = 0; r + step < grid.height; r += step) {
@@ -199,16 +216,18 @@ export function buildingGround(b: Pick<EditBuilding, 'polygon' | 'props'>, groun
   return Number.isFinite(min) ? min : 0;
 }
 
-/** Height of each floor's base of a building (level → z of its floor), on its ground. */
-export function floorBases(b: Pick<EditBuilding, 'polygon' | 'props'>, ground: Ground, measured?: ReadonlyMap<Level, number>): Map<Level, number> {
+/** Height of each floor's base of a building (level → z of its floor), on its ground; floor heights × k. */
+export function floorBases(b: Pick<EditBuilding, 'polygon' | 'props'>, ground: Ground, measured?: ReadonlyMap<Level, number>, k = 1): Map<Level, number> {
   const g = buildingGround(b, ground);
-  return new Map(buildingStack(b, measured).map((s) => [s.level, g + s.baseM]));
+  return new Map(buildingStack(b, measured).map((s) => [s.level, g + s.baseM * k]));
 }
 
 /** z of every point: outdoors on the ground, indoors on its floor (a little above, so it does not sink into the slab). */
-export function nodeHeights(state: EditState, ground: Ground, measured: (buildingId: string) => ReadonlyMap<Level, number> = () => new Map()): Map<string, number> {
+export function nodeHeights(
+  state: EditState, ground: Ground, measured: (buildingId: string) => ReadonlyMap<Level, number> = () => new Map(), k = 1,
+): Map<string, number> {
   const bases = new Map<string, Map<Level, number>>();
-  for (const b of Object.values(state.buildings)) bases.set(b.id, floorBases(b, ground, measured(b.id)));
+  for (const b of Object.values(state.buildings)) bases.set(b.id, floorBases(b, ground, measured(b.id), k));
   const out = new Map<string, number>();
   for (const n of Object.values(state.nodes)) {
     const { building_id: id, level } = n.props;
@@ -278,13 +297,13 @@ export function buildingSegments(state: EditState, buildingId: string, level: Le
 }
 
 /** Light lines along every `every`-th row and column of the grid (z above its lowest point): the bend of a line shows the slope. */
-export function terrainWire(grid: TerrainGrid, every: number): [number, number, number][][] {
+export function terrainWire(grid: TerrainGrid, every: number, k = 1): [number, number, number][][] {
   const base = terrainBase(grid);
   const vertex = (r: number, c: number): [number, number, number] | null => {
     const h = grid.z[r * grid.width + c];
     if (h === null || h === undefined) return null;
     const [lng, lat] = fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res);
-    return [lng, lat, h - base + 0.05];
+    return [lng, lat, (h - base) * k + 0.05];
   };
   const lines: [number, number, number][][] = [];
   const flush = (run: [number, number, number][]) => {
@@ -309,4 +328,89 @@ export function terrainWire(grid: TerrainGrid, every: number): [number, number, 
     flush(run);
   }
   return lines;
+}
+
+// ---- routes in 3D (경로 테스트) ----
+
+/**
+ * What a point of a route stands on: a node (outdoors on the ground, indoors on its floor), or, for a picked end and
+ * the foot of its perpendicular on the route, the floor or the outdoors it was picked in.
+ */
+export type RouteRef = { node: string } | { scope: { kind: 'outdoor' } | { kind: 'building'; buildingId: string; level: Level } };
+
+/** How far a route floats over the ground or its floor, so it is never buried in the relief or a floor plate. */
+export const ROUTE_LIFT_M = 0.9;
+
+/**
+ * A route as a 3D line: each point at the height of what it stands on (+ ROUTE_LIFT_M); between two outdoor points
+ * extra points every few metres follow the relief, elsewhere (indoors, an elevator, a portal) the line goes straight.
+ */
+export function routePath3D(
+  state: EditState, coords: readonly Position[], refs: readonly RouteRef[] | undefined, ground: Ground,
+  floorZ: (buildingId: string, level: Level) => number | undefined,
+): [number, number, number][] {
+  const outdoor = (i: number): boolean => {
+    const r = refs?.[i];
+    if (!r) return true;
+    if ('node' in r) return state.nodes[r.node]?.props.building_id == null;
+    return r.scope.kind === 'outdoor';
+  };
+  const z = (i: number): number => {
+    const r = refs?.[i];
+    const p = coords[i]!;
+    if (r && 'node' in r) {
+      const n = state.nodes[r.node];
+      const { building_id: b, level } = n?.props ?? { building_id: null, level: null };
+      const f = b != null && level != null ? floorZ(b, level) : undefined;
+      return (f ?? ground(p)) + ROUTE_LIFT_M;
+    }
+    if (r && r.scope.kind === 'building') return (floorZ(r.scope.buildingId, r.scope.level) ?? ground(p)) + ROUTE_LIFT_M;
+    return ground(p) + ROUTE_LIFT_M;
+  };
+  const out: [number, number, number][] = [];
+  coords.forEach((p, i) => {
+    const zi = z(i);
+    if (i > 0) {
+      const q = coords[i - 1]!;
+      const n = outdoor(i - 1) && outdoor(i) ? Math.ceil(metres(q, p) / 4 - 1e-9) : 1;
+      for (let s = 1; s < n; s++) {
+        const t = s / n;
+        const m: Position = [q[0] + (p[0] - q[0]) * t, q[1] + (p[1] - q[1]) * t];
+        out.push([m[0], m[1], ground(m) + ROUTE_LIFT_M]);
+      }
+    }
+    out.push([p[0], p[1], zi]);
+  });
+  return out;
+}
+
+// ---- 지형 3D picking: the relief under the cursor ----
+
+/**
+ * Where the sight line through a screen point meets the relief. `rayAt(z)` is the map position the line passes at
+ * height z (the view's unproject at that height); `top` is at or above the highest ground. The line is walked down
+ * from `top` in small steps to the first place it is at or under the ground, then narrowed by halving. Without a hit
+ * (the line passes beside the grid) it is the position at height 0, as on a flat map.
+ */
+export function pickSurface(rayAt: (z: number) => Position, ground: Ground, top: number, steps = 64): Position {
+  const flat = rayAt(0);
+  if (!(top > 0)) return flat;
+  const above = (z: number) => z - ground(rayAt(z));
+  let hi = top + 1;
+  if (above(hi) <= 0) return rayAt(hi);
+  const dz = hi / steps;
+  for (let i = 1; i <= steps; i++) {
+    const lo = Math.max(0, hi - dz);
+    if (above(lo) <= 0) {
+      let [a, b] = [lo, hi];
+      for (let k = 0; k < 24; k++) {
+        const m = (a + b) / 2;
+        if (above(m) <= 0) a = m;
+        else b = m;
+      }
+      return rayAt((a + b) / 2);
+    }
+    hi = lo;
+  }
+  return flat;
 }

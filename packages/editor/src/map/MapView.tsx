@@ -23,8 +23,10 @@ import {
   dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
   type BreaklineShape, type OutlineHover, type RouteLine,
 } from './layers.ts';
-import type { Layer } from '@deck.gl/core';
+import { WebMercatorViewport, type Layer } from '@deck.gl/core';
+import { PathLayer } from '@deck.gl/layers';
 import { MapboxOverlay } from '@deck.gl/mapbox';
+import { drapePath, pickSurface, type Ground } from '../model/terrain3d.ts';
 import { registerBeltIcons, registerBreaklineTooth, registerPictograms, registerRoutePins } from './icons.ts';
 import { breaklineSideOf, type BreakLineSide } from '@campo/core/elevation';
 
@@ -143,6 +145,12 @@ interface Props {
   tilt: boolean;
   /** What deck.gl draws over the map (map/deck3d.ts); nothing of it takes a click. */
   deck: Layer[];
+  /**
+   * 지형 3D is on: the relief as drawn (heights × 높이 과장) and its highest point. Every click, drag, hover and drawn
+   * point is then taken where the sight line under the cursor meets the relief, and the points it is compared with are
+   * seen on the relief too; what is stored stays a plain [lng, lat]. Null: the flat map.
+   */
+  surface: { ground: Ground; top: number } | null;
 }
 
 /** How far the map tilts in the 3D views, and how long the tilt (and the way back to flat) takes. */
@@ -176,6 +184,9 @@ export function MapView(props: Props) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
+  /** The shape Terra Draw is drawing, on the relief (지형 3D only), drawn after the 3D layers. */
+  const draftLayers = useRef<Layer[]>([]);
+  const pushDeck = () => overlayRef.current?.setProps({ layers: [...latest.current.deck, ...draftLayers.current] });
   const drawRef = useRef<TerraDraw | null>(null);
   /** The scope the first click of the path being drawn fixed (null between paths). */
   const pathScope = useRef<Scope | null>(null);
@@ -225,10 +236,49 @@ export function MapView(props: Props) {
     // The e2e tests turn coordinates into pixels with this (dev server only).
     if (import.meta.env.DEV) (window as unknown as { __campoMap?: MapLibreMap }).__campoMap = map;
 
+    // ---- screen <-> map: on the flat map MapLibre's own; with 지형 3D on, on the relief as deck.gl draws it ----
+    /** The camera deck.gl draws with (the map's own, as @deck.gl/mapbox builds it), made again after the map moves. */
+    let viewport: WebMercatorViewport | null = null;
+    const dropViewport = () => {
+      viewport = null;
+    };
+    map.on('move', dropViewport);
+    map.on('resize', dropViewport);
+    const view = (): WebMercatorViewport => {
+      if (viewport) return viewport;
+      const { lng, lat } = map.getCenter();
+      const canvas = map.getCanvas();
+      viewport = new WebMercatorViewport({
+        width: canvas.clientWidth, height: canvas.clientHeight, longitude: ((lng + 540) % 360) - 180, latitude: lat,
+        zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(), padding: map.getPadding(),
+      });
+      return viewport;
+    };
+    /** Where a map position is seen on screen (on the relief when 지형 3D is on). */
+    const toScreen = (c: Position): ScreenPoint => {
+      const surface = latest.current.surface;
+      if (!surface) return map.project([c[0], c[1]]);
+      const [x, y] = view().project([c[0], c[1], surface.ground(c)]);
+      return { x: x!, y: y! };
+    };
+    /** The map position under a screen point: where the sight line meets the relief when 지형 3D is on. */
+    const toMap = (p: ScreenPoint): Position => {
+      const surface = latest.current.surface;
+      if (!surface) {
+        const ll = map.unproject([p.x, p.y]);
+        return [ll.lng, ll.lat];
+      }
+      const vp = view();
+      return pickSurface((z) => {
+        const [lng, lat] = vp.unproject([p.x, p.y], { targetZ: z });
+        return [lng!, lat!];
+      }, surface.ground, surface.top);
+    };
+
     const nearestNode = (point: ScreenPoint, accept: (n: EditNode) => boolean, maxPx?: number) => {
       const candidates = Object.values(latest.current.state.nodes)
         .filter(accept)
-        .map((node) => ({ node, screen: map.project(node.coord) }));
+        .map((node) => ({ node, screen: toScreen(node.coord) }));
       return nearestWithin(candidates, point, maxPx)?.node;
     };
     let oHeld = false;
@@ -245,7 +295,7 @@ export function MapView(props: Props) {
     const outlineHit = (point: ScreenPoint): (OutlineHover & object & { foot: ScreenPoint }) | null => {
       const o = latest.current.outline;
       if (!o || o.corners.length === 0) return null;
-      const pts: ScreenPoint[] = o.corners.map((c) => map.project([c[0], c[1]]));
+      const pts: ScreenPoint[] = o.corners.map((c) => toScreen(c));
       let best: { kind: 'corner' | 'side'; index: number; foot: ScreenPoint } | null = null;
       let bestD = CORNER_PX;
       pts.forEach((pt, i) => {
@@ -274,7 +324,7 @@ export function MapView(props: Props) {
     const drawnLine = (id: string | null) => (id === null ? undefined : latest.current.breaklines.find((b) => b.kind === 'drawn' && b.id === id));
     /** The point (first) or the segment of `line` under a screen point, with the foot on the segment. */
     const lineHit = (line: BreaklineShape, point: ScreenPoint): { kind: 'point' | 'segment'; index: number; foot: ScreenPoint } | null => {
-      const pts = line.coordinates.map((c) => map.project(c));
+      const pts = line.coordinates.map((c) => toScreen(c));
       let best: { kind: 'point' | 'segment'; index: number; foot: ScreenPoint } | null = null;
       let bestD = CORNER_PX;
       pts.forEach((pt, i) => {
@@ -296,7 +346,7 @@ export function MapView(props: Props) {
       return best;
     };
     const lineDistance = (line: BreaklineShape, point: ScreenPoint) => {
-      const pts = line.coordinates.map((c) => map.project(c));
+      const pts = line.coordinates.map((c) => toScreen(c));
       let d = Infinity;
       for (let i = 0; i + 1 < pts.length; i++) d = Math.min(d, distanceToSegment(point, pts[i]!, pts[i + 1]!));
       return d;
@@ -315,10 +365,7 @@ export function MapView(props: Props) {
       }
       return best;
     };
-    const toPosition = (p: ScreenPoint): Position => {
-      const ll = map.unproject([p.x, p.y]);
-      return [ll.lng, ll.lat];
-    };
+    const toPosition = toMap;
     /** The low side the pointer at `point` is on, when it is within BAND_PX of the line. */
     const sideAt = (line: BreaklineShape, point: ScreenPoint): BreakLineSide | null =>
       (lineDistance(line, point) <= BAND_PX ? breaklineSideOf(line.coordinates, toPosition(point)) : null);
@@ -348,7 +395,7 @@ export function MapView(props: Props) {
         const pairs = pairOffsets(st);
         for (const f of Object.values(st.edges)) {
           if (!st.nodes[f.props.from] || !st.nodes[f.props.to] || !edgeStrong(st, f, sc)) continue;
-          const pts: ScreenPoint[] = edgeCoords(st, f).map((c) => map.project(c));
+          const pts: ScreenPoint[] = edgeCoords(st, f).map((c) => toScreen(c));
           const shift = (pairs.get(f.id) ?? 0) * PAIR_OFFSET_PX; // the line is drawn this far to the right of its direction: pick where it is drawn
           for (let i = 0; i + 1 < pts.length; i++) {
             let [p0, p1] = [pts[i]!, pts[i + 1]!];
@@ -367,7 +414,7 @@ export function MapView(props: Props) {
         if (!edge && withBuildings) {
           for (const b of Object.values(st.buildings)) {
             if (!buildingInScope(b, sc)) continue;
-            const pts = (b.polygon[0] ?? []).map((c) => map.project(c));
+            const pts = (b.polygon[0] ?? []).map((c) => toScreen(c));
             for (let i = 0; i + 1 < pts.length; i++) {
               const dist = distanceToSegment(point, pts[i]!, pts[i + 1]!);
               if (dist <= best) {
@@ -382,7 +429,7 @@ export function MapView(props: Props) {
     };
     map.on('click', (e) => {
       if (latest.current.outline) return; // 외곽선 수정 works with drags and right-clicks only
-      const at: Position = [e.lngLat.lng, e.lngLat.lat];
+      const at: Position = toMap(e.point);
       const { tool, breaklineEdit: be } = latest.current;
       const drawTool = DRAW_MODE[tool] !== undefined;
       if (drawTool && drawingAtPress) return; // Terra Draw is adding a point to the shape being drawn
@@ -417,10 +464,7 @@ export function MapView(props: Props) {
       if (o) {
         const h = outlineHit(e.point);
         if (h?.kind === 'corner') o.onRemove(h.index);
-        else if (h?.kind === 'side') {
-          const ll = map.unproject([h.foot.x, h.foot.y]);
-          o.onInsert(h.index, [ll.lng, ll.lat]);
-        }
+        else if (h?.kind === 'side') o.onInsert(h.index, toMap(h.foot));
         return;
       }
       // A drawing tool keeps the right button to itself only while a shape is being drawn.
@@ -481,7 +525,7 @@ export function MapView(props: Props) {
       const skip = new Set(members.map((n) => n.id));
       const candidates = Object.values(st.nodes)
         .filter((n) => !skip.has(n.id) && scopeOfNode(n) === scopeId)
-        .map((node) => ({ node, screen: map.project(node.coord) }));
+        .map((node) => ({ node, screen: toScreen(node.coord) }));
       const hit = nearestWithin(candidates, point, DROP_PX);
       if (hit) return { coord: hit.node.coord, target: { kind: 'node', id: hit.node.id }, ring: hit.node.coord };
       if (members.some((n) => n.props.node_type === 'elevator_stop')) return free; // a shaft cannot leave its place
@@ -492,7 +536,7 @@ export function MapView(props: Props) {
         const a = st.nodes[e.props.from];
         const b = st.nodes[e.props.to];
         if (skipEdges.has(e.id) || !a || !b || scopeOfNode(a) !== scopeId || scopeOfNode(b) !== scopeId) continue;
-        const pts = edgeCoords(st, e).map((c) => map.project(c));
+        const pts = edgeCoords(st, e).map((c) => toScreen(c));
         for (let i = 0; i + 1 < pts.length; i++) {
           const f = footOnSegment(point, pts[i]!, pts[i + 1]!);
           if (f.dist <= bestD) {
@@ -502,15 +546,14 @@ export function MapView(props: Props) {
         }
       }
       if (best) {
-        const ll = map.unproject([best.foot.x, best.foot.y]);
-        const foot: Position = [ll.lng, ll.lat];
+        const foot = toMap(best.foot);
         return { coord: foot, target: { kind: 'edge', id: best.id }, ring: foot };
       }
       return free;
     };
 
     const dropFor = (d: ActiveDrag, e: MapMouseEvent) =>
-      dropAt(d.nodeId, e.point, [e.lngLat.lng, e.lngLat.lat], e.originalEvent.altKey);
+      dropAt(d.nodeId, e.point, toMap(e.point), e.originalEvent.altKey);
 
     const frame = () => {
       if (!drag) return;
@@ -546,7 +589,7 @@ export function MapView(props: Props) {
       const [y0, y1] = [Math.min(y, e.point.y), Math.max(y, e.point.y)];
       if (x1 - x0 < DRAG_PX && y1 - y0 < DRAG_PX) return;
       const inBox = (c: Position) => {
-        const p = map.project(c);
+        const p = toScreen(c);
         return p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
       };
       const ids = Object.values(latest.current.state.nodes).filter((n) => latest.current.canPick(n) && inBox(n.coord)).map((n) => n.id);
@@ -607,7 +650,7 @@ export function MapView(props: Props) {
       for (const id of sel) {
         const mid = st.edges[id] ? edgeMidpoint(st, id) : undefined;
         if (!mid) continue;
-        const p = map.project(mid);
+        const p = toScreen(mid);
         if (Math.hypot(p.x - e.point.x, p.y - e.point.y) <= PICK_PX) {
           e.preventDefault();
           press = { edgeId: id, x: e.point.x, y: e.point.y };
@@ -617,13 +660,13 @@ export function MapView(props: Props) {
     });
     map.on('mousemove', (e) => {
       if (lineDrag) {
-        lineDrag.coords[lineDrag.index] = [e.lngLat.lng, e.lngLat.lat];
+        lineDrag.coords[lineDrag.index] = toMap(e.point);
         pushElevation();
         return;
       }
       const od = outlineDrag.current;
       if (od) {
-        od.corners[od.index] = [e.lngLat.lng, e.lngLat.lat];
+        od.corners[od.index] = toMap(e.point);
         pushOutline(od.corners);
         return;
       }
@@ -670,10 +713,11 @@ export function MapView(props: Props) {
     map.on('mouseup', (e) => {
       if (lineDrag) {
         const { id, index } = lineDrag;
-        lineDrag.coords[index] = [e.lngLat.lng, e.lngLat.lat];
+        const to = toMap(e.point);
+        lineDrag.coords[index] = to;
         endLineDrag(true);
         setLineCursor('grab');
-        latest.current.breaklineEdit.onMovePoint(id, index, [e.lngLat.lng, e.lngLat.lat]);
+        latest.current.breaklineEdit.onMovePoint(id, index, to);
         return;
       }
       const od = outlineDrag.current;
@@ -681,7 +725,7 @@ export function MapView(props: Props) {
         outlineDrag.current = null;
         map.getContainer().removeAttribute('data-dragging');
         outlineCursor(outlineHover.current);
-        latest.current.outline?.onMove(od.index, [e.lngLat.lng, e.lngLat.lat]);
+        latest.current.outline?.onMove(od.index, toMap(e.point));
         return;
       }
       press = null;
@@ -732,7 +776,7 @@ export function MapView(props: Props) {
         badge.hidden = true;
         return;
       }
-      const at: Position = [lastMove.lngLat.lng, lastMove.lngLat.lat];
+      const at: Position = toMap(lastMove.point);
       const sc = pathScope.current ?? autoScope(at);
       let text = scopeLabel(sc, st);
       if (oHeld && !pathScope.current) text += ' (O)';
@@ -807,8 +851,18 @@ export function MapView(props: Props) {
       for (const layer of DRAG_LAYERS) map.addLayer(layer);
       for (const layer of OUTLINE_LAYERS) map.addLayer(layer);
 
+      // Terra Draw reads positions through its adapter: with 지형 3D on, the shape is drawn on the relief under the cursor.
+      class SurfaceAdapter extends TerraDrawMapLibreGLAdapter<MapLibreMap> {
+        override project(lng: number, lat: number) {
+          return toScreen([lng, lat]);
+        }
+        override unproject(x: number, y: number) {
+          const [lng, lat] = toMap({ x, y });
+          return { lng, lat };
+        }
+      }
       const draw = new TerraDraw({
-        adapter: new TerraDrawMapLibreGLAdapter({ map }),
+        adapter: new SurfaceAdapter({ map }),
         modes: [
           new TerraDrawLineStringMode({
             snapping: {
@@ -846,13 +900,30 @@ export function MapView(props: Props) {
           const sc = pathScope.current ?? autoScope(coords[0]!);
           pathScope.current = null;
           const vertices = coords.map((position): PathVertex => {
-            const node = snapPath(map.project(position), sc);
+            const node = snapPath(toScreen(position), sc);
             return node ? { nodeId: node.id } : { position: [position[0], position[1]] };
           });
           latest.current.onPathDrawn(vertices, sc);
         } else if (drawn?.geometry.type === 'Polygon') {
           latest.current.onPolygonDrawn((drawn.geometry.coordinates[0] as Position[]).map(([x, y]) => [x, y]));
         }
+      });
+      // With 지형 3D on, the relief hides the map's own drawing: the shape being drawn is shown on it as well.
+      draw.on('change', () => {
+        const surface = latest.current.surface;
+        const shapes = surface ? draw.getSnapshot().flatMap((f) => {
+          if (f.geometry.type === 'LineString') return [f.geometry.coordinates as Position[]];
+          if (f.geometry.type === 'Polygon') return [(f.geometry.coordinates[0] ?? []) as Position[]];
+          return [];
+        }).filter((c) => c.length >= 2) : [];
+        if (shapes.length === 0 && draftLayers.current.length === 0) return;
+        const { tool: t, outdoorKind: kind } = latest.current;
+        const color = t === 'breakline' ? ELEVATION_COLORS.breakline : t === 'building' ? '#1e2933' : KIND_COLOR[kind];
+        draftLayers.current = shapes.length === 0 || !surface ? [] : [new PathLayer({
+          id: 'draw-draft', data: shapes.map((c) => drapePath(c, surface.ground, 2, 0.6)), getPath: (d: [number, number, number][]) => d,
+          getColor: hexColor(color), getWidth: 4, widthUnits: 'pixels', capRounded: true, jointRounded: true, parameters: { depthCompare: 'always' },
+        })];
+        pushDeck();
       });
       drawRef.current = draw;
       // The 3D views (deck.gl over the map, its own canvas): no layer is pickable, so the map keeps every click and drag.
@@ -950,8 +1021,8 @@ export function MapView(props: Props) {
     });
   }, [props.tilt]);
   useEffect(() => {
-    whenReady(() => overlayRef.current?.setProps({ layers: props.deck }));
-  }, [props.deck]);
+    whenReady(pushDeck);
+  }, [props.deck]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 외곽선 수정: the draft as it is now (after a move, an added or removed corner, 되돌리기); off clears it.
   useEffect(() => {
@@ -1009,6 +1080,10 @@ function baseStyle(): StyleSpecification {
     });
   }
   return style;
+}
+
+function hexColor(hex: string): [number, number, number, number] {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16), 255];
 }
 
 function lineStyles(color: string) {

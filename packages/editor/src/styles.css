@@ -681,6 +681,25 @@ button.check-item:hover { background: var(--chrome); }
 .terrain3d-note span { color: var(--muted); font-weight: 500; }
 .terrain3d-sample { border-color: #e8590c; }
 .terrain3d-sample span:last-child { color: #c2410c; }
+/* 높이 과장: a small card in the lower left, just above the compass and the scale bar, only while a 3D view is on. */
+.exaggeration {
+  position: absolute; left: 10px; bottom: 54px; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border: 1px solid var(--rule); border-radius: 10px; background: rgb(255 255 255 / 0.94); color: var(--ink);
+  box-shadow: 0 2px 8px rgb(30 41 51 / 0.16); font-size: var(--text-s);
+}
+.exaggeration-title { font-weight: 700; white-space: nowrap; }
+.exaggeration input[type="range"] { width: 120px; accent-color: #b58d6c; cursor: pointer; }
+.exaggeration-num { display: inline-flex; align-items: center; gap: 2px; font-weight: 600; }
+.exaggeration-num input {
+  width: 48px; height: 26px; padding: 0 4px; border: 1px solid var(--rule); border-radius: 5px; background: var(--surface);
+  color: var(--ink); font: inherit; font-variant-numeric: tabular-nums; text-align: right;
+}
+.exaggeration-num input:focus-visible, .exaggeration input[type="range"]:focus-visible, .exaggeration-reset:focus-visible { outline: 2px solid #0b5fff; outline-offset: 1px; }
+.exaggeration-reset {
+  height: 26px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 5px; background: var(--surface); color: var(--muted);
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.exaggeration-reset:hover { color: var(--ink); }
 /* The 3D views' canvas (deck.gl) lies over the map's own drawing but under every control: the zoom and compass, the
    floor picker and the floating buttons stay usable. */
 /* deck.gl puts its canvas in the top-left control slot, after the zoom buttons: lift them over it. */

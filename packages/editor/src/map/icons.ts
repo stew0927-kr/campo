@@ -192,21 +192,3 @@ export function registerRoutePins(map: MapLibreMap): void {
   if (!map.hasImage('route-start')) map.addImage('route-start', drawPin('출발', ROUTE_PIN_COLORS.start), { pixelRatio: 2 });
   if (!map.hasImage('route-end')) map.addImage('route-end', drawPin('도착', ROUTE_PIN_COLORS.end), { pixelRatio: 2 });
 }
-
-/** A badge as an SVG data URL (deck.gl's IconLayer in the 3D view): the same drawing as registerPictograms. */
-export function pictogramDataUrl(kind: PictogramKind, wheelchair: Wheelchair | null, size = 64): string {
-  const b = badgeLayout(size);
-  const p = PICTOGRAMS[kind];
-  const parts = (list: readonly GlyphPart[], ink: string) => list.map((g) => (g.stroke !== undefined
-    ? `<path d="${g.d}" fill="none" stroke="${ink}" stroke-width="${g.stroke}" stroke-linecap="round" stroke-linejoin="round"/>`
-    : `<path d="${g.d}" fill="${ink}" fill-rule="evenodd"/>`)).join('');
-  const at = (g: { x: number; y: number; scale: number }) => `translate(${g.x} ${g.y}) scale(${g.scale})`;
-  const m = wheelchair ? WHEELCHAIR_MARKS[wheelchair] : null;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`
-    + `<circle cx="${b.c}" cy="${b.c + size * 0.02}" r="${b.r + b.rim / 2 + size * 0.02}" fill="#101820" fill-opacity="0.28"/>`
-    + `<circle cx="${b.c}" cy="${b.c}" r="${b.r}" fill="${p.color}" stroke="${BADGE_RIM}" stroke-width="${b.rim}"/>`
-    + `<g transform="${at(m ? b.glyphBeside : b.glyph)}">${parts(p.parts, '#ffffff')}</g>`
-    + (m ? `<circle cx="${b.mini.cx}" cy="${b.mini.cy}" r="${b.mini.r}" fill="${m.color}" stroke="${BADGE_RIM}" stroke-width="${b.mini.rim}"/><g transform="${at(b.mini.glyph)}">${parts(m.parts, m.ink)}</g>` : '')
-    + '</svg>';
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}

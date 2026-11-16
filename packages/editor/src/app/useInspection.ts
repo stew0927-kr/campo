@@ -8,7 +8,8 @@ import {
 import type { RouteLine } from '../map/layers.ts';
 import { measureSummary, measureTargetOf, type MeasureSummary } from '../model/measure.ts';
 import { routePlaces } from '../model/places.ts';
-import { edgeInScope } from '../model/scope.ts';
+import { OUTDOOR, edgeInScope } from '../model/scope.ts';
+import type { RouteRef } from '../model/terrain3d.ts';
 import { stateToCampus, type Session } from '../model/session.ts';
 import type { RouteKind, RoutePoint, UiState } from '../ui/ui-state.ts';
 
@@ -74,24 +75,31 @@ export function useInspection(
   const routeLines = useMemo<RouteLine[]>(() => {
     if (!routesOpen) return [];
     const lines: RouteLine[] = [];
+    // A picked end and its foot stand on the floor (or the outdoors) they were picked in; the rest on their nodes.
+    const fromRef: RouteRef = { scope: routeFromPoint?.scope ?? OUTDOOR };
+    const toRef: RouteRef = { scope: routeToPoint?.scope ?? OUTDOOR };
     const draw = (profile: RouteLine['profile'], r: PointRouteResult) => {
       if (!r.found) return;
-      const coords = r.nodes.map((id) => checkedState.nodes[id]?.coord).filter((c): c is NonNullable<typeof c> => !!c);
-      lines.push({ profile, coordinates: [...(r.startFoot ? [r.startFoot] : []), ...coords, ...(r.endFoot ? [r.endFoot] : [])] });
+      const ids = r.nodes.filter((id) => !!checkedState.nodes[id]);
+      lines.push({
+        profile,
+        coordinates: [...(r.startFoot ? [r.startFoot] : []), ...ids.map((id) => checkedState.nodes[id]!.coord), ...(r.endFoot ? [r.endFoot] : [])],
+        refs: [...(r.startFoot ? [fromRef] : []), ...ids.map((node): RouteRef => ({ node })), ...(r.endFoot ? [toRef] : [])],
+      });
     };
     if (nearest) draw(nearest.kind === 'wheelchair' ? 'wheelchair' : 'shortest', nearest.result);
     else for (const { kind, result } of routeResults) if (shown.includes(kind)) draw(kind, result);
     // A 직접 선택 end is joined to the route by its perpendicular, dashed: 출발 pin → foot, foot → 도착 pin.
-    if (ends.from?.snap) lines.push({ profile: 'snap', coordinates: [ends.from.snap.point, ends.from.snap.foot] });
-    if (ends.to?.snap) lines.push({ profile: 'snap', coordinates: [ends.to.snap.foot, ends.to.snap.point] });
+    if (ends.from?.snap) lines.push({ profile: 'snap', coordinates: [ends.from.snap.point, ends.from.snap.foot], refs: [fromRef, fromRef] });
+    if (ends.to?.snap) lines.push({ profile: 'snap', coordinates: [ends.to.snap.foot, ends.to.snap.point], refs: [toRef, toRef] });
     // The 출발 / 도착 pins, whatever the end is: a picked point, a place, or the restroom found.
     const at = (id: string | null) => (id ? checkedState.nodes[id]?.coord : undefined);
     const start = routeFromPoint?.at ?? at(routeFrom);
-    const end = nearest
-      ? (nearest.result.found && 'targetId' in nearest.result ? at(nearest.result.targetId as string) : undefined)
-      : routeToPoint?.at ?? at(routeTo);
-    if (start) lines.push({ profile: 'start', coordinates: [start] });
-    if (end) lines.push({ profile: 'end', coordinates: [end] });
+    const endId = nearest ? (nearest.result.found && 'targetId' in nearest.result ? nearest.result.targetId as string : null) : routeTo;
+    const end = nearest ? at(endId) : routeToPoint?.at ?? at(routeTo);
+    const pinRef = (p: RoutePoint | null, id: string | null): RouteRef => (p ? { scope: p.scope } : id ? { node: id } : { scope: OUTDOOR });
+    if (start) lines.push({ profile: 'start', coordinates: [start], refs: [pinRef(routeFromPoint, routeFrom)] });
+    if (end) lines.push({ profile: 'end', coordinates: [end], refs: [pinRef(nearest ? null : routeToPoint, endId)] });
     return lines;
   }, [routeResults, nearest, shown, ends, checkedState, routesOpen, routeFrom, routeTo, routeFromPoint, routeToPoint]);
 

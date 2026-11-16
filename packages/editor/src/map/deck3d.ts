@@ -1,16 +1,20 @@
 // The 3D views drawn with deck.gl over MapLibre (MapView adds a MapboxOverlay): 지형 3D (the height grid as a surface,
 // the outdoor paths and the ground-floor outlines laid on it) and 건물 3D (every building's floors as slabs standing on
-// that ground, and for the building shown its indoor points, paths and the vertical links between floors).
-// Nothing here is pickable: clicks, drags and hovers stay with the 2D editor underneath.
+// that ground, and for the building shown its indoor points, paths and the vertical links between floors), and the
+// routes of 경로 테스트 over both. Every height is multiplied by 높이 과장 (`exaggeration`).
+// Nothing here is pickable: clicks, drags and hovers stay with the 2D editor underneath (MapView finds the relief under
+// the cursor itself, model/terrain3d.ts pickSurface).
 import type { Layer } from '@deck.gl/core';
 import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer } from '@deck.gl/layers';
-import { PICTOGRAM_COLORS, STACK_COLORS, beltEndIds, buildingStack, edgeCoords, outlineOfLevel, pictogramOf, type EditState, type Level } from '@campo/core';
+import { PICTOGRAM_COLORS, STACK_COLORS, beltEndIds, buildingById, buildingStack, edgeCoords, outlineOfLevel, pictogramOf, type EditState, type Level, type Position } from '@campo/core';
 import type { Scope } from '../model/scope.ts';
 import {
-  buildingGround, buildingSegments, drapePath, groundOf, nodeHeights, terrainMesh, terrainWire, type Ground, type Segment3D, type TerrainGrid,
+  ROUTE_LIFT_M, buildingGround, buildingSegments, drapePath, floorBases, groundOf, nodeHeights, routePath3D, terrainMesh, terrainWire,
+  type Ground, type RouteRef, type Segment3D, type TerrainGrid,
 } from '../model/terrain3d.ts';
-import { pictogramDataUrl } from './icons.ts';
-import { WAY_COLORS } from './layers.ts';
+import type { SlopeLine } from '../model/elevation.ts';
+import { pictogramDataUrl, routePinDataUrl } from './iconUrls.ts';
+import { ELEVATION_COLORS, ROUTE_COLORS, ROUTE_PIN_COLORS, WAY_COLORS, type RouteLine } from './layers.ts';
 
 type RGBA = [number, number, number, number];
 const rgb = (hex: string, alpha = 255): RGBA => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16), alpha];
@@ -44,6 +48,11 @@ export interface Deck3DInput {
   terrain: boolean;
   buildings: boolean;
   measured: (buildingId: string) => ReadonlyMap<Level, number>;
+  /** 높이 과장: every height (relief, floors, routes) × this. */
+  exaggeration: number;
+  /** 경로 테스트: the routes, their pins and dashed feet as the 2D map draws them, and their caution / steep parts. */
+  routes: readonly RouteLine[];
+  slopes: readonly SlopeLine[];
 }
 
 interface Slab {
@@ -52,19 +61,19 @@ interface Slab {
   role: 'floor' | 'below' | 'selected' | 'ground';
 }
 
-export function deckLayers({ state, scope, grid, terrain, buildings, measured }: Deck3DInput): Layer[] {
+export function deckLayers({ state, scope, grid, terrain, buildings, measured, exaggeration: k, routes, slopes }: Deck3DInput): Layer[] {
   const layers: Layer[] = [];
-  const ground: Ground = terrain ? groundOf(grid) : () => 0;
+  const ground: Ground = terrain ? groundOf(grid, k) : () => 0;
 
   if (terrain && grid) {
-    const cells = terrainMesh(grid, 1);
+    const cells = terrainMesh(grid, 1, k);
     const top = Math.max(1, ...cells.map((c) => c.z));
     layers.push(new SolidPolygonLayer({
       id: 'terrain-mesh', data: cells, _full3d: true, filled: true, extruded: false, opacity: 0.93,
       getPolygon: (c: (typeof cells)[number]) => c.polygon, getFillColor: (c: (typeof cells)[number]) => reliefColor(c.z / top),
     }));
     // A light wire every few cells: the eye reads slope from how the lines bend.
-    const lines = terrainWire(grid, Math.max(2, Math.round(grid.width / 24)));
+    const lines = terrainWire(grid, Math.max(2, Math.round(grid.width / 24)), k);
     layers.push(new PathLayer({
       id: 'terrain-wire', data: lines, getPath: (l: [number, number, number][]) => l,
       getColor: [255, 255, 255, 80], getWidth: 1, widthUnits: 'pixels',
@@ -93,33 +102,37 @@ export function deckLayers({ state, scope, grid, terrain, buildings, measured }:
       const g = buildingGround(b, ground);
       const stack = buildingStack(b, measured(b.id));
       for (const s of stack) {
-        const z = g + s.baseM;
+        const z = g + s.baseM * k;
         const selected = scope.kind === 'building' && scope.buildingId === b.id && scope.level === s.level;
         slabs.push({
           polygon: s.outline.map((ring) => ring.map((p): [number, number, number] => [p[0], p[1], z])),
           // The floor shown is a plate at its level, so its points and paths stand on it in plain sight.
-          height: selected ? SELECTED_PLATE_M : Math.max(0.2, s.topM - s.baseM - SLAB_GAP_M),
+          height: selected ? SELECTED_PLATE_M : Math.max(0.2, (s.topM - s.baseM) * k - SLAB_GAP_M),
           role: selected ? 'selected' : s.level < 0 ? 'below' : 'floor',
         });
       }
       // Where a building has basements: a thin translucent plate at its ground, between them and floor 1.
       if (stack.some((s) => s.level < 0)) slabs.push({ polygon: b.polygon.map((ring) => ring.map((p): [number, number, number] => [p[0], p[1], g - 0.15])), height: 0.3, role: 'ground' });
     }
-    const slabLayer = (role: Slab['role'], color: string, opacity: number) => new SolidPolygonLayer({
-      id: `building-${role}`, data: slabs.filter((s) => s.role === role), extruded: true, wireframe: true, opacity,
-      getPolygon: (s: Slab) => s.polygon, getElevation: (s: Slab) => s.height,
-      getFillColor: rgb(color), getLineColor: rgb(STACK_COLORS.edge, 120),
-    });
+    // A role with no slab gets no layer: an empty extruded SolidPolygonLayer draws its sides with -1 instances (a GL warning every frame).
+    const slabLayer = (role: Slab['role'], color: string, opacity: number): Layer[] => {
+      const data = slabs.filter((s) => s.role === role);
+      return data.length === 0 ? [] : [new SolidPolygonLayer({
+        id: `building-${role}`, data, extruded: true, wireframe: true, opacity,
+        getPolygon: (s: Slab) => s.polygon, getElevation: (s: Slab) => s.height,
+        getFillColor: rgb(color), getLineColor: rgb(STACK_COLORS.edge, 120),
+      })];
+    };
     layers.push(
-      slabLayer('below', STACK_COLORS.below, 0.4),
-      slabLayer('ground', STACK_COLORS.ground, 0.3),
-      slabLayer('floor', STACK_COLORS.floor, 0.22),
-      slabLayer('selected', STACK_COLORS.selected, 0.75),
+      ...slabLayer('below', STACK_COLORS.below, 0.4),
+      ...slabLayer('ground', STACK_COLORS.ground, 0.3),
+      ...slabLayer('floor', STACK_COLORS.floor, 0.22),
+      ...slabLayer('selected', STACK_COLORS.selected, 0.75),
     );
 
     // The building shown: its points and paths at their floors, the floor shown strong, the links between floors upright.
     if (scope.kind === 'building') {
-      const z = nodeHeights(state, ground, measured);
+      const z = nodeHeights(state, ground, measured, k);
       const segments = buildingSegments(state, scope.buildingId, scope.level, z);
       const segColor = (s: Segment3D): RGBA => (s.kind === 'elevator' ? rgb(PICTOGRAM_COLORS.elevator) : s.kind === 'steps' ? rgb(PICTOGRAM_COLORS.stairs)
         : s.strong ? rgb(STACK_COLORS.edge) : rgb(STACK_COLORS.edge, 70));
@@ -152,5 +165,92 @@ export function deckLayers({ state, scope, grid, terrain, buildings, measured }:
       );
     }
   }
+  layers.push(...routeLayers(state, ground, measured, k, routes, slopes));
   return layers;
+}
+
+/** A route over the 3D views: a white casing and the profile's colour, drawn over whatever is in front so it stays readable. */
+const ROUTE_STYLE = { widthUnits: 'pixels' as const, capRounded: true, jointRounded: true, parameters: ON_TOP };
+const PIN_W = 96;
+const PIN_H = 64;
+
+type Line3D = { path: [number, number, number][]; color: RGBA };
+type Pin3D = { at: [number, number, number]; end: 'start' | 'end' };
+
+function routeLayers(
+  state: EditState, ground: Ground, measured: (buildingId: string) => ReadonlyMap<Level, number>, k: number,
+  routes: readonly RouteLine[], slopes: readonly SlopeLine[],
+): Layer[] {
+  if (routes.length === 0 && slopes.length === 0) return [];
+  // Each building's floors at their (exaggerated) heights, worked out once for each building a route goes through.
+  const bases = new Map<string, Map<Level, number>>();
+  const floorZ = (buildingId: string, level: Level): number | undefined => {
+    let m = bases.get(buildingId);
+    if (!m) {
+      const b = buildingById(state, buildingId);
+      m = b ? floorBases(b, ground, measured(b.id), k) : new Map<Level, number>();
+      bases.set(buildingId, m);
+    }
+    return m.get(level);
+  };
+  const lines: Line3D[] = [];
+  const snaps: Line3D[] = [];
+  const pins: Pin3D[] = [];
+  for (const r of routes) {
+    const path = routePath3D(state, r.coordinates, r.refs, ground, floorZ);
+    if (r.profile === 'start' || r.profile === 'end') {
+      if (path[0]) pins.push({ at: path[0], end: r.profile });
+    } else if (path.length >= 2) {
+      if (r.profile === 'snap') snaps.push({ path, color: rgb('#1e2933', 220) });
+      else lines.push({ path, color: rgb(ROUTE_COLORS[r.profile], 235) });
+    }
+  }
+  const slopeLines = slopes.map((s): Line3D => ({ path: slopePath3D(state, s, ground, floorZ), color: rgb(s.cls === 'steep' ? ELEVATION_COLORS.steep : ELEVATION_COLORS.caution) }));
+  const getPath = (d: Line3D) => d.path;
+  const getColor = (d: Line3D) => d.color;
+  return [
+    new PathLayer({ id: 'route-casing', data: lines, getPath, getColor: [255, 255, 255, 235], getWidth: 10, ...ROUTE_STYLE }),
+    new PathLayer({ id: 'route-line', data: lines, getPath, getColor, getWidth: 6, ...ROUTE_STYLE }),
+    new PathLayer({ id: 'route-slope', data: slopeLines, getPath, getColor, getWidth: 6, ...ROUTE_STYLE }),
+    new PathLayer({ id: 'route-snap', data: snaps, getPath, getColor, getWidth: 2.5, ...ROUTE_STYLE }),
+    // A short stem from the ground or the floor up to the pin, so the height it stands at reads.
+    new LineLayer({
+      id: 'route-pin-stem', data: pins, getSourcePosition: (p: Pin3D) => [p.at[0], p.at[1], p.at[2] - ROUTE_LIFT_M],
+      getTargetPosition: (p: Pin3D) => p.at, getColor: [30, 41, 51, 200], getWidth: 2, widthUnits: 'pixels', parameters: ON_TOP,
+    }),
+    new ScatterplotLayer({
+      id: 'route-pin-dot', data: pins, getPosition: (p: Pin3D) => p.at, getRadius: 4, radiusUnits: 'pixels',
+      getFillColor: (p: Pin3D) => rgb(ROUTE_PIN_COLORS[p.end]), stroked: true, getLineColor: [255, 255, 255, 255], getLineWidth: 1.5,
+      lineWidthUnits: 'pixels', parameters: ON_TOP,
+    }),
+    new IconLayer({
+      id: 'route-pins', data: pins, getPosition: (p: Pin3D) => p.at,
+      getIcon: (p: Pin3D) => {
+        const url = routePinDataUrl(p.end === 'start' ? '출발' : '도착', ROUTE_PIN_COLORS[p.end]);
+        return { url, id: url, width: PIN_W, height: PIN_H, anchorY: PIN_H };
+      },
+      getSize: PIN_H / 2, sizeUnits: 'pixels', billboard: true, parameters: ON_TOP,
+    }),
+  ];
+}
+
+/**
+ * A caution / steep part of a route in 3D: outdoors on the relief like the route; where an end is indoors (a ramp in a
+ * building) the edge's bends at heights straight between its two ends.
+ */
+function slopePath3D(state: EditState, s: SlopeLine, ground: Ground, floorZ: (b: string, level: Level) => number | undefined): [number, number, number][] {
+  if (!s.ends) return routePath3D(state, s.coordinates, undefined, ground, floorZ);
+  const [from, to] = s.ends;
+  const outdoors = state.nodes[from]?.props.building_id == null && state.nodes[to]?.props.building_id == null;
+  if (outdoors) return routePath3D(state, s.coordinates, undefined, ground, floorZ);
+  const refs: RouteRef[] = [{ node: from }, { node: to }];
+  const ends = routePath3D(state, [s.coordinates[0]!, s.coordinates.at(-1)!], refs, ground, floorZ);
+  const [z0, z1] = [ends[0]![2], ends.at(-1)![2]];
+  const len: number[] = [0];
+  for (let i = 1; i < s.coordinates.length; i++) {
+    const [a, b] = [s.coordinates[i - 1]!, s.coordinates[i]!];
+    len.push(len[i - 1]! + Math.hypot(b[0] - a[0], b[1] - a[1]));
+  }
+  const total = len.at(-1)! || 1;
+  return s.coordinates.map((p: Position, i): [number, number, number] => [p[0], p[1], z0 + (z1 - z0) * (len[i]! / total)]);
 }

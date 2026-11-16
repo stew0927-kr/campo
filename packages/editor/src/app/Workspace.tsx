@@ -45,7 +45,8 @@ import { TerrainButton } from '../ui/TerrainButton.tsx';
 import { measuredFloorLevels } from '@campo/core';
 import { deckLayers } from '../map/deck3d.ts';
 import { fetchTerrain } from '../api.ts';
-import { sampleTerrainGrid, terrainBase, type TerrainGrid } from '../model/terrain3d.ts';
+import { groundOf, sampleTerrainGrid, terrainBase, terrainTop, type TerrainGrid } from '../model/terrain3d.ts';
+import { ExaggerationControl } from '../ui/ExaggerationControl.tsx';
 import { HelpDialog } from '../ui/HelpDialog.tsx';
 import { MeasurePanel } from '../ui/MeasurePanel.tsx';
 import { PropertiesPanel } from '../ui/PropertiesPanel.tsx';
@@ -121,6 +122,8 @@ export function Workspace({ session }: { session: Session }) {
   /** 지형 3D: on or off (independent of 건물 3D), and the grid once it has been asked for (null: none; undefined: not yet). */
   const [terrain3d, setTerrain3d] = useState(false);
   const [terrainGrid, setTerrainGrid] = useState<TerrainGrid | null | undefined>(undefined);
+  /** 높이 과장 of both 3D views: kept while they are turned off and on again, back to 1 only when the page is reloaded (never saved). */
+  const [exaggeration, setExaggeration] = useState(1);
   const toggleTerrain = () => {
     if (terrain3d) {
       setTerrain3d(false);
@@ -734,8 +737,14 @@ export function Workspace({ session }: { session: Session }) {
     () => (view3d || terrain3d ? deckLayers({
       state, scope: ui.scope, grid: terrainGrid ?? null, terrain: terrain3d, buildings: view3d,
       measured: (id) => measuredFloorLevels(elevation.estimates, id),
+      exaggeration, routes: routeLines, slopes: elevation.slopes,
     }) : []),
-    [view3d, terrain3d, terrainGrid, state, ui.scope, elevation.estimates],
+    [view3d, terrain3d, terrainGrid, state, ui.scope, elevation.estimates, exaggeration, routeLines, elevation.slopes],
+  );
+  /** 지형 3D: the relief as drawn, so clicks and drawing land where the cursor is seen on it. */
+  const surface = useMemo(
+    () => (terrain3d && terrainGrid ? { ground: groundOf(terrainGrid, exaggeration), top: terrainTop(terrainGrid) * exaggeration } : null),
+    [terrain3d, terrainGrid, exaggeration],
   );
   const reportsOpen = ui.panelTab === 'reports';
   const highlight = useMemo(
@@ -947,6 +956,7 @@ export function Workspace({ session }: { session: Session }) {
           outline={outlineView}
           tilt={view3d || terrain3d}
           deck={deck}
+          surface={surface}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
           beginHandleDrag={beginHandleDrag}
@@ -985,6 +995,7 @@ export function Workspace({ session }: { session: Session }) {
           setView3d((v) => !v);
           info(view3d ? '건물 3D를 껐습니다.' : '건물 3D입니다. 층을 층고대로 쌓았고, 지금 보는 층은 노란색입니다. 건물과 층을 고르면 그 층의 지점과 길, 다른 층과 잇는 엘리베이터·계단이 높이대로 보입니다.');
         }} />
+        {(view3d || terrain3d) && <ExaggerationControl value={exaggeration} onChange={setExaggeration} />}
         <TerrainButton
           on={terrain3d}
           source={terrain3d && terrainGrid ? terrainGrid.source : null}

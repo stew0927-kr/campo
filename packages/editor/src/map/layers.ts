@@ -6,6 +6,7 @@ import { unattachedIds } from '../model/connect.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { buildingInScope, edgeStrong, nodeStrong, roomInScope, type Scope } from '../model/scope.ts';
+import type { RouteRef } from '../model/terrain3d.ts';
 
 export const DATA_SOURCE = 'campo-data';
 
@@ -386,6 +387,8 @@ export interface RouteLine {
    */
   profile: EditorProfile | 'snap' | 'start' | 'end';
   coordinates: Position[];
+  /** What each coordinate stands on, for the 3D view (map/deck3d.ts); without it every point is on the ground. */
+  refs?: RouteRef[];
 }
 
 export function routesGeoJSON(routes: readonly RouteLine[]): FeatureCollection {

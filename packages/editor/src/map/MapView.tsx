@@ -26,6 +26,7 @@ import {
 import type { Layer } from '@deck.gl/core';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { registerBeltIcons, registerBreaklineTooth, registerPictograms, registerRoutePins } from './icons.ts';
+import { breaklineSideOf, type BreakLineSide } from '@campo/core/elevation';
 
 /** Clicking within this many pixels of a node picks it (잇기, 선택). Larger than the 5px snap: it is a pick, not a placement. */
 const PICK_PX = 10;
@@ -36,6 +37,31 @@ const DROP_PX = 8;
 /** 외곽선 수정: a press this close to a corner takes it; a right-click this close to a side adds a corner there. */
 const CORNER_PX = 10;
 const SIDE_PX = 8;
+/** 고도 단절선 being edited: the pointer within this many pixels of it shows (and a click sets) the low side under it. */
+const BAND_PX = 80;
+/** The tools in which a click on a drawn 고도 단절선 selects it, and its points and sides can be edited. */
+const LINE_EDIT_TOOLS: ReadonlySet<Tool> = new Set<Tool>(['select', 'breakline']);
+
+/** 고도 단절선 editing on the map: the line selected and what the map does to it. */
+export interface BreaklineEditView {
+  /** The drawn line being edited (null: none). */
+  selected: string | null;
+  /** A drawn line was clicked (null: the selection was let go). */
+  onSelect: (id: string | null) => void;
+  /** A side of the selected line was clicked: it becomes the low side. */
+  onSide: (id: string, side: BreakLineSide) => void;
+  /** A point of the selected line was dragged and let go here. */
+  onMovePoint: (id: string, index: number, to: Position) => void;
+  /** A segment of the selected line was clicked: a point at the foot on it. */
+  onInsertPoint: (id: string, segment: number, at: Position) => void;
+}
+
+/** A right-click on a drawn line: which line, and the point or the segment (with the foot on it) under the pointer. */
+export interface BreaklineHit {
+  id: string;
+  point?: number;
+  segment?: { index: number; at: Position };
+}
 
 /** 외곽선 수정 on the map: the corners being edited (the outer ring, open), the holes, and what the map does to them. */
 export interface OutlineEditView {
@@ -98,8 +124,10 @@ interface Props {
   previewShapes: FeatureCollection | null;
   onPolygonDrawn: (ring: Position[]) => void;
   onMapClick: (click: MapClick) => void;
-  /** Right-click: the node or edge under the pointer (if any) and where the menu goes (page coordinates). */
-  onContextMenu: (hit: { node: EditNode | undefined; edge: EditEdge | undefined; x: number; y: number }) => void;
+  /** Right-click: the node, drawn 고도 단절선 or edge under the pointer (if any) and where the menu goes (page coordinates). */
+  onContextMenu: (hit: { node: EditNode | undefined; edge: EditEdge | undefined; breakline?: BreaklineHit; x: number; y: number }) => void;
+  /** 고도 단절선 selection and editing. */
+  breaklineEdit: BreaklineEditView;
   /** Shift + drag on the map: the nodes inside the box. */
   onBoxSelect: (ids: string[]) => void;
   /** A node drag begins: the history side of it (SPEC-v0.2 5.1). */
@@ -167,6 +195,12 @@ export function MapView(props: Props) {
   const pushPreview = () => whenReady((map) => (map.getSource(PREVIEW_SOURCE) as GeoJSONSource).setData(previewGeoJSON(latest.current.previewShapes, hoverShapes.current)));
   /** 외곽선 수정: the corner or side under the pointer, and the corners while one is being dragged. */
   const outlineHover = useRef<OutlineHover>(null);
+  /** 고도 단절선 being edited: the side under the pointer, and its points while one is pulled (kept until the store has them). */
+  const lineView = useRef<{ preview: BreakLineSide | null; dragged: Position[] | null }>({ preview: null, dragged: null });
+  const pushElevation = () => whenReady((map) => {
+    const { breaklines, slopes, breaklineEdit } = latest.current;
+    (map.getSource(ELEVATION_SOURCE) as GeoJSONSource).setData(elevationGeoJSON(breaklines, slopes, { selected: breaklineEdit.selected, ...lineView.current }));
+  });
   const outlineDrag = useRef<{ index: number; corners: Position[] } | null>(null);
   const pushOutline = (corners?: readonly Position[]) => whenReady((map) => {
     const o = latest.current.outline;
@@ -236,6 +270,72 @@ export function MapView(props: Props) {
       map.getCanvas().style.cursor = !latest.current.outline ? '' : h?.kind === 'corner' ? (outlineDrag.current ? 'grabbing' : 'grab') : h?.kind === 'side' ? 'copy' : '';
     };
 
+    // ---- 고도 단절선: drawn lines under a screen point ----
+    const drawnLine = (id: string | null) => (id === null ? undefined : latest.current.breaklines.find((b) => b.kind === 'drawn' && b.id === id));
+    /** The point (first) or the segment of `line` under a screen point, with the foot on the segment. */
+    const lineHit = (line: BreaklineShape, point: ScreenPoint): { kind: 'point' | 'segment'; index: number; foot: ScreenPoint } | null => {
+      const pts = line.coordinates.map((c) => map.project(c));
+      let best: { kind: 'point' | 'segment'; index: number; foot: ScreenPoint } | null = null;
+      let bestD = CORNER_PX;
+      pts.forEach((pt, i) => {
+        const d = Math.hypot(pt.x - point.x, pt.y - point.y);
+        if (d <= bestD) {
+          bestD = d;
+          best = { kind: 'point', index: i, foot: pt };
+        }
+      });
+      if (best) return best;
+      bestD = SIDE_PX;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const f = footOnSegment(point, pts[i]!, pts[i + 1]!);
+        if (f.dist <= bestD) {
+          bestD = f.dist;
+          best = { kind: 'segment', index: i, foot: f.point };
+        }
+      }
+      return best;
+    };
+    const lineDistance = (line: BreaklineShape, point: ScreenPoint) => {
+      const pts = line.coordinates.map((c) => map.project(c));
+      let d = Infinity;
+      for (let i = 0; i + 1 < pts.length; i++) d = Math.min(d, distanceToSegment(point, pts[i]!, pts[i + 1]!));
+      return d;
+    };
+    /** The nearest drawn line within PICK_PX of a screen point. */
+    const nearestLine = (point: ScreenPoint): BreaklineShape | undefined => {
+      let best: BreaklineShape | undefined;
+      let bestD = PICK_PX;
+      for (const b of latest.current.breaklines) {
+        if (b.kind !== 'drawn') continue;
+        const d = lineDistance(b, point);
+        if (d <= bestD) {
+          bestD = d;
+          best = b;
+        }
+      }
+      return best;
+    };
+    const toPosition = (p: ScreenPoint): Position => {
+      const ll = map.unproject([p.x, p.y]);
+      return [ll.lng, ll.lat];
+    };
+    /** The low side the pointer at `point` is on, when it is within BAND_PX of the line. */
+    const sideAt = (line: BreaklineShape, point: ScreenPoint): BreakLineSide | null =>
+      (lineDistance(line, point) <= BAND_PX ? breaklineSideOf(line.coordinates, toPosition(point)) : null);
+    /** Terra Draw is in the middle of a line or a polygon (its finished shapes leave its store at once). */
+    const drawingNow = () => (drawRef.current?.getSnapshot() ?? []).some((f) => f.geometry.type !== 'Point');
+    /** Whether a shape was being drawn when the button went down (Terra Draw may have started one by the time of the click). */
+    let drawingAtPress = false;
+    map.getContainer().addEventListener('pointerdown', () => {
+      drawingAtPress = drawingNow();
+    }, true);
+    let lineCursor = false;
+    const setLineCursor = (cursor: string) => {
+      if (!cursor && !lineCursor) return;
+      map.getCanvas().style.cursor = cursor;
+      lineCursor = cursor !== '';
+    };
+
     // ---- click: pick a node, an edge or a building outline ----
     /** The node (within PICK_PX), else the nearest strongly drawn edge, else a building outline, under a screen point. */
     const pickAt = (point: ScreenPoint, canPick: (n: EditNode) => boolean, withBuildings: boolean) => {
@@ -283,9 +383,31 @@ export function MapView(props: Props) {
     map.on('click', (e) => {
       if (latest.current.outline) return; // 외곽선 수정 works with drags and right-clicks only
       const at: Position = [e.lngLat.lng, e.lngLat.lat];
-      if (latest.current.tool === 'path' && !pathScope.current) pathScope.current = autoScope(at);
-      if (DRAW_MODE[latest.current.tool]) return; // Terra Draw owns clicks while drawing
-      const { node, edge, building } = pickAt(e.point, latest.current.canPick, true);
+      const { tool, breaklineEdit: be } = latest.current;
+      const drawTool = DRAW_MODE[tool] !== undefined;
+      if (drawTool && drawingAtPress) return; // Terra Draw is adding a point to the shape being drawn
+      // 고도 단절선: a segment of the selected line takes a point, another line is selected, a side becomes the low side.
+      const editing = LINE_EDIT_TOOLS.has(tool);
+      const sel = drawnLine(be.selected);
+      if (sel && editing) {
+        const h = lineHit(sel, e.point);
+        if (h?.kind === 'segment') return be.onInsertPoint(sel.id, h.index, toPosition(h.foot));
+        if (h?.kind === 'point') return;
+      }
+      const picked = tool === 'select' ? pickAt(e.point, latest.current.canPick, true) : null;
+      if (editing && !picked?.node) {
+        const other = nearestLine(e.point);
+        if (other && other.id !== sel?.id) return be.onSelect(other.id);
+        const side = sel ? sideAt(sel, e.point) : null;
+        if (sel && side) return be.onSide(sel.id, side);
+      }
+      if (sel) {
+        be.onSelect(null);
+        if (tool === 'breakline') return; // the click let the line go; the next one starts drawing
+      }
+      if (tool === 'path' && !pathScope.current) pathScope.current = autoScope(at);
+      if (drawTool) return; // Terra Draw owns clicks while drawing
+      const { node, edge, building } = picked ?? pickAt(e.point, latest.current.canPick, true);
       latest.current.onMapClick({ position: at, node, edge, building, shift: e.originalEvent.shiftKey, scope: autoScope(at) });
     });
     // Right-click: the browser's own menu is blocked on the map only (this listener sits on MapLibre's container), and the editor's menu opens.
@@ -301,15 +423,51 @@ export function MapView(props: Props) {
         }
         return;
       }
-      if (DRAW_MODE[latest.current.tool]) return;
+      // A drawing tool keeps the right button to itself only while a shape is being drawn.
+      if (DRAW_MODE[latest.current.tool] && drawingNow()) return;
       const { node, edge } = pickAt(e.point, (n) => nodeStrong(n, latest.current.scope), false);
-      latest.current.onContextMenu({ node, edge, x: e.originalEvent.clientX, y: e.originalEvent.clientY });
+      let breakline: BreaklineHit | undefined;
+      if (!node) {
+        const sel = drawnLine(latest.current.breaklineEdit.selected);
+        const line = sel && lineHit(sel, e.point) ? sel : nearestLine(e.point);
+        if (line) {
+          const h = lineHit(line, e.point);
+          breakline = {
+            id: line.id,
+            ...(h?.kind === 'point' ? { point: h.index } : {}),
+            ...(h?.kind === 'segment' ? { segment: { index: h.index, at: toPosition(h.foot) } } : {}),
+          };
+        }
+      }
+      const x = e.originalEvent.clientX;
+      const y = e.originalEvent.clientY;
+      latest.current.onContextMenu(breakline ? { node: undefined, edge: undefined, breakline, x, y } : { node, edge, x, y });
     });
 
     // ---- node drag and box select (선택 tool) ----
     let press: { nodeId?: string; edgeId?: string; x: number; y: number } | null = null;
     let box: { x: number; y: number; el: HTMLDivElement } | null = null;
     let drag: ActiveDrag | null = null;
+    /** A point of the selected 고도 단절선 being pulled. */
+    let lineDrag: { id: string; index: number; coords: Position[] } | null = null;
+    let lineDragTimer: number | null = null;
+    const endLineDrag = (keep: boolean) => {
+      lineDrag = null;
+      map.getContainer().removeAttribute('data-dragging');
+      if (!keep) lineView.current.dragged = null;
+      else {
+        // The moved points stay drawn until the saved store comes back (or, if it never does, for a moment).
+        if (lineDragTimer !== null) window.clearTimeout(lineDragTimer);
+        lineDragTimer = window.setTimeout(() => {
+          lineDragTimer = null;
+          if (lineView.current.dragged) {
+            lineView.current.dragged = null;
+            pushElevation();
+          }
+        }, 3000);
+      }
+      pushElevation();
+    };
 
     /** Where the dragged node lands for a pointer at `point`: on a node, on an edge, or free. Alt never snaps. */
     const dropAt = (nodeId: string, point: ScreenPoint, lngLat: Position, alt: boolean): { coord: Position; target: DropTarget | null; ring: Position | null } => {
@@ -415,6 +573,18 @@ export function MapView(props: Props) {
         }
         return;
       }
+      if (e.originalEvent.button === 0 && LINE_EDIT_TOOLS.has(latest.current.tool)) {
+        const sel = drawnLine(latest.current.breaklineEdit.selected);
+        const h = sel ? lineHit(sel, e.point) : null;
+        if (sel && h?.kind === 'point') {
+          e.preventDefault(); // the map must not pan while a point is pulled
+          lineDrag = { id: sel.id, index: h.index, coords: sel.coordinates.map((c): Position => [c[0], c[1]]) };
+          lineView.current = { preview: null, dragged: lineDrag.coords };
+          map.getContainer().setAttribute('data-dragging', 'true');
+          setLineCursor('grabbing');
+          return;
+        }
+      }
       if (latest.current.tool !== 'select' || e.originalEvent.button !== 0) return;
       if (e.originalEvent.shiftKey) {
         // Shift at the start: a box, not a drag (SPEC-v0.2 5.1).
@@ -446,6 +616,11 @@ export function MapView(props: Props) {
       }
     });
     map.on('mousemove', (e) => {
+      if (lineDrag) {
+        lineDrag.coords[lineDrag.index] = [e.lngLat.lng, e.lngLat.lat];
+        pushElevation();
+        return;
+      }
       const od = outlineDrag.current;
       if (od) {
         od.corners[od.index] = [e.lngLat.lng, e.lngLat.lat];
@@ -482,8 +657,25 @@ export function MapView(props: Props) {
         drag.last = e;
         drag.raf ??= requestAnimationFrame(frame);
       }
+      // 고도 단절선 being edited: faint teeth on the side under the pointer; a grab cursor on its points, a plus on its segments.
+      const sel = !drag && !box && LINE_EDIT_TOOLS.has(latest.current.tool) ? drawnLine(latest.current.breaklineEdit.selected) : undefined;
+      const h = sel ? lineHit(sel, e.point) : null;
+      const side = sel && !h ? sideAt(sel, e.point) : null;
+      setLineCursor(h?.kind === 'point' ? 'grab' : h?.kind === 'segment' ? 'copy' : side ? 'pointer' : '');
+      if (side !== lineView.current.preview) {
+        lineView.current.preview = side;
+        pushElevation();
+      }
     });
     map.on('mouseup', (e) => {
+      if (lineDrag) {
+        const { id, index } = lineDrag;
+        lineDrag.coords[index] = [e.lngLat.lng, e.lngLat.lat];
+        endLineDrag(true);
+        setLineCursor('grab');
+        latest.current.breaklineEdit.onMovePoint(id, index, [e.lngLat.lng, e.lngLat.lat]);
+        return;
+      }
       const od = outlineDrag.current;
       if (od) {
         outlineDrag.current = null;
@@ -511,6 +703,7 @@ export function MapView(props: Props) {
     });
     // Released outside the map: the map never saw it, so put the node back.
     const onWindowUp = () => {
+      if (lineDrag) endLineDrag(false); // let go outside the map: the point goes back
       if (outlineDrag.current) {
         // Let go outside the map: the corner goes back.
         outlineDrag.current = null;
@@ -569,6 +762,7 @@ export function MapView(props: Props) {
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (lineDrag) endLineDrag(false);
         cancelDrag();
         pathScope.current = null;
       }
@@ -596,7 +790,7 @@ export function MapView(props: Props) {
       map.addSource(ROUTE_SOURCE, { type: 'geojson', data: routesGeoJSON(latest.current.routes) });
       map.addSource(DRAG_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
-      map.addSource(ELEVATION_SOURCE, { type: 'geojson', data: elevationGeoJSON(latest.current.breaklines, latest.current.slopes) });
+      map.addSource(ELEVATION_SOURCE, { type: 'geojson', data: elevationGeoJSON(latest.current.breaklines, latest.current.slopes, { selected: latest.current.breaklineEdit.selected, ...lineView.current }) });
       map.addSource(OUTLINE_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       registerPictograms(map);
       registerBreaklineTooth(map);
@@ -716,9 +910,15 @@ export function MapView(props: Props) {
     whenReady((map) => (map.getSource(ROUTE_SOURCE) as GeoJSONSource).setData(routesGeoJSON(routes)));
   }, [routes]);
 
+  // New break lines (a saved edit brings the moved points back as data), the slopes, or another line selected.
   useEffect(() => {
-    whenReady((map) => (map.getSource(ELEVATION_SOURCE) as GeoJSONSource).setData(elevationGeoJSON(props.breaklines, props.slopes)));
-  }, [props.breaklines, props.slopes]);
+    lineView.current.dragged = null;
+    pushElevation();
+  }, [props.breaklines, props.slopes]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    lineView.current = { preview: null, dragged: null };
+    pushElevation();
+  }, [props.breaklineEdit.selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (focus) whenReady((map) => map.flyTo({ center: focus.position, zoom: Math.max(map.getZoom(), 19), duration: 600 }));
@@ -731,6 +931,12 @@ export function MapView(props: Props) {
     if (badgeEl.current) badgeEl.current.hidden = true;
     pushPreview();
   }, [tool]);
+  // While a 고도 단절선 is selected in its own tool, clicks edit it instead of drawing (a line just started is dropped).
+  const lineSelected = props.breaklineEdit.selected !== null;
+  useEffect(() => {
+    if (tool !== 'breakline') return;
+    whenReady(() => drawRef.current?.setMode(lineSelected ? 'static' : 'linestring'));
+  }, [tool, lineSelected]);
 
   useEffect(() => {
     pushPreview();

@@ -33,6 +33,9 @@ CAMPO 높이 솔버 — 1단계 WLS(층 평면 변수 공유 + Baarda data snoop
      rbf:     (Φ + λ·diag(σ̂_i²)) c = r,  z(p) = Σ c_i φ(‖p−p_i‖/R)                (균일 R, 양정치 보장)
      Wendland C²: φ(t) = (1−t)₊⁴ (4t + 1)
      Break-line: 센터 p_i → 격자 p 선분이 불연속선을 가로지르면 φ_i(p) × a (기본 a = 0: 측면 분리)
+  사람이 그린 불연속선의 낮은 쪽 면(lowSide)·단차(dropM) (둘 다 있을 때만, 없으면 측면 분리만)
+     breakline_drop  선을 가로지르는 캠퍼스 구간(양 끝이 선의 서로 다른 면): h_높은쪽 − h_낮은쪽 = dropM,
+                     σ = max(0.15 m, 10 %·dropM). 같은 구간의 step_count·flat_exact가 우선(로그만), soft_flat은 끔
 """
 from __future__ import annotations
 
@@ -70,6 +73,9 @@ SOFT_FLAT_MAX_GRADE = 0.01  # 표시 없는 footway 평지 보정 허용 경사(
 SOFT_FLAT_MIN_REDUNDANCY = 1e-6
 BREAKLINE_HALF_WIDTH_M = 3.0  # 구간에서 만든 불연속선의 반폭(구간 가운데에 수직)
 BREAKLINE_DEM_SIGMA_FACTOR = 2.0  # 불연속선 구간 끝 실외 노드의 DEM prior σ 배수(DEM은 단차를 뭉갬)
+BREAKLINE_DROP_MIN_SIGMA_M = 0.15  # 사람이 넣은 단차(dropM) 제약의 최소 σ(눈대중 값)
+BREAKLINE_DROP_REL_SIGMA = 0.10  # 단차 σ = max(최소, 10 %·dropM)
+BREAKLINE_SIDES = ("left", "right")
 
 MEASURED = "measured"  # 기압 Δh 엣지(QC 대상). 나머지 kind는 제약이라 snooping/Huber 대상이 아니다
 
@@ -97,7 +103,7 @@ class Edge:
     off_from: float = 0.0
     off_to: float = 0.0
     qc: str = "pending"
-    kind: str = MEASURED  # measured | floor_prior | step_count | flat_exact | soft_flat
+    kind: str = MEASURED  # measured | floor_prior | step_count | flat_exact | soft_flat | breakline_drop
 
 
 @dataclass
@@ -113,6 +119,8 @@ class SoftFlat:
 class Breakline:
     id: str
     coords: np.ndarray  # (k, 2) 격자 CRS 꺾은선
+    low_side: Optional[str] = None  # 'left' | 'right' (coords 진행 방향 기준), None = 모름
+    drop_m: Optional[float] = None  # 높은 쪽 − 낮은 쪽(m, 0 이상), None = 모름
 
 
 @dataclass
@@ -489,6 +497,7 @@ class CampusModel:
     edge_vars: dict[str, tuple[str, str]]  # 캠퍼스 구간 id → (from 변수, to 변수), 엘리베이터 제외
     sigma_dem_scale: dict[str, float]
     log: list[str] = field(default_factory=list)
+    edge_xy: dict[str, tuple[tuple[float, float], tuple[float, float]]] = field(default_factory=dict)  # 구간 id → 양 끝 격자 좌표
 
 
 def campus_model(
@@ -550,6 +559,7 @@ def campus_model(
     breaklines: list[Breakline] = []
     scale: dict[str, float] = {}
     edge_vars: dict[str, tuple[str, str]] = {}
+    edge_xy: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {}
     for f in cedges:
         p, eid = f["properties"], f["id"]
         a, b = p.get("from"), p.get("to")
@@ -559,6 +569,7 @@ def campus_model(
         hw = p.get("highway")
         if hw != "elevator":
             edge_vars[eid] = (va, vb)
+            edge_xy[eid] = (xy[a], xy[b])
         length = math.dist(xy[a], xy[b])
         if is_breakline(p) and length > 0 and (va.startswith("cn:") or vb.startswith("cn:")):
             (ax, ay), (bx, by) = xy[a], xy[b]
@@ -585,7 +596,77 @@ def campus_model(
                 log.append(f"steps {eid}: step_count without a direction (incline) → not used")
         elif hw == "footway" and not is_breakline(p):
             soft.append(SoftFlat(f"soft_flat:{eid}", va, vb, length))
-    return CampusModel(list(nodes.values()), edges, soft, breaklines, var_of, edge_vars, scale, log)
+    return CampusModel(list(nodes.values()), edges, soft, breaklines, var_of, edge_vars, scale, log, edge_xy)
+
+
+def _side(ax: float, ay: float, bx: float, by: float, px: float, py: float) -> float:
+    """> 0: p는 a→b 진행 방향의 왼쪽, < 0: 오른쪽 (격자 CRS는 x 동, y 북)."""
+    return (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+
+
+def _crossings(line: Breakline, p: tuple[float, float], q: tuple[float, float]) -> list[str]:
+    """p→q 선분이 꺾은선의 선분을 '진짜로' 가로지를 때마다 p가 그 선분의 어느 면('left'|'right')인지(끝점 접촉은 아님)."""
+    out = []
+    for a, b in zip(line.coords[:-1], line.coords[1:]):
+        dp, dq = _side(a[0], a[1], b[0], b[1], *p), _side(a[0], a[1], b[0], b[1], *q)
+        da, db = _side(p[0], p[1], q[0], q[1], a[0], a[1]), _side(p[0], p[1], q[0], q[1], b[0], b[1])
+        if dp * dq < 0 and da * db < 0:
+            out.append("left" if dp > 0 else "right")
+    return out
+
+
+def breakline_drop_edges(
+    lines: Iterable[Breakline],
+    cm: CampusModel,
+    dem_sigma_factor: float = BREAKLINE_DEM_SIGMA_FACTOR,
+) -> tuple[list[Edge], set[str], dict[str, float], list[str]]:
+    """
+    사람이 그린 불연속선의 lowSide·dropM → 그 선을 가로지르는 캠퍼스 구간마다 Δh 제약(kind 'breakline_drop').
+    반환: (제약 행, 끌 soft_flat id, DEM σ 배수를 줄 실외 변수, 로그). lowSide·dropM이 다 있어야 행을 만든다.
+    한 구간이 같은 선을 여러 번 가로지르면(지그재그) 높이차를 알 수 없어 쓰지 않는다.
+    """
+    rows: list[Edge] = []
+    off_soft: set[str] = set()
+    scale: dict[str, float] = {}
+    log: list[str] = []
+    taken = {e.id for e in cm.edges}
+    for bl in lines:
+        if bl.low_side is None and bl.drop_m is None:
+            continue
+        if bl.low_side is None:
+            log.append(f"breakline {bl.id}: dropM {bl.drop_m:g} m without lowSide → side separation only")
+            continue
+        if bl.drop_m is None:
+            log.append(f"breakline {bl.id}: lowSide {bl.low_side} without dropM → side separation only")
+            continue
+        used = 0
+        for eid, (va, vb) in cm.edge_vars.items():
+            if va == vb or eid not in cm.edge_xy:
+                continue
+            sides = _crossings(bl, *cm.edge_xy[eid])
+            if not sides:
+                continue
+            if len(sides) != 1:
+                log.append(f"breakline {bl.id}: edge {eid} crosses it {len(sides)} times → not used")
+                continue
+            if f"flat_exact:{eid}" in taken:
+                if bl.drop_m > 0:
+                    log.append(f"breakline {bl.id}: edge {eid} is flat_exact but crosses a {bl.drop_m:g} m drop → flat_exact kept")
+                continue
+            if f"step_count:{eid}" in taken:
+                log.append(f"breakline {bl.id}: edge {eid} has step_count → step_count kept")
+                continue
+            # from이 낮은 쪽이면 to가 dropM만큼 높다.
+            dh = bl.drop_m if sides[0] == bl.low_side else -bl.drop_m
+            sigma = max(BREAKLINE_DROP_MIN_SIGMA_M, BREAKLINE_DROP_REL_SIGMA * bl.drop_m)
+            rows.append(Edge(f"breakline_drop:{bl.id}:{eid}", va, vb, dh, sigma, kind="breakline_drop"))
+            off_soft.add(f"soft_flat:{eid}")
+            for v in (va, vb):
+                if v.startswith("cn:"):
+                    scale[v] = dem_sigma_factor
+            used += 1
+        log.append(f"breakline {bl.id}: low side {bl.low_side}, drop {bl.drop_m:g} m → {used} crossing edge(s) constrained")
+    return rows, off_soft, scale, log
 
 
 def read_campus_features(folder: str | Path) -> list[dict]:
@@ -835,13 +916,32 @@ def load_store(path: str | Path, grid_crs: str = "EPSG:5186") -> tuple[list[Node
     return nodes, edges, s
 
 
-def store_breaklines(store: dict, project: Callable[[float, float], tuple[float, float]]) -> list[Breakline]:
-    """ElevationStore.breaklines(사람이 그린 선, WGS84) → 격자 CRS."""
+def store_breaklines(store: dict, project: Callable[[float, float], tuple[float, float]],
+                     log: Optional[list[str]] = None) -> list[Breakline]:
+    """
+    ElevationStore.breaklines(사람이 그린 선, WGS84) → 격자 CRS. 선택 필드 lowSide('left'|'right')·dropM(m ≥ 0)도 읽는다.
+    없는 예전 파일은 그대로(측면 분리만). 값이 잘못되면 그 필드만 버리고 log에 남긴다.
+    격자 CRS가 x 동·y 북이면 좌/우 판정은 WGS84에서와 같다(투영은 방향을 뒤집지 않는다).
+    """
     out = []
     for b in store.get("breaklines", []) or []:
         pts = [project(c["lng"], c["lat"]) for c in b.get("coordinates", [])]
-        if len(pts) >= 2:
-            out.append(Breakline(b["id"], np.array(pts, float)))
+        if len(pts) < 2:
+            continue
+        bid = b.get("id", "?")
+        side = b.get("lowSide")
+        if side is not None and side not in BREAKLINE_SIDES:
+            if log is not None:
+                log.append(f"breakline {bid}: lowSide {side!r} is not 'left' or 'right' → ignored")
+            side = None
+        drop = b.get("dropM")
+        if drop is not None:
+            ok = isinstance(drop, (int, float)) and not isinstance(drop, bool) and math.isfinite(drop) and drop >= 0
+            if not ok:
+                if log is not None:
+                    log.append(f"breakline {bid}: dropM {drop!r} is not a height >= 0 m → ignored")
+                drop = None
+        out.append(Breakline(bid, np.array(pts, float), side, None if drop is None else float(drop)))
     return out
 
 
@@ -921,16 +1021,25 @@ def main(argv=None):
     grid = Grid.load(a.dem)
     nodes, edges, store = load_store(a.store, grid.crs)
     tf = Transformer.from_crs("EPSG:4326", grid.crs, always_xy=True)
-    breaklines = store_breaklines(store, tf.transform)
+    bl_log: list[str] = []
+    breaklines = store_breaklines(store, tf.transform, bl_log)
     cm, soft, scale = None, [], {}
     if a.campus:
         cm = campus_model(read_campus_features(a.campus), tf.transform, a.floor_height_default, a.floor_prior_sigma)
         known = {n.key for n in nodes}
         nodes += [n for n in cm.nodes if n.key not in known]
-        edges += cm.edges
-        soft, scale, breaklines = cm.soft_flat, cm.sigma_dem_scale, breaklines + cm.breaklines
+        drops, off_soft, drop_scale, drop_log = breakline_drop_edges(breaklines, cm)
+        edges += cm.edges + drops
+        soft = [s for s in cm.soft_flat if s.id not in off_soft]
+        scale = {**cm.sigma_dem_scale, **drop_scale}
+        breaklines = breaklines + cm.breaklines
+        bl_log += drop_log
         for line in cm.log:
             print(line)
+    elif any(b.low_side is not None and b.drop_m is not None for b in breaklines):
+        bl_log.append("breaklines with lowSide/dropM: height constraints need --campus (side separation only)")
+    for line in bl_log:
+        print(line)
     restrict = None
     if a.dirty:
         restrict = dirty_seeds(json.loads(Path(a.dirty).read_text(encoding="utf-8")), cm, [n.key for n in nodes])

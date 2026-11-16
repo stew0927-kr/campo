@@ -6,6 +6,7 @@ import { dirtyCount, emptyDirty, markStateChange, recomputeRequest } from '@camp
 import {
   elevationBadges, flagBlocked, kindChangeExtras, nodesNearLine, parseStore, planElevationFlag, planRecomputeResult,
   slopeLines, slopeSummary, storeText, withBreakline, withoutBreakline,
+  breaklinePositions, insertBreaklinePoint, moveBreaklinePoint, parseDropM, removeBreaklinePoint, sideLabel, withBreaklinePatch,
 } from '../src/model/elevation.ts';
 import { planMenuEdit } from '../src/model/menu.ts';
 import { isError, runPlan, type PlanResult } from '../src/model/plan.ts';
@@ -115,6 +116,40 @@ describe('불연속선', () => {
     const near = nodesNearLine(s, { id: 'b', coordinates: [{ lat: 37, lng: 127 }, { lat: 37.0001, lng: 127.0001 }], source: 'manual', createdAt: 0 });
     expect(near).toContain('n_out_0001');
     expect(near).not.toContain('n_out_0005');
+  });
+
+  it('low side, drop and points change through withBreaklinePatch; bad values are refused and the store stays', () => {
+    const drawn = withBreakline(parseStore(null), [[127, 37], [127.0002, 37.0004]], 'b1', 5);
+    if ('error' in drawn) throw new Error(drawn.error);
+    const set = withBreaklinePatch(drawn, 'b1', { lowSide: 'left', dropM: 1.2 });
+    if ('error' in set) throw new Error(set.error);
+    expect(set.breaklines![0]).toMatchObject({ lowSide: 'left', dropM: 1.2 });
+    expect(JSON.parse(storeText(set)).breaklines[0]).toMatchObject({ lowSide: 'left', dropM: 1.2 });
+    const cleared = withBreaklinePatch(set, 'b1', { dropM: null });
+    expect('error' in cleared || 'dropM' in cleared.breaklines![0]!).toBe(false);
+    expect(withBreaklinePatch(set, 'b1', { dropM: -1 })).toHaveProperty('error');
+    expect(withBreaklinePatch(set, 'nope', { lowSide: 'right' })).toHaveProperty('error');
+    expect(withBreaklinePatch(set, 'b1', { coordinates: [[127, 37]] })).toHaveProperty('error');
+    // Points: move, insert after a segment's start, remove (never below two).
+    const pts = breaklinePositions(set.breaklines![0]!);
+    const three = insertBreaklinePoint(pts, 0, [127.0001, 37.0002]);
+    expect(three).toEqual([[127, 37], [127.0001, 37.0002], [127.0002, 37.0004]]);
+    expect(moveBreaklinePoint(three, 1, [127.0001, 37.0001])[1]).toEqual([127.0001, 37.0001]);
+    expect(removeBreaklinePoint(three, 1)).toEqual(pts);
+    expect(removeBreaklinePoint(pts, 0)).toHaveProperty('error');
+    const moved = withBreaklinePatch(set, 'b1', { coordinates: three });
+    expect('error' in moved ? null : moved.breaklines![0]!.coordinates.length).toBe(3);
+    expect('error' in moved ? null : moved.breaklines![0]!.lowSide).toBe('left');
+  });
+
+  it('dropM typed in a field: blank clears, comma and "m" are read, negative is refused', () => {
+    expect(parseDropM('')).toBeNull();
+    expect(parseDropM('1,5 m')).toBe(1.5);
+    expect(parseDropM('0.333')).toBe(0.33);
+    expect(parseDropM('-2')).toHaveProperty('error');
+    expect(parseDropM('abc')).toHaveProperty('error');
+    expect(sideLabel('right')).toBe('오른쪽');
+    expect(sideLabel(undefined)).toBe('정하지 않음');
   });
 });
 

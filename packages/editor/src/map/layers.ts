@@ -503,24 +503,58 @@ export interface BreaklineShape {
   kind: 'drawn' | 'edge';
   id: string;
   coordinates: Position[];
+  /** Drawn lines only: the low side (left / right of the drawing direction) and the drop in metres, when set. */
+  lowSide?: 'left' | 'right';
+  dropM?: number;
 }
 
-export function elevationGeoJSON(breaklines: readonly BreaklineShape[], slopes: readonly { cls: 'caution' | 'steep'; coordinates: Position[] }[]): FeatureCollection {
-  const line = (coordinates: Position[], properties: Record<string, string>): FeatureCollection['features'] =>
+/** What the map shows of the drawn line being edited: which one, the side under the pointer, its points while one is pulled. */
+export interface BreaklineView {
+  selected: string | null;
+  /** The side the pointer is on (faint teeth there); null: none. */
+  preview: 'left' | 'right' | null;
+  /** The selected line's points while a point is being dragged. */
+  dragged?: Position[] | null;
+}
+
+/** How faint the teeth of the side under the pointer are, before a click makes them the low side. */
+export const BREAKLINE_PREVIEW_OPACITY = 0.35;
+
+export function elevationGeoJSON(
+  breaklines: readonly BreaklineShape[],
+  slopes: readonly { cls: 'caution' | 'steep'; coordinates: Position[] }[],
+  view: BreaklineView = { selected: null, preview: null },
+): FeatureCollection {
+  const line = (coordinates: Position[], properties: Record<string, string | number>): FeatureCollection['features'] =>
     coordinates.length >= 2 ? [{ type: 'Feature', geometry: { type: 'LineString', coordinates }, properties }] : [];
-  return {
-    type: 'FeatureCollection',
-    features: [
-      ...breaklines.flatMap((b) => line(b.coordinates, { role: `break-${b.kind}`, id: b.id })),
-      ...slopes.flatMap((s) => line(s.coordinates, { role: `slope-${s.cls}` })),
-    ],
-  };
+  const out: FeatureCollection['features'] = [];
+  for (const b of breaklines) {
+    if (b.kind === 'edge') {
+      out.push(...line(b.coordinates, { role: 'break-edge', id: b.id }));
+      continue;
+    }
+    const selected = b.id === view.selected;
+    const coords = selected && view.dragged ? view.dragged : b.coordinates;
+    out.push(...line(coords, { role: 'break-drawn', id: b.id, selected: selected ? 1 : 0 }));
+    // Teeth hang off the low side (opaque); the side under the pointer of the line being edited gets faint ones.
+    if (b.lowSide) out.push(...line(coords, { role: 'break-teeth', id: b.id, side: b.lowSide, opacity: 1 }));
+    if (selected && view.preview && view.preview !== b.lowSide) {
+      out.push(...line(coords, { role: 'break-teeth', id: b.id, side: view.preview, opacity: BREAKLINE_PREVIEW_OPACITY }));
+    }
+    if (selected) {
+      for (const [i, c] of coords.entries()) out.push({ type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: { role: 'break-vertex', index: i } });
+    }
+  }
+  for (const s of slopes) out.push(...line(s.coordinates, { role: `slope-${s.cls}` }));
+  return { type: 'FeatureCollection', features: out };
 }
 
 /**
  * Break lines under the data (a cut in the ground), slope stripes over the routes. A drawn 고도 단절선 is a wall symbol
- * as on a topographic map: a solid edge with teeth hanging off one side (icons.ts breakline-tooth), so it reads as a drop
- * and not as a path. Campus edges that act as one (outdoor steps, is_breakline) keep a thin dashed line beside them.
+ * as on a topographic map: a solid edge with teeth hanging off its low side (icons.ts breakline-tooth; the image's teeth
+ * point to the right of the line's direction, turned 180° for the left), so it reads as a drop and not as a path. A line
+ * whose low side is not set yet has no teeth. The line being edited has a yellow casing and its points as handles.
+ * Campus edges that act as one (outdoor steps, is_breakline) keep a thin dashed line beside them.
  */
 export const BREAKLINE_LAYERS: LayerSpecification[] = [
   {
@@ -529,7 +563,11 @@ export const BREAKLINE_LAYERS: LayerSpecification[] = [
     source: ELEVATION_SOURCE,
     filter: ['==', ['get', 'role'], 'break-drawn'],
     layout: { 'line-cap': 'round', 'line-join': 'round' },
-    paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.85 },
+    paint: {
+      'line-color': ['case', ['==', ['get', 'selected'], 1], '#ffd43b', '#ffffff'],
+      'line-width': ['case', ['==', ['get', 'selected'], 1], 11, 8],
+      'line-opacity': 0.85,
+    },
   },
   {
     id: 'campo-breakline',
@@ -543,15 +581,25 @@ export const BREAKLINE_LAYERS: LayerSpecification[] = [
     id: 'campo-breakline-teeth',
     type: 'symbol',
     source: ELEVATION_SOURCE,
-    filter: ['==', ['get', 'role'], 'break-drawn'],
+    filter: ['==', ['get', 'role'], 'break-teeth'],
     layout: {
       'symbol-placement': 'line',
       'symbol-spacing': 14,
       'icon-image': 'breakline-tooth',
       'icon-rotation-alignment': 'map',
+      'icon-keep-upright': false,
+      'icon-rotate': ['case', ['==', ['get', 'side'], 'left'], 180, 0],
       'icon-allow-overlap': true,
       'icon-ignore-placement': true,
     },
+    paint: { 'icon-opacity': ['get', 'opacity'] },
+  },
+  {
+    id: 'campo-breakline-vertex',
+    type: 'circle',
+    source: ELEVATION_SOURCE,
+    filter: ['==', ['get', 'role'], 'break-vertex'],
+    paint: { 'circle-radius': 5, 'circle-color': '#ffffff', 'circle-stroke-color': ELEVATION_COLORS.breakline, 'circle-stroke-width': 2.5 },
   },
   {
     id: 'campo-breakline-edge',

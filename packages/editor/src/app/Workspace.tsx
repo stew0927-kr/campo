@@ -19,7 +19,7 @@ import { featureCenter, featureScope } from '../model/locate.ts';
 import { makeObservation, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 import { menuFields, planMenuEdit, selectionSummary, type MenuEdits } from '../model/menu.ts';
 import { buildingAt } from '../model/building.ts';
-import { planElevationFlag } from '../model/elevation.ts';
+import { breaklinePositions, insertBreaklinePoint, moveBreaklinePoint, planElevationFlag, removeBreaklinePoint, sideLabel } from '../model/elevation.ts';
 import { fetchOsmBuilding, osmCode, planOsmBuilding } from '../model/osm.ts';
 import { embeddedOsmBuilding } from '../model/osmCampusData.ts';
 import { buildingsToDelete, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits } from '../model/ops.ts';
@@ -31,10 +31,10 @@ import { planUnsync, syncedIn, withSyncMirror } from '../model/sync.ts';
 import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, toBase64, withSurvey } from '../model/survey.ts';
 import type { PathVertex } from '../model/tools.ts';
 import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, renameBlocked } from '../model/buildingEdit.ts';
-import { BreaklineForm } from '../ui/BreaklineForm.tsx';
+import { BreaklineForm, BreaklinePanel, breaklineTitle } from '../ui/BreaklineForm.tsx';
 import { BuildingPanel } from '../ui/BuildingPanel.tsx';
 import { ChecksPanel } from '../ui/ChecksPanel.tsx';
-import { ContextMenu } from '../ui/ContextMenu.tsx';
+import { BreaklineContextMenu, ContextMenu } from '../ui/ContextMenu.tsx';
 import { CopyPanel } from '../ui/CopyPanel.tsx';
 import { CrossPicker } from '../ui/CrossPicker.tsx';
 import { FloorPicker } from '../ui/FloorPicker.tsx';
@@ -69,7 +69,8 @@ import { useShortcuts, type KeyBinding } from './useShortcuts.ts';
 import {
   insertDraftCorner, moveDraftCorner, planOutline, planResetOutline, redoDraft, removeDraftCorner, startOutline, undoDraft, type OutlineDraft,
 } from '../model/outlineEdit.ts';
-import type { OutlineEditView } from '../map/MapView.tsx';
+import type { BreaklineEditView, BreaklineHit, OutlineEditView } from '../map/MapView.tsx';
+import type { BreakLineSide } from '@campo/core/elevation';
 
 type Notice = { text: string; tone: 'info' | 'warn' | 'error' } | null;
 
@@ -108,6 +109,9 @@ export function Workspace({ session }: { session: Session }) {
   const [saving, setSaving] = useState(false);
   /** Right-click menu (page coordinates), the 다른 층에 복사 window (the ids it was opened for, and its result), the shortcut list. */
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  /** 고도 단절선: the drawn line selected for editing (not part of ui.selection: it lives in the elevation store), and its right-click menu. */
+  const [lineSel, setLineSel] = useState<string | null>(null);
+  const [lineMenu, setLineMenu] = useState<(BreaklineHit & { x: number; y: number }) | null>(null);
   const [copyPanel, setCopyPanel] = useState<{ ids: string[]; result: string[] | null } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   /** 외곽선 수정: the outline being edited (one history entry on 완료). */
@@ -195,6 +199,63 @@ export function Workspace({ session }: { session: Session }) {
   // ---- 고도: dirty marks, 고도 다시 계산, 불연속선, the slope parts of the routes (useElevation.ts) ----
   const elevation = useElevation({ session, state, perform, info, fail, routes: routeResults, shown: routeShown, nearest: nearest?.result ?? null });
 
+  // ---- 고도 단절선 selected for editing: its side, drop and points go to the elevation store (not the edit history) ----
+  const selectedLine = lineSel ? elevation.breaklines.find((b) => b.id === lineSel) : undefined;
+  const selectLine = (id: string | null) => {
+    setLineSel(id);
+    setLineMenu(null);
+    if (id === null) return;
+    patchUi({ selection: [], pickFrom: null, panelTab: 'properties' });
+    const line = elevation.breaklines.find((b) => b.id === id);
+    info(line?.lowSide
+      ? `${breaklineTitle(elevation.breaklines, id)}을(를) 골랐습니다. 낮은 쪽은 ${sideLabel(line.lowSide)}입니다. 점을 끌어 옮기거나 선분을 눌러 점을 더합니다.`
+      : `${breaklineTitle(elevation.breaklines, id)}을(를) 골랐습니다. 선 옆을 가리키면 흐린 톱니가 보이고, 낮은 쪽 면을 누르면 정해집니다.`);
+  };
+  // The line is gone (removed, another campus): nothing selected. A feature selected on the map lets the line go.
+  useEffect(() => {
+    if (lineSel && !selectedLine) setLineSel(null);
+  }, [lineSel, selectedLine]);
+  useEffect(() => {
+    if (ui.selection.length > 0) setLineSel(null);
+  }, [ui.selection]);
+  const setLineSide = (id: string, side: BreakLineSide | null) =>
+    elevation.updateBreakline(id, { lowSide: side }, side ? `낮은 쪽 면을 ${sideLabel(side)}으로 정했습니다.` : '낮은 쪽 면을 지웠습니다.');
+  const setLineDrop = (id: string, dropM: number | null) =>
+    elevation.updateBreakline(id, { dropM }, dropM === null ? '높이차를 지웠습니다.' : `높이차를 ${dropM} m로 넣었습니다.`);
+  const linePoints = (id: string) => {
+    const line = elevation.breaklines.find((b) => b.id === id);
+    return line ? breaklinePositions(line) : null;
+  };
+  const deleteLine = (id: string) => {
+    elevation.removeBreakline(id);
+    setLineSel(null);
+    setLineMenu(null);
+  };
+  const breaklineEdit = useMemo<BreaklineEditView>(() => ({
+    selected: lineSel,
+    onSelect: selectLine,
+    onSide: (id, side) => {
+      const line = elevation.breaklines.find((b) => b.id === id);
+      if (line?.lowSide !== side) setLineSide(id, side);
+    },
+    onMovePoint: (id, index, to) => {
+      const pts = linePoints(id);
+      if (pts) elevation.updateBreakline(id, { coordinates: moveBreaklinePoint(pts, index, to) }, '꺾은점을 옮겼습니다.');
+    },
+    onInsertPoint: (id, segment, at) => {
+      const pts = linePoints(id);
+      if (pts) elevation.updateBreakline(id, { coordinates: insertBreaklinePoint(pts, segment, at) }, '꺾은점을 더했습니다.');
+    },
+  }), [lineSel, elevation.breaklines]); // eslint-disable-line react-hooks/exhaustive-deps
+  const drawnLine = (coords: Position[]) => {
+    void elevation.addBreakline(coords).then((id) => {
+      if (id) {
+        setLineSel(id);
+        patchUi({ selection: [], panelTab: 'properties' });
+      }
+    });
+  };
+
   const stepHistory = (dir: 'undo' | 'redo') => {
     if (outline) {
       setOutline((d) => d && (dir === 'undo' ? undoDraft(d) : redoDraft(d)));
@@ -218,9 +279,16 @@ export function Workspace({ session }: { session: Session }) {
     imported.current = null;
     return id !== null && ui.selection.includes(id) ? { selection: ui.selection.filter((x) => x !== id) } : {};
   };
+  /** Another tool: nothing stays selected (highlighted) from the one before, and the right-click menus close. */
   const setTool = (tool: Tool) => {
     if (tool === 'outline') return beginOutline();
-    patchUi({ tool, pickFrom: null, ...dropImported() });
+    patchUi((u) => ({ tool, pickFrom: null, ...(tool !== u.tool ? { selection: [] } : dropImported()) }));
+    if (tool !== ui.tool) {
+      imported.current = null;
+      setLineSel(null);
+      setCtxMenu(null);
+      setLineMenu(null);
+    }
     setStrip(initialStrip);
     setNotice(null);
   };
@@ -238,6 +306,11 @@ export function Workspace({ session }: { session: Session }) {
     const draft = startOutline(state, at.buildingId, at.level);
     if ('error' in draft) return fail(draft.error);
     setOutline(draft);
+    // The building was read from the selection above; now nothing stays selected while the outline is edited.
+    imported.current = null;
+    setLineSel(null);
+    setCtxMenu(null);
+    setLineMenu(null);
     patchUi({ tool: 'outline', pickFrom: null, selection: [], ...(at.level !== null ? { scope: { kind: 'building', buildingId: at.buildingId, level: at.level }, selectedBuildingId: at.buildingId } : {}) });
     setStrip(initialStrip);
     setNotice(null);
@@ -544,7 +617,13 @@ export function Workspace({ session }: { session: Session }) {
 
   // ---- 우클릭 메뉴, 다른 층에 복사 (SPEC-v0.2 5.1 작업) ----
   /** The target joins the selection when it was not in it (only it is selected then); the menu opens at the pointer. */
-  const onContextMenu = ({ node, edge, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; x: number; y: number }) => {
+  const onContextMenu = ({ node, edge, breakline, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; breakline?: BreaklineHit; x: number; y: number }) => {
+    if (breakline) {
+      setCtxMenu(null);
+      if (lineSel !== breakline.id) selectLine(breakline.id);
+      return setLineMenu({ ...breakline, x, y });
+    }
+    setLineMenu(null);
     const hit = node?.id ?? edge?.id;
     if (!hit) return setCtxMenu(null);
     if (!ui.selection.includes(hit)) patchUi({ selection: [hit], panelTab: 'properties' });
@@ -602,6 +681,7 @@ export function Workspace({ session }: { session: Session }) {
   const onEscape = () => {
     if (outline) cancelOutline();
     else if (copyPanel) setCopyPanel(null);
+    else if (lineSel) selectLine(null);
     else if (ui.tool === 'strip' && strip.edgeIds.length > 0) setStrip(initialStrip);
     else if (ui.pickFrom) {
       patchUi({ pickFrom: null });
@@ -614,6 +694,9 @@ export function Workspace({ session }: { session: Session }) {
   const inStrip = ui.tool === 'strip';
   useShortcuts([
     { key: 's', mod: true, run: () => void onSave() },
+    // A selected 고도 단절선 is deleted with Delete / Backspace in any tool.
+    { key: 'delete', shift: false, when: lineSel !== null, run: () => lineSel && deleteLine(lineSel) },
+    { key: 'backspace', shift: false, when: lineSel !== null, run: () => lineSel && deleteLine(lineSel) },
     { key: 'enter', mod: 'any', when: outline !== null, run: finishOutline },
     { key: 'y', mod: true, when: outline !== null, run: () => stepHistory('redo') },
     ...OPERATIONS.flatMap((o) => [o.key, o.aliasKey].flatMap((k): KeyBinding[] => (
@@ -700,7 +783,16 @@ export function Workspace({ session }: { session: Session }) {
 
   /** What each tab of the side panel shows. */
   const panels: Record<PanelTab, () => ReactNode> = {
-    properties: () => (
+    properties: () => (selectedLine ? (
+      <BreaklinePanel
+        line={selectedLine}
+        title={breaklineTitle(elevation.breaklines, selectedLine.id)}
+        onSide={(side) => setLineSide(selectedLine.id, side)}
+        onDrop={(dropM) => setLineDrop(selectedLine.id, dropM)}
+        onDelete={() => deleteLine(selectedLine.id)}
+        onClose={() => selectLine(null)}
+      />
+    ) : (
       <>
         {selectedBuilding && (
           <BuildingPanel
@@ -725,7 +817,7 @@ export function Workspace({ session }: { session: Session }) {
           />
         )}
       </>
-    ),
+    )),
     checks: () => (
       <ChecksPanel
         result={checks}
@@ -800,7 +892,7 @@ export function Workspace({ session }: { session: Session }) {
             onRun={runStrip}
             onReset={() => setStrip(initialStrip)}
           />
-        ) : ui.tool === 'breakline' ? <BreaklineForm lines={elevation.breaklines} onRemove={elevation.removeBreakline} /> : undefined}
+        ) : ui.tool === 'breakline' ? <BreaklineForm lines={elevation.breaklines} selected={lineSel} onSelect={selectLine} onRemove={deleteLine} /> : undefined}
         campusName={session.meta.name}
         canSave={dirty || pendingMeasures > 0}
         saving={saving}
@@ -827,7 +919,8 @@ export function Workspace({ session }: { session: Session }) {
           hover={toolDef(ui.tool).attachPreview ? (pos, sc) => doorPreview(state, pos, sc) : null}
           previewShapes={stripShown.shapes}
           onPathDrawn={onPathDrawn}
-          onBreaklineDrawn={elevation.addBreakline}
+          onBreaklineDrawn={drawnLine}
+          breaklineEdit={breaklineEdit}
           breaklines={elevation.breaklineShapes}
           slopes={elevation.slopes}
           onPolygonDrawn={(ring) => setDialog({ kind: 'building', ring })}
@@ -939,6 +1032,45 @@ export function Workspace({ session }: { session: Session }) {
           onClose={() => setCtxMenu(null)}
         />
       )}
+      {lineMenu && (() => {
+        const line = elevation.breaklines.find((b) => b.id === lineMenu.id);
+        if (!line) return null;
+        const close = () => setLineMenu(null);
+        return (
+          <BreaklineContextMenu
+            key={`${lineMenu.id}:${lineMenu.x}:${lineMenu.y}`}
+            x={lineMenu.x}
+            y={lineMenu.y}
+            title={breaklineTitle(elevation.breaklines, line.id)}
+            lowSide={line.lowSide}
+            dropM={line.dropM}
+            points={line.coordinates.length}
+            point={lineMenu.point}
+            onSegment={lineMenu.segment !== undefined}
+            onDrop={(dropM) => {
+              close();
+              setLineDrop(line.id, dropM);
+            }}
+            onSide={(side) => {
+              close();
+              setLineSide(line.id, side);
+            }}
+            onAddPoint={() => {
+              close();
+              const seg = lineMenu.segment;
+              if (seg) breaklineEdit.onInsertPoint(line.id, seg.index, seg.at);
+            }}
+            onRemovePoint={() => {
+              close();
+              const left = lineMenu.point === undefined ? null : removeBreaklinePoint(breaklinePositions(line), lineMenu.point);
+              if (left && 'error' in left) fail(left.error);
+              else if (left) elevation.updateBreakline(line.id, { coordinates: left }, '꺾은점을 지웠습니다.');
+            }}
+            onDelete={() => deleteLine(line.id)}
+            onClose={close}
+          />
+        );
+      })()}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {dialog && (
         <AppDialogs

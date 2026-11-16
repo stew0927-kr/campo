@@ -69,7 +69,7 @@ const EDGE = ['edgeId', 'from', 'to', 'dhM', 'sigmaM', 'dtS', 'offsetFromM', 'of
   'supersedes', 'model', 'createdAt', 'profileId'];
 /** σ-model parameters the edge was made with (not measurements). */
 const EDGE_MODEL = ['tempC', 'sigmaInstFloorHpa', 'driftHpaPerHour'];
-const BREAKLINE = ['id', 'coordinates', 'source', 'note', 'createdAt'];
+const BREAKLINE = ['id', 'coordinates', 'source', 'note', 'createdAt', 'lowSide', 'dropM'];
 const PROFILE = ['profileId', 'edgeId', 'sM', 'relHM', 'sigmaM'];
 const ANCHOR_PASS = ['sessionId', 'nodeKey', 'at', 'alongM', 'how'];
 const PHOTO = ['photoId', 'sessionId', 'capturedAt', 'localUri', 'headingDeg', 'headingAccuracyDeg', 'alongM', 'decision', 'decidedAt'];

@@ -14,13 +14,16 @@ const changesetsDir = process.env['CAMPO_CHANGESETS_DIR'] ?? fileURLToPath(new U
 const surveysDir = process.env['CAMPO_SURVEYS_DIR'] ?? fileURLToPath(new URL('../../data/surveys', import.meta.url));
 
 // 고도 다시 계산: CAMPO_ELEVATION_DIR (default derived/, one folder per campus: store.json, dem.json, elevation.json, solve/),
-// CAMPO_ELEVATION_DEM (one DEM for every campus), CAMPO_ELEVATION_SIGMA_DEM (--sigma-dem), CAMPO_PYTHON (default python3).
+// CAMPO_ELEVATION_DEM (one DEM for every campus), CAMPO_ELEVATION_SIGMA_DEM (--sigma-dem), CAMPO_PYTHON (a command such as
+// C:\Python312\python.exe or "py -3"; not set: a .venv/venv at the repository root or in tools/elevation, then python / py -3 /
+// python3 on Windows and python3 / python elsewhere, see server/python.ts).
 const elevation = {
   elevationDir: process.env['CAMPO_ELEVATION_DIR'] ?? fileURLToPath(new URL('../../derived', import.meta.url)),
   solverScript: fileURLToPath(new URL('../../tools/elevation/campo_height_solver.py', import.meta.url)),
   demPath: process.env['CAMPO_ELEVATION_DEM'],
   sigmaDem: process.env['CAMPO_ELEVATION_SIGMA_DEM'],
-  python: process.env['CAMPO_PYTHON'] ?? 'python3',
+  python: process.env['CAMPO_PYTHON'],
+  pythonRoots: [fileURLToPath(new URL('../..', import.meta.url)), fileURLToPath(new URL('../../tools/elevation', import.meta.url))],
 };
 
 export default defineConfig({

@@ -14,7 +14,10 @@ import {
 } from '@campo/core';
 import {
   applyDerivedElevation,
+  dropMError,
   emptyElevationStore,
+  withBreakLineProps,
+  type BreakLineSide,
   readDerivedElevation,
   serializeElevationStore,
   type BreakLine,
@@ -131,6 +134,57 @@ export function withBreakline(store: ElevationStore, coords: readonly Position[]
 
 export function withoutBreakline(store: ElevationStore, id: string): ElevationStore {
   return { ...store, breaklines: (store.breaklines ?? []).filter((b) => b.id !== id) };
+}
+
+/** What can change on a drawn break line: its low side and drop (null clears), and its points (plain map positions). */
+export interface BreaklinePatch {
+  lowSide?: BreakLineSide | null;
+  dropM?: number | null;
+  coordinates?: readonly Position[];
+}
+
+const lineLength = (coords: readonly Position[]) => coords.slice(1).reduce((s, c, i) => s + metres(coords[i]!, c), 0);
+
+/** The store with break line `id` changed by `patch`, or why not (Korean). Points keep the 1 m / two-point rule of drawing. */
+export function withBreaklinePatch(store: ElevationStore, id: string, patch: BreaklinePatch): ElevationStore | { error: string } {
+  const line = store.breaklines?.find((b) => b.id === id);
+  if (!line) return { error: '고도 단절선을 찾을 수 없습니다.' };
+  const props = withBreakLineProps(line, patch);
+  if ('error' in props) return props;
+  let next = props;
+  if (patch.coordinates) {
+    if (patch.coordinates.length < 2 || lineLength(patch.coordinates) < 1) return { error: '고도 단절선은 1m 이상, 점 두 개 이상이어야 합니다.' };
+    next = { ...next, coordinates: patch.coordinates.map(([lng, lat]) => ({ lat: lat!, lng: lng! })) };
+  }
+  return { ...store, breaklines: (store.breaklines ?? []).map((b) => (b.id === id ? next : b)) };
+}
+
+export const breaklinePositions = (line: BreakLine): Position[] => line.coordinates.map((c): Position => [c.lng, c.lat]);
+
+/** The points with point `index` moved to `to`. */
+export const moveBreaklinePoint = (coords: readonly Position[], index: number, to: Position): Position[] =>
+  coords.map((c, i) => (i === index ? to : c));
+
+/** The points with a new point at `at` after point `segment` (on the segment segment → segment + 1). */
+export const insertBreaklinePoint = (coords: readonly Position[], segment: number, at: Position): Position[] =>
+  [...coords.slice(0, segment + 1), at, ...coords.slice(segment + 1)];
+
+/** The points without point `index`, or why not (a line keeps two points). */
+export function removeBreaklinePoint(coords: readonly Position[], index: number): Position[] | { error: string } {
+  if (coords.length <= 2) return { error: '고도 단절선에는 점이 두 개 이상 있어야 합니다. 선을 지우려면 [삭제]를 눌러 주세요.' };
+  return coords.filter((_, i) => i !== index);
+}
+
+/** "왼쪽" / "오른쪽" (그린 방향 기준) / "정하지 않음". */
+export const sideLabel = (side: BreakLineSide | undefined): string => (side === 'left' ? '왼쪽' : side === 'right' ? '오른쪽' : '정하지 않음');
+
+/** The dropM typed in a field: '' clears it, a number in metres (comma as decimal point too), or why not. */
+export function parseDropM(text: string): number | null | { error: string } {
+  const t = text.trim().replace(',', '.').replace(/\s*m$/i, '');
+  if (t === '') return null;
+  const v = Number(t);
+  const err = dropMError(v);
+  return err ? { error: err } : Math.round(v * 100) / 100;
 }
 
 export const storeText = (store: ElevationStore): string => serializeElevationStore(store);

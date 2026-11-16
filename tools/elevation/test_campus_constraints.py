@@ -19,8 +19,8 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 from campo_grid import Grid  # noqa: E402
 from campo_height_solver import (  # noqa: E402
-    DEFAULT_FLOOR_HEIGHT_M, Breakline, Edge, ResidualCenter, campus_model, derived_elevation, dirty_seeds, dirty_tiles,
-    floor_id_of_level, residual_field, solve_heights, storeys_between, update_tiles,
+    DEFAULT_FLOOR_HEIGHT_M, Breakline, Edge, ResidualCenter, breakline_drop_edges, campus_model, derived_elevation, dirty_seeds,
+    dirty_tiles, floor_id_of_level, residual_field, solve_heights, store_breaklines, storeys_between, update_tiles,
 )
 
 X0, Y0 = 203000.0, 552000.0
@@ -228,6 +228,65 @@ def test_tile_update_with_breaklines_equals_full_recompute():
     tiles = dirty_tiles(g, [c for c in cs2 if c.key == "e"], tile=16)
     z_inc = update_tiles(g, z_old, cs2, tiles, tile=16, breaklines=[WALL])
     assert np.allclose(z_inc, residual_field(g, cs2, breaklines=[WALL]), atol=1e-12)
+
+
+# ---------------------------------------------------------------- 그린 단절선의 낮은 쪽 면(lowSide)·단차(dropM)
+
+def wall_campus(**edge_props):
+    """A (west) — B (east) footway crossing WALL (drawn south → north: west is its left, east its right)."""
+    return campus_model([feat_node("A", X0 - 5, Y0), feat_node("B", X0 + 5, Y0), feat_edge("e_ab", "A", "B", **edge_props)], ident)
+
+
+def drop_wall(low_side, drop_m):
+    return Breakline("wall", WALL.coords, low_side, drop_m)
+
+
+@pytest.mark.parametrize("low_side, expect", [("left", 2.0), ("right", -2.0)])
+def test_breakline_drop_constrains_the_crossing_edge_by_side(low_side, expect):
+    cm = wall_campus()
+    rows, off_soft, scale, log = breakline_drop_edges([drop_wall(low_side, 2.0)], cm)
+    (row,) = rows
+    assert row.kind == "breakline_drop" and (row.frm, row.to) == ("cn:A", "cn:B") and row.dh == expect
+    assert row.sigma == pytest.approx(0.2)  # max(0.15, 10 % of 2 m)
+    assert off_soft == {"soft_flat:e_ab"} and scale == {"cn:A": 2.0, "cn:B": 2.0}
+    assert "1 crossing edge(s)" in log[-1]
+    res = solve_heights([*cm.nodes], [*cm.edges, *rows], dem_fn=lambda x, y: 30.0,
+                        soft_flat=[s for s in cm.soft_flat if s.id not in off_soft], sigma_dem_scale={**cm.sigma_dem_scale, **scale})
+    assert res.nodes["cn:B"].h - res.nodes["cn:A"].h == pytest.approx(expect, abs=0.05)
+
+
+def test_breakline_without_low_side_or_drop_makes_no_rows():
+    cm = wall_campus()
+    for line in (WALL, drop_wall("left", None), drop_wall(None, 1.0)):
+        rows, off_soft, _, _ = breakline_drop_edges([line], cm)
+        assert rows == [] and off_soft == set()
+    # An edge that does not cross the line (both ends west) is left alone.
+    far = campus_model([feat_node("A", X0 - 5, Y0), feat_node("B", X0 - 1, Y0), feat_edge("e_ab", "A", "B")], ident)
+    assert breakline_drop_edges([drop_wall("left", 1.0)], far)[0] == []
+
+
+def test_breakline_drop_gives_way_to_step_count_and_flat_exact():
+    steps = wall_campus(highway="steps", step_free=False, step_count=10, incline="up", is_breakline=False)
+    rows, _, _, log = breakline_drop_edges([drop_wall("left", 1.6)], steps)
+    assert rows == [] and any("step_count kept" in line for line in log)
+    flat = wall_campus(flat_exact=True)
+    rows, _, _, log = breakline_drop_edges([drop_wall("left", 1.0)], flat)
+    assert rows == [] and any("flat_exact kept" in line for line in log)
+
+
+def test_store_breaklines_reads_low_side_and_drop_and_stays_compatible():
+    pt = lambda lng, lat: {"lng": lng, "lat": lat}  # noqa: E731
+    store = {"breaklines": [
+        {"id": "old", "coordinates": [pt(0, 0), pt(0, 1)], "source": "manual", "createdAt": 1},
+        {"id": "new", "coordinates": [pt(0, 0), pt(0, 1)], "source": "manual", "createdAt": 1, "lowSide": "right", "dropM": 1.25},
+        {"id": "bad", "coordinates": [pt(0, 0), pt(0, 1)], "source": "manual", "createdAt": 1, "lowSide": "up", "dropM": -3},
+    ]}
+    log: list[str] = []
+    old, new, bad = store_breaklines(store, ident, log)
+    assert (old.low_side, old.drop_m) == (None, None)
+    assert (new.low_side, new.drop_m) == ("right", 1.25)
+    assert (bad.low_side, bad.drop_m) == (None, None) and len(log) == 2
+    assert len(store_breaklines(store, ident)) == 3  # without a log list it still reads every line
 
 
 # ---------------------------------------------------------------- 지연 재계산 + derived

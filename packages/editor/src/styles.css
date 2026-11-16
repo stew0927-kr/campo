@@ -602,6 +602,19 @@ button.check-item:hover { background: var(--chrome); }
 .breakline-list li { display: inline-flex; align-items: center; gap: 5px; padding: 1px 2px 1px 8px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); font-size: var(--text-s); }
 .breakline-remove { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
 .breakline-remove:hover { background: var(--chrome); color: var(--danger); }
+.breakline-list li[data-selected] { border-color: var(--breakline); box-shadow: 0 0 0 2px #ffd43b; }
+.breakline-pick { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.breakline-todo { color: var(--danger); }
+.breakline-panel { display: grid; gap: 10px; }
+.breakline-panel h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: var(--text-m, 14px); }
+.breakline-panel .field-help { margin: 0; }
+.breakline-sides { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 8px; border: 1px solid var(--rule); border-radius: 6px; }
+.breakline-sides legend { padding: 0 4px; font-size: var(--text-s); color: var(--muted); }
+.breakline-sides button[aria-pressed="true"] { border-color: var(--breakline); background: var(--breakline); color: #fff; }
+.breakline-drop { display: grid; gap: 4px; font-size: var(--text-s); }
+.breakline-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.breakline-actions .danger { color: var(--danger); }
+.breakline-actions kbd { margin-left: 4px; font-size: 10px; }
 
 /* ---- 외곽선 수정: one indigo for the draft on the map (layers.ts OUTLINE_COLOR), its row, and the way in ---- */
 :root { --outline-edit: #3b5bdb; }

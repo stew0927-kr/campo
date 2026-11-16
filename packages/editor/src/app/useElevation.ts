@@ -10,7 +10,9 @@ import type { EditState, PointRouteResult, Position } from '@campo/core';
 import { clearDirty, dirtyCount, emptyDirty, isBreakline, isClean, markStateChange, recomputeRequest, type ElevationDirty, type ElevationStore } from '@campo/core/elevation';
 import { fetchElevation, requestRecompute, saveElevationStore } from '../api.ts';
 import type { BreaklineShape } from '../map/layers.ts';
-import { nodesNearLine, parseStore, planRecomputeResult, slopeLines, storeText, withBreakline, withoutBreakline, type SlopeLine } from '../model/elevation.ts';
+import {
+  nodesNearLine, parseStore, planRecomputeResult, slopeLines, storeText, withBreakline, withBreaklinePatch, withoutBreakline, type BreaklinePatch, type SlopeLine,
+} from '../model/elevation.ts';
 import type { PlanResult } from '../model/plan.ts';
 import { stateToFiles, type Session } from '../model/session.ts';
 import type { RouteKind } from '../ui/ui-state.ts';
@@ -87,33 +89,59 @@ export function useElevation({ session, state, perform, info, fail, routes, show
 
   // ---- 불연속선 ----
 
-  const writeStore = async (next: ElevationStore, done: string, near: string[]) => {
+  /** The store as last written (edits made in quick succession build on each other, not on a stale render). */
+  const current = useRef<ElevationStore | null>(store);
+  current.current = store ?? current.current;
+  const writeStore = async (next: ElevationStore, done: string, near: string[]): Promise<boolean> => {
     try {
       await saveElevationStore(session.campusId, storeText(next));
+      current.current = next;
       setStore(next);
       setDirty((d) => ({ ...d, nodes: new Set([...d.nodes, ...near]) }));
       info(done);
+      return true;
     } catch (err) {
       fail((err as Error).message);
+      return false;
     }
   };
-  const addBreakline = (coords: Position[]) => {
-    const base = store ?? parseStore(null);
+  /** Draw a line; resolves to its id once saved (null: refused or not saved). */
+  const addBreakline = async (coords: Position[]): Promise<string | null> => {
+    const base = current.current ?? parseStore(null);
     const id = globalThis.crypto?.randomUUID?.() ?? `bl-${Date.now()}`;
     const next = withBreakline(base, coords, id, Date.now());
-    if ('error' in next) return fail(next.error);
+    if ('error' in next) {
+      fail(next.error);
+      return null;
+    }
     const line = next.breaklines!.at(-1)!;
-    void writeStore(next, `고도 단절선을 그렸습니다(꺾은점 ${line.coordinates.length}개). 고도를 다시 계산하면 반영됩니다.`, nodesNearLine(state, line));
+    const ok = await writeStore(next, `고도 단절선을 그렸습니다(꺾은점 ${line.coordinates.length}개). 지도에서 낮은 쪽 면을 눌러 정해 주세요.`, nodesNearLine(state, line));
+    return ok ? id : null;
   };
   const removeBreakline = (id: string) => {
-    const line = store?.breaklines?.find((b) => b.id === id);
-    if (!store || !line) return;
-    void writeStore(withoutBreakline(store, id), '고도 단절선을 지웠습니다. 고도를 다시 계산하면 반영됩니다.', nodesNearLine(state, line));
+    const base = current.current;
+    const line = base?.breaklines?.find((b) => b.id === id);
+    if (!base || !line) return;
+    void writeStore(withoutBreakline(base, id), '고도 단절선을 지웠습니다. 고도를 다시 계산하면 반영됩니다.', nodesNearLine(state, line));
+  };
+  /** Change a drawn line (low side, drop, points); `done` is the notice. The points near the old and the new line are dirtied. */
+  const updateBreakline = (id: string, patch: BreaklinePatch, done: string) => {
+    const base = current.current;
+    const before = base?.breaklines?.find((b) => b.id === id);
+    if (!base || !before) return fail('고도 단절선을 찾을 수 없습니다.');
+    const next = withBreaklinePatch(base, id, patch);
+    if ('error' in next) return fail(next.error);
+    const after = next.breaklines!.find((b) => b.id === id)!;
+    const near = patch.coordinates ? [...nodesNearLine(state, before), ...nodesNearLine(state, after)] : nodesNearLine(state, after);
+    void writeStore(next, `${done} 고도를 다시 계산하면 반영됩니다.`, near);
   };
 
   /** Drawn break lines and the campus edges that act as one (outdoor steps, is_breakline), for the map. */
   const breaklineShapes = useMemo<BreaklineShape[]>(() => [
-    ...(store?.breaklines ?? []).map((b) => ({ kind: 'drawn' as const, id: b.id, coordinates: b.coordinates.map((c): Position => [c.lng, c.lat]) })),
+    ...(store?.breaklines ?? []).map((b): BreaklineShape => ({
+      kind: 'drawn', id: b.id, coordinates: b.coordinates.map((c): Position => [c.lng, c.lat]),
+      ...(b.lowSide ? { lowSide: b.lowSide } : {}), ...(b.dropM !== undefined ? { dropM: b.dropM } : {}),
+    })),
     ...Object.values(state.edges).filter((e) => isBreakline(e.props)).flatMap((e) => {
       const a = state.nodes[e.props.from]?.coord;
       const b = state.nodes[e.props.to]?.coord;
@@ -137,6 +165,7 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     estimates: store?.estimates ?? [],
     addBreakline,
     removeBreakline,
+    updateBreakline,
     breaklineShapes,
     slopes,
   };

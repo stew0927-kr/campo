@@ -318,7 +318,16 @@ export interface BreakLine {
   source: 'manual' | 'survey';
   note?: string;
   createdAt: EpochMs;
+  /**
+   * 낮은 쪽 면(선택): coordinates 진행 방향 기준 왼쪽('left') 또는 오른쪽('right') 법선 방향.
+   * 없으면 어느 쪽이 낮은지 모름(솔버는 측면 분리만 한다).
+   */
+  lowSide?: BreakLineSide;
+  /** 단차 높이(선택, m, 0 이상): 높은 쪽 − 낮은 쪽. lowSide와 함께 있을 때만 솔버가 높이 제약으로 쓴다. */
+  dropM?: number;
 }
+
+export type BreakLineSide = 'left' | 'right';
 
 export interface ElevationStoreV1 {
   schemaVersion: 1;

@@ -17,6 +17,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { HttpError, writeCampusFiles } from './campus-api.ts';
+import { findPython, outputTail, parseCommand, pythonCandidates, showCommand, type Probe, type PythonCommand } from './python.ts';
 import { readGridFile } from './terrain.ts';
 
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
@@ -24,7 +25,12 @@ const MAX_BODY_BYTES = 50 * 1024 * 1024;
 
 export interface SolverRun {
   code: number;
+  /** stdout and stderr together, in order. */
   output: string;
+  /** The command line that ran (for the error message). */
+  command?: string;
+  /** stderr alone. */
+  stderr?: string;
 }
 /** Runs the solver with these arguments (tests pass a fake). */
 export type RunSolver = (args: string[]) => Promise<SolverRun>;
@@ -38,19 +44,57 @@ export interface ElevationApiOptions {
   demPath?: string | undefined;
   /** DEM prior σ in metres (--sigma-dem). */
   sigmaDem?: string | undefined;
-  python?: string;
+  /** The Python command (CAMPO_PYTHON, may carry arguments such as "py -3"). Left out: found by pythonCandidates. */
+  python?: string | undefined;
+  /** Folders whose .venv / venv are tried first when `python` is left out (the repository root, tools/elevation). */
+  pythonRoots?: string[];
   run?: RunSolver;
 }
 
-export function pythonRunner(python: string, script: string): RunSolver {
+/** Runs the solver script with one Python command; the result names the command line and keeps stderr apart. */
+export function pythonRunner(python: PythonCommand | string, script: string): RunSolver {
+  const cmd = typeof python === 'string' ? parseCommand(python) : python;
   return (args) => new Promise((resolve) => {
-    const child = spawn(python, [script, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const command = showCommand({ file: cmd.file, args: [...cmd.args, script, ...args] });
     let output = '';
+    let stderr = '';
+    const child = spawn(cmd.file, [...cmd.args, script, ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     child.stdout.on('data', (b: Buffer) => { output += b.toString('utf8'); });
-    child.stderr.on('data', (b: Buffer) => { output += b.toString('utf8'); });
-    child.on('error', (err) => resolve({ code: -1, output: `${output}${err.message}` }));
-    child.on('close', (code) => resolve({ code: code ?? -1, output }));
+    child.stderr.on('data', (b: Buffer) => {
+      const t = b.toString('utf8');
+      output += t;
+      stderr += t;
+    });
+    child.on('error', (err) => resolve({ code: -1, output: `${output}${err.message}`, command, stderr: `${stderr}${err.message}` }));
+    child.on('close', (code) => resolve({ code: code ?? -1, output, command, stderr }));
   });
+}
+
+/**
+ * The solver runner of the dev server: with `python` that command only; without it the first working Python 3 of
+ * pythonCandidates (looked up on the first recompute and remembered; a failed lookup is tried again next time).
+ */
+export function autoPythonRunner(script: string, opts: { python?: string | undefined; roots?: readonly string[]; probe?: Probe } = {}): RunSolver {
+  let found: Promise<PythonCommand | { error: string }> | null = null;
+  return async (args) => {
+    found ??= findPython(pythonCandidates({ platform: process.platform, env: { ...process.env, CAMPO_PYTHON: opts.python }, roots: opts.roots ?? [] }), opts.probe);
+    const cmd = await found;
+    if ('error' in cmd) {
+      found = null;
+      return { code: -1, output: cmd.error, stderr: cmd.error, command: opts.python ?? '(자동 탐색)' };
+    }
+    return pythonRunner(cmd, script)(args);
+  };
+}
+
+/** The Korean error for a failed solver run: the exit code, the command line and the end of stderr (or of the output). */
+export function solverFailure(r: SolverRun): string {
+  const why = (r.stderr ?? '').trim() || r.output.trim();
+  return [
+    `고도 계산(campo_height_solver.py)이 실패했습니다(종료 코드 ${r.code}).`,
+    r.command ? `실행한 명령: ${r.command}` : '',
+    why ? `stderr: ${outputTail(why)}` : '출력이 없습니다.',
+  ].filter(Boolean).join('\n');
 }
 
 async function readIfExists(path: string): Promise<string | null> {
@@ -80,7 +124,7 @@ export function checkStoreText(text: string): void {
 }
 
 export function createElevationApi(opts: ElevationApiOptions) {
-  const run = opts.run ?? pythonRunner(opts.python ?? 'python3', opts.solverScript);
+  const run = opts.run ?? autoPythonRunner(opts.solverScript, { python: opts.python, roots: opts.pythonRoots ?? [] });
   return async (req: IncomingMessage, res: ServerResponse, next: () => void): Promise<void> => {
     const m = /^\/api\/elevation\/([^/?#]+)(\/store|\/recompute|\/terrain)?\/?(?:\?.*)?$/.exec(req.url ?? '');
     if (!m) return next();
@@ -150,7 +194,7 @@ export function createElevationApi(opts: ElevationApiOptions) {
             ...(await exists(paths.derived) ? ['--previous-derived', paths.derived] : []),
           ];
           const r = await run(args);
-          if (r.code !== 0) throw new HttpError(500, `고도 계산(campo_height_solver.py)이 실패했습니다: ${r.output.trim().split('\n').slice(-3).join(' ')}`);
+          if (r.code !== 0) throw new HttpError(500, solverFailure(r));
           const text = await readIfExists(paths.derived);
           if (text === null) throw new HttpError(500, '고도 계산이 끝났지만 elevation.json이 없습니다.');
           answer = { derived: JSON.parse(text), mode: 'solved', log: r.output.trim() };

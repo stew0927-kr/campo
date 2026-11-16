@@ -61,6 +61,40 @@ describe('loadBundledCampus', () => {
     expect(runtime.places.filter((place) => place.nodeType === 'door').every((place) => place.roomRef !== undefined)).toBe(true);
   });
 
+  it('room_ref만 있는 문(v0.2 편집기·현장 조사 앱이 만드는 문)도 강의실 문으로 places에 들어간다', () => {
+    const runtime = loadBundledCampus(
+      bundleFrom(META, [nodeFeature('n_door_v02', 127.0, 37.0, { node_type: 'door', room_ref: '301', door_role: 'front' })]),
+    );
+    expect(runtime.places).toHaveLength(1);
+    const room = runtime.places[0]!;
+    expect(room.id).toBe('n_door_v02');
+    expect(room.name).toBe('301호');
+    expect(room.nodeType).toBe('door');
+    expect(room.roomRef).toBe('301');
+  });
+
+  it('강의실 참조는 room_ref → ref → space_name 순서, 표시 이름은 name → space_name → <참조>호 순서', () => {
+    const runtime = loadBundledCampus(
+      bundleFrom(META, [
+        nodeFeature('n_both', 127.0, 37.0, { node_type: 'door', room_ref: '302', ref: '999' }),
+        nodeFeature('n_space', 127.0001, 37.0, { node_type: 'door', room_ref: '303', ref: '998', space_name: '303호 세미나실' }),
+        nodeFeature('n_space_only', 127.0002, 37.0, { node_type: 'door', space_name: '학생회실' }),
+        nodeFeature('n_named', 127.0003, 37.0, { node_type: 'door', room_ref: '304', name: '304호 앞문' }),
+        nodeFeature('n_empty_ref', 127.0004, 37.0, { node_type: 'door', room_ref: '', ref: '305' }),
+        nodeFeature('n_named_plain_door', 127.0005, 37.0, { node_type: 'door', name: '비상문' }),
+      ]),
+    );
+    const byId = Object.fromEntries(runtime.places.map((place) => [place.id, { name: place.name, roomRef: place.roomRef }]));
+    expect(byId).toEqual({
+      n_both: { name: '302호', roomRef: '302' },
+      n_space: { name: '303호 세미나실', roomRef: '303' },
+      n_space_only: { name: '학생회실', roomRef: '학생회실' },
+      n_named: { name: '304호 앞문', roomRef: '304' },
+      n_empty_ref: { name: '305호', roomRef: '305' },
+      // 강의실 참조가 없는 문은 이름이 있어도 들어가지 않는다.
+    });
+  });
+
   it('이름이 없는 지점은 영어 코드 대신 한국어 종류 이름을 쓴다', () => {
     const runtime = loadBundledCampus(
       bundleFrom(META, [

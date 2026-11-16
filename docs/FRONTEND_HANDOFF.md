@@ -22,7 +22,7 @@
 | Android 빌드·배포 설정(권한, APK/AAB 프로필) | `apps/app/app.json`, `apps/app/eas.json` |
 | 캠퍼스 데이터 번들(빌드 때 자동) | `apps/app/scripts/bundle-campus.mjs` |
 | 캠퍼스 데이터 읽기 → 그래프·GPS 망·화면 목록 | `apps/app/src/campus/` |
-| **안정 계약 Hook 3개** + 순수 엔진 + 단위 테스트 25개 | `apps/app/src/contracts.ts`, `src/hooks/`, `src/route/`, `src/matching/`, `test/` |
+| **안정 계약 Hook 3개** + 순수 엔진 + 단위 테스트 35개 | `apps/app/src/contracts.ts`, `src/hooks/`, `src/route/`, `src/matching/`, `test/` |
 | 지도 배경(OSM 래스터) 스타일 | `apps/app/src/map/style.ts` |
 
 **일부러 비워 둔 것** — 프론트 담당이 자유롭게 정하면 된다.
@@ -34,7 +34,7 @@
 
 **데이터 현황(중요)**: `data/campuses/hanyang-seoul/`에는 지금 `campus.json`과 **빈 GeoJSON 두 개**뿐이다. 즉 현재 앱을 켜면 `지점 0 · 구간 0`으로 정상 동작한다(오류 아님). 데이터 담당이 지점·구간을 채우면 `npm run bundle-campus`만 다시 돌리면 앱에 반영된다. 데이터는 `data/` 담당 영역이므로 앱에서 고치지 않는다.
 
-데이터가 비어 있는 동안 길찾기·지점 목록 화면을 시험하려면 `useCampusData(bundle)`에 **개발용 번들을 직접 넘긴다**(`BundledCampus` 모양은 `src/campus/types.ts`, 만드는 예는 `test/helpers.ts`의 `bundleOf`·`bundleFrom`; 코어의 `packages/core/test/fixtures/campus-basic`을 읽으면 지점·건물·층·엘리베이터가 다 있다). 개발용 번들은 `data/`에 넣거나 커밋하지 않는다.
+데이터가 비어 있는 동안 길찾기·지점 목록 화면을 시험하려면 `useCampusData(bundle)`에 **개발용 번들을 직접 넘긴다**(`BundledCampus` 모양은 `src/campus/types.ts`, 만드는 예는 `test/helpers.ts`의 `bundleOf`·`bundleFrom`; 코어의 `packages/core/test/fixtures/campus-basic`을 읽으면 지점·건물·층·엘리베이터가 다 있다). 개발용 번들은 `data/`에 넣거나 커밋하지 않는다. `useCampusData`는 번들의 **내용**으로 메모하므로 렌더마다 `bundleFrom(...)`을 새로 만들어 넘겨도 내용이 같으면 다시 읽지 않고, GPS 추적 세션도 이어진다.
 
 ---
 
@@ -44,12 +44,15 @@
 # 저장소 루트에서
 npm install                # 처음 한 번 (Node 22 이상, .nvmrc 참고)
 npm run app                # = npm run start -w @campo/app — 캠퍼스 번들 후 Expo 시작
-npm test                   # 전체 테스트(Vitest)
-npm run typecheck          # 워크스페이스 전체 타입 검사(앱은 캠퍼스 번들 후 tsc)
+npm run typecheck          # 워크스페이스 전체 타입 검사(앱·현장 조사 앱은 캠퍼스 번들 후 tsc)
+npm test                   # 전체 테스트(Vitest) — typecheck 다음에 돌린다
 ```
 
+- 순서가 중요하다: 클론 직후에는 현장 조사 앱(`apps/mobile`)의 캠퍼스 번들이 없어서 `npm test`를 먼저 돌리면 그 테스트 파일 하나가 실패한다. `npm run typecheck`가 두 앱의 번들을 만들므로 typecheck → test 순서로 돌린다.
+
 - **`expo-dev-client`가 설치되어 있어서 `npm run app`(= `expo start`)은 기본으로 개발 빌드(development client)용으로 뜬다.** 개발 빌드 APK를 폰에 설치해 두었다면(6장 `build:development`) 터미널 QR을 그 앱으로 찍는다. MapLibre 지도는 네이티브 모듈이라 **개발 빌드에서만** 그려진다.
-- 개발 빌드 없이 빠르게 화면·훅만 보려면 Expo Go로 연다: `npm run start -w @campo/app -- --go` (터미널에서 `s`를 눌러 전환해도 된다). Expo Go에서는 **MapLibre 지도가 그려지지 않고**(나머지 화면·훅·위치·기압 센서는 동작), 개발 빌드에서만 확인되는 부분이 있다.
+- **지도 탭(MapLibre)은 네이티브 모듈이 필요하므로 개발 빌드 APK(`npm run build:development`, 6장)가 먼저 필요하다.** 개발 빌드 없이 Expo Go(`npm run start -w @campo/app -- --go`)로 열면, 지도 탭이 `@maplibre/maplibre-react-native`를 import하는 순간 네이티브 모듈을 찾지 못해 **앱이 시작하자마자 멈춘다**(지도만 빠지고 나머지가 도는 것이 아니다).
+- 개발 빌드 없이 화면·훅만 볼 때는 지도 탭(MapLibre import)을 빼고 Expo Go로 보거나, 개발 빌드를 쓴다. 위치·기압 센서·계약 Hook은 Expo Go에서도 동작한다.
 - `npm run android`도 실행 전에 캠퍼스 번들을 만든다(`preandroid`). EAS 클라우드 빌드는 `eas-build-post-install`이 같은 일을 한다.
 - 캠퍼스 바꾸기: `npm run bundle-campus -w @campo/app -- <campus id>` (기본 `hanyang-seoul`).
 - 생성되는 `apps/app/assets/campus.generated.json`은 **커밋하지 않는다**(`prestart`·`preandroid`·`typecheck`·`export`와 EAS 빌드의 `eas-build-post-install`이 매번 다시 만든다).
@@ -74,7 +77,7 @@ apps/app/
     hooks/                ← 위 엔진을 React에 붙이는 얇은 껍데기 3개
     map/style.ts          ← MapLibre 배경 스타일(OSM)
     index.ts              ← 한 줄 import용 배럴
-  test/                   ← 순수 엔진 단위 테스트
+  test/                   ← 순수 엔진·메모 키 단위 테스트
 ```
 
 화면에서는 한 줄로 가져오면 된다.
@@ -102,7 +105,7 @@ const data = useCampusData();
 // data.runtime       CampusRuntime | null   ← useCampusRoute에 넘기는 값
 // data.campus        { id, name, center: {lat,lng}, bbox } | null
 // data.counts        { nodes, edges, buildings }
-// data.places        [{ id, name, nodeType, buildingId, level, lat, lng, roomRef? }]   (이름 있는 지점·장소·출입구·화장실·강의실 문. name은 항상 한국어, 강의실 문은 nodeType 'door'에 roomRef(호수))
+// data.places        [{ id, name, nodeType, buildingId, level, lat, lng, roomRef? }]   (이름 있는 지점·장소·출입구·화장실·강의실 문. name은 항상 한국어, 강의실 문은 nodeType 'door'에 roomRef(호수: 데이터의 room_ref → ref → space_name 순). 강의실이 아닌 문은 넣지 않는다)
 // data.buildings     [{ id, name, levels }]
 // data.graph         CampusGraph | null     (코어 그래프, 직접 읽어도 된다)
 // data.network       MatchNetwork | null    (useGpsMatcher에 넘긴다)
@@ -131,6 +134,8 @@ setRequest({
   mode: 'wheelchair',                                    // 생략하면 'shortest'
 });
 ```
+
+`useCampusRoute`는 요청의 **내용**(출발·도착·모드)으로 메모한다. 인라인 객체를 넘겨도 내용이 같으면 경로를 다시 찾지 않고 같은 결과 객체를 돌려준다.
 
 `request`(요청)
 
@@ -161,7 +166,7 @@ setRequest({
 | `fallbackMessage` | `string \| null` | 계단·턱을 피할 수 없을 때 코어가 만든 안내 |
 | `polyline` | `{ lat, lng }[]` | 지도에 그릴 선(출발 → 도착) |
 | `nodeIds` | `string[]` | 경로가 지나는 지점 id — `useGpsMatcher`의 `routeNodeIds`로 넘긴다 |
-| `snappedStartM?`, `snappedEndM?` | `number` | 지도에서 고른 점이 길에서 떨어진 거리(m). 150 m 이상 떨어진 점(캠퍼스 밖)과 NaN 같은 잘못된 좌표는 `not-found`와 한국어 `message`로 돌아온다 |
+| `snappedStartM?`, `snappedEndM?` | `number` | 지도에서 고른 점이 길에서 떨어진 거리(m). 고른 점은 **그 `mode`가 지날 수 있고 닫히지 않은 구간**에만 붙는다(휠체어·계단 없는 길은 가까운 계단 대신 조금 먼 보도에 붙는다). 그런 구간에서 150 m 이상 떨어진 점(캠퍼스 밖)과 NaN 같은 잘못된 좌표는 `not-found`와 한국어 `message`로 돌아온다 |
 
 출발과 도착이 같은 지점이면 `ok`(걸리는 시간 0, 단계 없음)이고 `polyline`은 같은 점 두 개다. 그래서 `polyline`은 항상 LineString으로 그릴 수 있다.
 
@@ -284,7 +289,7 @@ function useSensorFixes(pushFix: (fix: SensorFix) => unknown) {
 
 탭 네비게이션은 아직 라이브러리가 없다. 둘 중 하나를 고르면 된다.
 
-1. **라이브러리 없이**: `App.tsx`에서 `useState<'map'|'essay'|'festival'|'events'|'me'>` 하나와 하단 버튼 5개로 조건부 렌더. 의존성이 늘지 않고 Expo Go에서 바로 돈다(가장 빠른 길).
+1. **라이브러리 없이**: `App.tsx`에서 `useState<'map'|'essay'|'festival'|'events'|'me'>` 하나와 하단 버튼 5개로 조건부 렌더. 의존성이 늘지 않는다(가장 빠른 길). 단, 지도 탭(MapLibre)이 들어오면 Expo Go로는 열리지 않으므로 개발 빌드가 필요하다(1장).
 2. **`@react-navigation/bottom-tabs`**: 화면이 많아지고 뒤로가기·딥링크가 필요해지면. 설치 후 `apps/app/package.json`만 바꾼다(`packages/core`는 건드리지 않는다).
 
 ---
@@ -295,7 +300,7 @@ function useSensorFixes(pushFix: (fix: SensorFix) => unknown) {
 |---|---|
 | `apps/app/App.tsx`, `apps/app/src/features/**`, 새 컴포넌트·테마·화면 | **자유.** 마음대로 만들고 지워도 된다 |
 | `apps/app/src/contracts.ts`, `src/hooks/**`, `src/campus/**`, `src/route/**`, `src/matching/**` | **계약 영역.** 이름·의미를 유지하고 새 필드는 optional로만 더한다. 바꿔야 할 것 같으면 **바꾸지 말고 먼저 사람(리드)에게 묻는다.** PR 설명에 이유를 쓰는 것으로 대신하지 않는다 |
-| `apps/app/app.json`, `eas.json` | 패키지명 `kr.hanyang.campo`, `versionCode` 규칙, 권한 목록은 유지. 바꿀 때는 6장을 먼저 읽는다 |
+| `apps/app/app.json`, `eas.json` | 패키지명 `kr.hanyang.campo`, `versionCode` 규칙, 권한 목록, EAS 프로필은 팀이 합의한 값이라 유지. 바꾸려면 6장을 먼저 읽고 **먼저 사람에게 묻는다** |
 | `packages/core/**`, `data/**`, `packages/tools/**` | **건드리지 않는다.** 필요하면 먼저 리드에게 묻는다 |
 | `apps/mobile/**`, `apps/editor/**` | **건드리지 않는다**(다른 담당·다른 앱) |
 
@@ -352,12 +357,14 @@ npm run submit:android        # Play 내부 트랙에 초안(draft)으로 제출
 ## 7. 테스트·타입 검사
 
 ```bash
-npm test                   # 전체 (코어·편집기·도구·현장조사 앱 + 이 앱 25개)
-npm run typecheck          # 워크스페이스 전체
+npm run typecheck          # 워크스페이스 전체 (먼저: 앱·현장 조사 앱의 캠퍼스 번들도 만든다)
+npm test                   # 전체 (코어·편집기·도구·현장조사 앱 + 이 앱 35개)
 ```
 
+- typecheck를 먼저 돌리는 이유: 클론 직후에는 현장 조사 앱의 캠퍼스 번들이 없어 `npm test`가 먼저 실패하고, typecheck가 그 번들을 만든다.
+
 - 이 앱의 테스트는 **React 없이 도는 순수 엔진**만 본다(`test/campusRoute.test.ts`, `test/gpsMatcher.test.ts`, `test/loadBundledCampus.test.ts`).
-  - `computeRoute`(경로·층 이동·경사·캠퍼스 밖·잘못된 좌표·출발=도착), `createGpsMatcherSession`(위치·건너뛰기·재탐색·경로 교체·빈 망), `loadBundledCampus`(데이터 읽기·빈 캠퍼스·오류·강의실 문·한국어 이름).
+  - `computeRoute`(경로·층 이동·경사·캠퍼스 밖·잘못된 좌표·출발=도착·이동 방식별로 고른 점 붙이기), `createGpsMatcherSession`(위치·건너뛰기·재탐색·경로 교체·빈 망), `loadBundledCampus`(데이터 읽기·빈 캠퍼스·오류·강의실 문(`room_ref`/`ref`/`space_name`)·한국어 이름), 훅 메모 키(`test/memoKeys.test.ts`: 같은 내용=같은 키).
 - 테스트는 코어의 `campus-basic` fixture를 그대로 읽어 쓴다(`test/helpers.ts`) — 지점·구간·건물·층·엘리베이터가 다 들어 있는 작은 캠퍼스다.
 - 화면 테스트(렌더링 스냅숏 등)는 아직 없다. 필요해지면 `@testing-library/react-native` 도입을 팀에서 정한다.
 - 커밋 전에 `npm test`와 `npm run typecheck` 결과를 PR 설명에 붙인다(저장소 규칙).
@@ -369,7 +376,7 @@ npm run typecheck          # 워크스페이스 전체
 - **구글·네이버·카카오 지도/타일/위성사진 금지.** 배경은 OSM(`OSM_RASTER_STYLE`)이고, 화면에 `© OpenStreetMap 기여자` 출처를 남긴다.
 - **길찾기는 층 번호를 비교하지 않는다.** 층은 화면 표시·GPS 후보 필터에만 쓴다. 경로는 구간 연결로만 정해진다(`packages/core`가 이미 그렇게 되어 있다).
 - 화면 문구는 **한국어 존댓말**, 코드 식별자와 커밋 메시지는 영어.
-- 데이터 스키마(`data/schema`)·코어 타입을 바꾸지 않는다. 바꿔야 하면 SPEC·fixture·테스트를 같은 PR에서 고친다.
+- 데이터 스키마(`data/schema`)·코어 타입을 바꾸지 않는다. 바꿔야 하면 **먼저 리드에게 묻고**, 허락을 받으면 SPEC·fixture·테스트를 같은 PR에서 고친다.
 - 기능 하나 = 브랜치 하나 = PR 하나.
 
 ---

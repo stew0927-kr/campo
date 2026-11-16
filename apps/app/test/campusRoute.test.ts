@@ -54,14 +54,79 @@ describe('computeRoute', () => {
     const runtime = await fixtureRuntime();
     const state = computeRoute(runtime, { from: { kind: 'node', nodeId: GATE }, to: { kind: 'node', nodeId: ROOM_408 }, mode: 'wheelchair' });
 
-    if (state.status === 'ok') {
-      expect(state.route!.stairsCount).toBe(0);
-      expect(state.route!.profile).toBe('wheelchair');
-    } else {
-      // 계단 없이 갈 수 없는 곳이면 코어가 한국어 설명과 함께 not-found를 준다.
+    // campus-basic에는 정문에서 408호까지 계단 없는 길이 있다(휠체어는 계단으로 대체하지 않는다).
+    expect(state.status).toBe('ok');
+    expect(state.message).toBeNull();
+    const route = state.route!;
+    expect(route.profile).toBe('wheelchair');
+    expect(route.usedProfile).toBe('wheelchair');
+    expect(route.fallbackMessage).toBeNull();
+    expect(route.stairsCount).toBe(0);
+    expect(route.steps.some((step) => step.kind === 'stairs')).toBe(false);
+    expect(route.nodeIds[route.nodeIds.length - 1]).toBe(ROOM_408);
+  });
+
+  describe('지도에서 고른 점은 그 이동 방식이 지날 수 있는 구간에만 붙는다', () => {
+    // 계단(e_steps)이 고른 점에서 약 4.4 m, 보도(e_foot)가 약 6.7 m. 두 길은 n2–n4 보도로 이어져 n5로 간다.
+    const PICK = { kind: 'point' as const, lat: 37.00004, lng: 127.00025 };
+    const TO = { kind: 'node' as const, nodeId: 'n5' };
+    const campusWithStairs = (withFootway: boolean) =>
+      loadBundledCampus(
+        bundleFrom(META, [
+          nodeFeature('n1', 127.0, 37.0),
+          nodeFeature('n2', 127.0005, 37.0),
+          nodeFeature('n4', 127.0005, 37.0001),
+          nodeFeature('n5', 127.001, 37.0001),
+          edgeFeature('e_steps', 'n1', 'n2', [[127.0, 37.0], [127.0005, 37.0]], { highway: 'steps', step_free: false }),
+          edgeFeature('e_link', 'n2', 'n4', [[127.0005, 37.0], [127.0005, 37.0001]]),
+          edgeFeature('e_foot2', 'n4', 'n5', [[127.0005, 37.0001], [127.001, 37.0001]]),
+          ...(withFootway
+            ? [nodeFeature('n3', 127.0, 37.0001), edgeFeature('e_foot', 'n3', 'n4', [[127.0, 37.0001], [127.0005, 37.0001]])]
+            : []),
+        ]),
+      );
+
+    it('가장 가까운 것이 계단이어도 휠체어는 조금 더 먼 보도에 붙고, 가장 빠른 길은 계단에 붙는다', () => {
+      const runtime = campusWithStairs(true);
+
+      const wheelchair = computeRoute(runtime, { from: PICK, to: TO, mode: 'wheelchair' });
+      expect(wheelchair.status).toBe('ok');
+      expect(wheelchair.route!.snappedStartM).toBeGreaterThan(6);
+      expect(wheelchair.route!.snappedStartM).toBeLessThan(7.5);
+      expect(wheelchair.route!.stairsCount).toBe(0);
+
+      const shortest = computeRoute(runtime, { from: PICK, to: TO, mode: 'shortest' });
+      expect(shortest.status).toBe('ok');
+      expect(shortest.route!.snappedStartM).toBeLessThan(5);
+      expect(shortest.route!.snappedStartM).toBeLessThan(wheelchair.route!.snappedStartM!);
+    });
+
+    it('근처에 계단밖에 없으면 휠체어는 not-found와 한국어 설명', () => {
+      // 걷는 구간이 계단 하나뿐인 캠퍼스: 휠체어가 붙을 수 있는 구간이 없다.
+      const runtime = loadBundledCampus(
+        bundleFrom(META, [
+          nodeFeature('n1', 127.0, 37.0),
+          nodeFeature('n2', 127.0005, 37.0),
+          edgeFeature('e_steps', 'n1', 'n2', [[127.0, 37.0], [127.0005, 37.0]], { highway: 'steps', step_free: false }),
+        ]),
+      );
+      const state = computeRoute(runtime, { from: PICK, to: { kind: 'node', nodeId: 'n2' }, mode: 'wheelchair' });
       expect(state.status).toBe('not-found');
-      expect(state.message).toBeTruthy();
-    }
+      expect(state.route).toBeNull();
+      expect(state.message).toBe('걷는 길이 없는 위치입니다. 캠퍼스 안에서 다시 골라 주세요.');
+
+      // 같은 자리를 가장 빠른 길로 고르면 계단에 붙어 경로가 나온다.
+      expect(computeRoute(runtime, { from: PICK, to: { kind: 'node', nodeId: 'n2' }, mode: 'shortest' }).status).toBe('ok');
+    });
+
+    it('계단보다 먼 보도도 그 보도를 지날 수 있으면 휠체어 경로의 출발로 쓴다(계단만 있는 쪽은 버린다)', () => {
+      const runtime = campusWithStairs(false);
+      // e_foot가 없으면 휠체어가 붙을 곳은 e_link(n2–n4, 고른 점에서 약 22 m)다.
+      const state = computeRoute(runtime, { from: PICK, to: TO, mode: 'wheelchair' });
+      expect(state.status).toBe('ok');
+      expect(state.route!.snappedStartM).toBeGreaterThan(20);
+      expect(state.route!.stairsCount).toBe(0);
+    });
   });
 
   it('지도에서 고른 임의의 점도 가장 가까운 길에 붙여 경로를 준다', async () => {

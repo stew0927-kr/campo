@@ -5,6 +5,7 @@ import { bundledCampus } from '../campus/bundled.ts';
 import { CampusDataError, loadBundledCampus } from '../campus/loadBundledCampus.ts';
 import type { BundledCampus } from '../campus/types.ts';
 import type { CampusCounts, CampusData, CampusDataApi } from '../contracts.ts';
+import { bundleKeyOf } from './memoKeys.ts';
 
 const NO_COUNTS: CampusCounts = { nodes: 0, edges: 0, buildings: 0 };
 
@@ -48,6 +49,10 @@ export function resolveCampusData(bundle: BundledCampus): CampusData {
 export function useCampusData(bundle: BundledCampus = bundledCampus): CampusDataApi {
   const [generation, setGeneration] = useState(0);
   const reload = useCallback(() => setGeneration((value) => value + 1), []);
-  const data = useMemo(() => resolveCampusData(bundle), [bundle, generation]);
+  // 번들의 내용으로 메모한다: 화면이 매 렌더 새 번들 객체(인라인 bundleFrom(...))를 넘겨도 내용이 같으면 runtime·network가
+  // 그대로라서 useGpsMatcher 세션이 새로 만들어지지 않는다. 키가 바뀐 렌더의 bundle로 다시 읽는다.
+  const key = bundleKeyOf(bundle);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const data = useMemo(() => resolveCampusData(bundle), [key, generation]);
   return useMemo(() => ({ ...data, reload }), [data, reload]);
 }

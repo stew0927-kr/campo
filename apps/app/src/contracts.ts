@@ -111,7 +111,10 @@ export interface CampusPlace {
   level: number | null;
   lat: number;
   lng: number;
-  /** 강의실 문일 때 호수(예: "408"). 화면에서 호수로 찾을 때 쓴다. 강의실 문이 아니면 없다. */
+  /**
+   * 강의실 문일 때 호수(예: "408"). 화면에서 호수로 찾을 때 쓴다. 강의실 문이 아니면 없다.
+   * 데이터의 `room_ref` → `ref` → `space_name` 순서로 고른다(space_name만 있는 예전 문은 그 값이 들어온다).
+   */
   roomRef?: string;
 }
 

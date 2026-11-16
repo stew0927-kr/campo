@@ -1,6 +1,6 @@
 // 번들된 캠퍼스 파일을 읽어 길찾기 그래프와 GPS 매칭 망까지 만든다. 화면·React와 상관없는 순수 함수라
 // Node에서 그대로 테스트한다(test/loadBundledCampus.test.ts).
-import { buildGraph, buildMatchNetwork, isClassroomDoor, parseCampus, type NodeFeature, type Position } from '@campo/core';
+import { buildGraph, buildMatchNetwork, parseCampus, type NodeFeature, type Position } from '@campo/core';
 import type { CampusBuilding, CampusPlace, CampusSummary } from '../contracts.ts';
 import type { BundledCampus, CampusRuntime } from './types.ts';
 
@@ -22,24 +22,37 @@ const TYPE_LABEL: Readonly<Record<string, string>> = {
   poi: '장소',
   entrance: '출입구',
   restroom: '화장실',
-  door: '문',
 };
+
+const nonEmpty = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
+
+/**
+ * 문 지점의 강의실 참조(호수). 강의실 문이 아니면(문이 아니거나 참조가 하나도 없으면) null.
+ * v0.2 데이터(편집기 문 놓기 도구·현장 조사 앱)는 `room_ref`만 쓰므로 그것을 먼저 보고, 예전 데이터의 `ref`,
+ * 마지막으로 `space_name` 순서로 고른다. 코어의 isClassroomDoor는 ref·space_name만 보므로 앱에서는 이 함수를 쓴다.
+ */
+export function classroomRefOf(node: NodeFeature): string | null {
+  const props = node.properties;
+  if (props.node_type !== 'door') return null;
+  return nonEmpty(props.room_ref) ?? nonEmpty(props.ref) ?? nonEmpty(props.space_name);
+}
 
 /**
  * 지도 목록에 올릴 지점의 화면 이름. 올리지 않을 지점(이름 없는 복도·계단 등)이면 null.
  * - 이름(name)이 있으면 그대로.
- * - 강의실 문(코어의 isClassroomDoor: 문 + space_name 또는 ref)은 space_name, 없으면 `<ref>호`.
+ * - 강의실 문(classroomRefOf가 참조를 주는 문)은 space_name, 없으면 `<참조>호`.
  * - 이름 없는 장소·출입구·화장실은 건물 이름을 붙인 한국어 종류 이름(영어 코드를 그대로 보이지 않는다).
  */
 function placeName(node: NodeFeature, buildingName: string | undefined): string | null {
   const props = node.properties;
-  if (typeof props.name === 'string' && props.name !== '') return props.name;
-  if (isClassroomDoor(node)) {
-    if (typeof props.space_name === 'string' && props.space_name !== '') return props.space_name;
-    return props.ref !== undefined ? `${props.ref}호` : null;
-  }
+  const roomRef = classroomRefOf(node);
+  // 강의실이 아닌 문은 이름이 있어도 올리지 않는다(contracts.ts CampusPlace: places의 문은 모두 roomRef가 있다).
+  if (props.node_type === 'door' && roomRef === null) return null;
+  const name = nonEmpty(props.name);
+  if (name !== null) return name;
+  if (roomRef !== null) return nonEmpty(props.space_name) ?? `${roomRef}호`;
   const label = TYPE_LABEL[props.node_type];
-  if (label === undefined || props.node_type === 'door') return null;
+  if (label === undefined) return null;
   return buildingName ? `${buildingName} ${label}` : label;
 }
 
@@ -81,7 +94,8 @@ export function loadBundledCampus(bundle: BundledCampus, options: { now?: Date }
       lat,
       lng,
     };
-    if (isClassroomDoor(node) && props.ref !== undefined) place.roomRef = props.ref;
+    const roomRef = classroomRefOf(node);
+    if (roomRef !== null) place.roomRef = roomRef;
     places.push(place);
   }
   places.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));

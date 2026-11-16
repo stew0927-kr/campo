@@ -50,4 +50,5 @@ export * from './edit/index.ts';
 export * from './changeset/index.ts';
 export * from './reports/index.ts';
 export * from './survey/index.ts';
+export * from './matching/index.ts';
 export { describeSchemaErrors, type SchemaCheck } from './json-schema.ts';

@@ -114,3 +114,37 @@ HALF_W 1.0 m / SOFT_RING 0.5 m / A_max 400 m² / R_max 5 m / A_big 3000 m² / κ
 
 ## 검증 체크리스트
 길 셀 max|h−z|=0 / 평지 클러스터 내부 표준편차 0 / 길 셀 폭 방향 기울기 0 / 아일랜드 max h ≤ 주변 고정 셀 max / 계단 |Δh/n − r_e| ≤ 0.02 m, r_e∈[0.13, 0.19] m / 경사로 |Δh|/L ≤ g_max / 건물 대지·앞마당 내부 h=H_1F / 모든 건물에서 A_bur(H_1F) ≤ A_bur(H_1F⁰) / 실측 |H_1F − h_P − D_meas| ≤ 0.03 m / 4분면 각각에서 건물·지점 이동 방향과 비율이 표와 일치 / 깎기 사면 최대 경사 ≤ s_cut + 0.05, 수직 단차 > h_step 로그 / 어깨 경사 재측정 / WLS 잔차 |r|/σ > 3 간선 목록.
+
+---
+
+> 구현 위치: 아래 절은 위 설계 명세 원문에 덧붙인 것이다(2026-11-16). `campo_height_solver.py`의 `building_portals`(건물별 출입문 모음 `PortalContact`), `building_pads`(기반층·접지면 기준 하한), `terraced_pads`(테라스 후보·지지 판정), `building_extras`(접지면 묻힌 면적·문턱 잔차), `grid_grading.py`의 `Terrace`·`TerraceCandidate`·`plan_terraces`·`assign_terraces`·`rasterize_pads`(셀 배정)·`building_targets`(테라스별 사면)·`terrace_walls`·`wall_segments`(옹벽 불연속선), `node_wls.py`의 `BuildingPad.plinth_m`·`BuildingSolve.h_pad`가 구현하고, 튜닝 값은 `solver_config.py`의 `BuildingConfig`(`terrace_*`, `door_sill_tol_m`)에 있다. 검증은 `test_portal_pads.py`가 맡는다. v1 엔진은 바뀌지 않았다.
+
+## 포탈 기준 다단 대지(terraced pads)
+
+언덕에 걸친 건물은 아래쪽 1층 문과 위쪽 3·4층 문이 함께 지형에 닿는다. 대지를 1층 평면 하나로 깔면 위쪽 지형이 층고 배수만큼 파이고 위층 문 앞에 수직 단차가 생긴다. 그래서 대지를 출입문이 닿는 원본 지형(DEM₀)으로 지지되는 층마다 한 단(terrace)씩 여러 접지면으로 깔고, 단 사이는 층고 배수의 옹벽으로 둔다.
+
+### 접지면과 기반층
+- 층고 = `ext.floor_height_m` 또는 3.9 m. 기반층 높이 plinth = max(0, `ext.plinth_floors`) × 층고(숫자가 아니면 0).
+- 기준 접지면 plane(padLevel) = H(padLevel) − plinth (기반층은 최하층 바닥 아래 통짜 블록). 위층 문의 접지면 plane(L) = H(L).
+- 참조값: 사이드카 `h1fM`이 있으면 H_1F⁰ = h1fM, 접지면 참조 = h1fM − plinth. 없으면 링 DEM₀(출입구 쪽 링 중앙값, 없으면 백분위)를 접지면 참조로 보고 H_1F⁰ = 그 값 + plinth.
+- 하한은 접지면에 건다: H(padLevel) − plinth ≥ 접지면 참조(`BuildingPad.lower_bound`). 노드 WLS는 변수 H에 lb = lower_bound + plinth를 넣는다(lsq_linear 그대로). plinth = 0이면 원문의 H_1F ≥ H_1F⁰와 같다. 래칫도 접지면 기준(직전 H − plinth).
+
+### 테라스 후보와 지지
+- 후보 층 = {padLevel} ∪ {포탈 층} ∪ {ground_levels}(0 제외). 포탈 = `edge_type: "portal"`이고 한쪽 끝이 그 건물 층 노드, 다른 쪽이 실외 노드나 다른 건물 층 노드인 구간. 역할은 `door_role`(구간, 없으면 문 쪽 노드).
+- support(padLevel) = 외곽 링 DEM₀ 중앙값(보고용). support(L > padLevel) = 그 층 문들의 바깥 지점 반경 `entrance_ring_radius_m` 안 건물 밖 셀 DEM₀ 중앙값(없으면 바깥 노드 DEM₀)의 중앙값. 한 층의 문이 여럿이어도 테라스는 하나.
+- |support(L) − plane(L)| ≤ `terrace_tol_m`(0.6 m)이면 테라스. 아니면 만들지 않고(지금처럼 사면과 수직 단차 로그) 이유를 남긴다(`4F door not supported by the terrain: plane 41.70 m, support 32.00 m`). padLevel 아래 층, 문이 없는 ground_level, 층 평면 높이가 없는 층도 테라스가 아니다. 개수는 base 포함 `terrace_max_levels`(3)까지, 지지 오차가 작은 순.
+
+### 셀 배정과 옹벽
+- 대지 셀마다 DEM₀에 가장 가까운 plane의 테라스. |DEM₀ − plane(base)| ≤ tol/2이거나 DEM₀가 없으면 base. 각 층 문에서 `entrance_ring_radius_m` 안의 대지 셀은 그 층 테라스로 고정(가까운 문 우선). 고정 셀이 없는 `terrace_min_cells`(4) 미만 4-연결 조각은 가장 많이 맞닿은 다른 테라스로 합친다.
+- 테라스 경계(서로 다른 테라스에 속한 같은 건물의 4-이웃 셀 쌍: 대지·앞마당·사면 영역)는 셀 경계 선분으로 만들어 `breakline_links`(감쇠 0)로 격자 링크를 끊는다(`terrace_breakline`). 어깨 screened Poisson과 아일랜드 메우기가 경계를 넘지 않는다.
+- 경계 단차는 `building B: terrace boundary 3F/1F step 7.80 m = 2.0 x 3.90 m (retaining wall, …)`로 로그하고, `step_max_m` 초과 쌍은 `terrace_wall_pairs`·`max_terrace_wall_m`으로 따로 센다. `vertical_steps_over_limit`은 옹벽을 빼고 지형 단차만 센다. 단차가 (층 수 + 기반층 수) × 층고에서 `terrace_multiple_tol_m`(0.05 m)보다 벗어나면 경고 로그.
+
+### 사면·묻힌 면적
+- `building_targets`를 테라스마다 계산한다(앞마당은 그 테라스 plane, 바깥은 smin/smax 사면, 겹치면 가까운 테라스). 아일랜드 fixed = 길 ∪ 모든 테라스 ∪ 앞마당, 어깨·부분 피복 링·기압 지점은 그대로.
+- 묻힌 면적은 접지면 기준이다. 링 셀마다 마주 보는(가장 가까운 대지 셀의) 테라스 plane과 비교하고, 기준은 같은 배정에 plane − (H_pad − H_pad⁰)를 쓴다. 위 테라스는 H_pad + k × 층고라 base에서 A_bur(H_pad) ≤ A_bur(H_pad⁰)가 지켜지면 모든 테라스에서 비증가한다. 한 평면일 때의 값은 `buried_single_plane_m2`로 함께 보고한다.
+
+### 보고(campo-solve-report/1에 선택 키만 추가)
+- `buildings[bid]`: `plinth_m`, `h_pad_m`, `h_pad_ref_m`, `pad_lower_bound_m`, `lower_bound_basis`("ground_plane"), `buried_single_plane_m2`, `terraces[{level, plane_m, cells, source(portal/ground_level/sidecar), supported, support_m, boundary_step_m, port_count, reason?, buried_m2?, buried_ref_m2?}]`, `portal_contacts[{edge_id, level, role, step_free, outside, door_residual_m}]`.
+- `door_residual_m` = 문 바닥 H(L) − 문 바깥 지점 셀의 보정 후 h. `door_sill_tol_m`(0.25 m) 초과면 로그.
+- `grid`: `terraces`(위 테라스 수), `terrace_wall_pairs`, `max_terrace_wall_m`.
+- 노드 WLS는 그대로다(포탈은 지금처럼 soft_flat). `building.terrace_enabled = false`면 테라스 이전과 같은 한 평면 대지.

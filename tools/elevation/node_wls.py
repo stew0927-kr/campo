@@ -5,8 +5,9 @@ Unknowns are one height per flat cluster (flat_exact links merged by union-find,
 stair. Rows: barometer dh (measured: Baarda snooping, Huber IRLS, chi2 as v1), floor priors, break-line drops, stairs
 (x_to - x_frm - s n r = 0 with r ~ N(0.16, 0.015), 0.13 <= r <= 0.19), ramps (follow the DEM difference, |dh| <= g_max L by
 an active set), soft flats (v1 leave-one-out rule), cluster / node DEM priors (Huber IRLS), building pads (prior N(H_1F^0,
-sigma_B) and the lower bound H_1F >= H_1F^0 through scipy.optimize.lsq_linear bounds) and measured building - point height
-differences. sigma_B = sigma_P sqrt(rho / (1 - rho)), rho = building_up_share chosen once from the DEM reference values.
+sigma_B) and the lower bound on the ground plane, H_1F - plinth >= H_1F^0 - plinth, through scipy.optimize.lsq_linear
+bounds) and measured building - point height differences. sigma_B = sigma_P sqrt(rho / (1 - rho)), rho = building_up_share
+chosen once from the DEM reference values.
 
 This module does not import campo_height_solver (the CLI converts its Node / Edge into WlsProblem). Every tuning number comes
 from solver_config.
@@ -93,11 +94,32 @@ class Ramp:
 
 @dataclass(frozen=True)
 class BuildingPad:
+    """
+    The pad of one building. var is the pad level floor plane H (H_1F). The ground plane (the face that meets the ground)
+    is H - plinth_m: plinth floors are one solid block under the lowest floor. lower_bound is a bound on the ground plane,
+    H - plinth_m >= lower_bound (the solver bounds the variable H at lower_bound + plinth_m); with plinth_m = 0 it is the
+    old H_1F >= H_1F^0 exactly.
+    """
     building_id: str
     var: str  # pad floor plane variable key
-    h_ref: float  # H_1F^0
+    h_ref: float  # H_1F^0 (pad level floor)
     ref_source: Literal["survey", "entrance_ring", "ring_percentile"]
-    lower_bound: float
+    lower_bound: float  # on the ground plane H - plinth_m
+    plinth_m: float = 0.0  # plinth floors x floor height (m), >= 0
+
+    @property
+    def h_pad_ref(self) -> float:
+        """Ground plane reference H_pad^0 = H_1F^0 - plinth_m."""
+        return self.h_ref - self.plinth_m
+
+    def h_pad(self, h_floor: float) -> float:
+        """Ground plane of a pad level floor height."""
+        return h_floor - self.plinth_m
+
+    @property
+    def var_lower_bound(self) -> float:
+        """The bound the solver puts on the variable H."""
+        return self.lower_bound + self.plinth_m
 
 
 @dataclass(frozen=True)
@@ -150,6 +172,11 @@ class BuildingSolve:
     sigma_b: float
     up_share: float
     measurement_residuals: dict[str, float]
+    h_pad: float = math.nan  # ground plane H - plinth_m
+    h_pad_ref: float = math.nan  # ground plane reference H_1F^0 - plinth_m
+    plinth_m: float = 0.0
+    pad_lower_bound: float = math.nan  # the lower bound on the ground plane (lower_bound - plinth_m)
+    lower_bound_basis: str = "ground_plane"  # the lower bound is put on the ground plane, not on the floor
 
 
 @dataclass(frozen=True)
@@ -442,7 +469,7 @@ def solve_nodes(
             log.append(f"building {p.building_id}: pad variable {p.var} unknown -> no pad")
             continue
         pad_of[p.building_id] = p
-        lb[ci[p.var]] = max(lb[ci[p.var]], p.lower_bound)
+        lb[ci[p.var]] = max(lb[ci[p.var]], p.var_lower_bound)
     meas_of: dict[str, list[BuildingMeasurement]] = {}
     for m in problem.measurements:
         if m.building_id not in pad_of or m.point not in by_key:
@@ -793,7 +820,9 @@ def solve_nodes(
             resid[m.id] = float(hb - x_glob[ci[m.point]] - m.d_meas)
         sb, rho = b_info[bid]
         active_lb = bool(on_glob[c]) or abs(hb - lb[c]) <= building_cfg.bound_tol_m
-        buildings[bid] = BuildingSolve(hb, p.h_ref, p.ref_source, float(lb[c]), active_lb, sb, rho, resid)
+        buildings[bid] = BuildingSolve(hb, p.h_ref, p.ref_source, float(lb[c]), active_lb, sb, rho, resid,
+                                       h_pad=p.h_pad(hb), h_pad_ref=p.h_pad_ref, plinth_m=p.plinth_m,
+                                       pad_lower_bound=float(lb[c]) - p.plinth_m)
 
     passed = True
     if dof_total > 0:

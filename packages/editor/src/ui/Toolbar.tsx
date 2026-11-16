@@ -30,14 +30,7 @@ interface Props {
 
 export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving, onTool, onOperation, onChange, onSave, onHelp }: Props) {
   const Options = TOOL_OPTIONS[ui.tool];
-  return (
-    <header className="toolbar">
-      <div className="toolbar-main">
-        <h1 className="brand">
-          캠포 편집기 <span className="brand-campus">{campusName}</span>
-        </h1>
-
-        {TOOLBAR_GROUPS.map((group) => (
+  const section = (group: (typeof TOOLBAR_GROUPS)[number]) => (
           <section key={group.id} className="toolbar-section" data-group={group.id} role="group" aria-labelledby={`toolbar-${group.id}`}>
             <span className="toolbar-caption" id={`toolbar-${group.id}`}>{group.label}</span>
             <div className="toolbar-group">
@@ -78,8 +71,18 @@ export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving,
               })}
             </div>
           </section>
-        ))}
-
+        );
+  return (
+    <header className="toolbar">
+      <div className="toolbar-main">
+        <div className="toolbar-row toolbar-row-draw">
+          <h1 className="brand">
+            캠포 편집기 <span className="brand-campus">{campusName}</span>
+          </h1>
+          {section(TOOLBAR_GROUPS[0])}
+        </div>
+        <div className="toolbar-row toolbar-row-ops">
+          {TOOLBAR_GROUPS.slice(1).map(section)}
         <div className="toolbar-end">
           <label className="basemap" title="따라 그릴 배경 지도를 고릅니다.">
             배경
@@ -102,6 +105,7 @@ export function Toolbar({ ui, operations, toolForm, campusName, canSave, saving,
           >
             {saving ? '저장하는 중…' : '저장'}
           </button>
+        </div>
         </div>
       </div>
 

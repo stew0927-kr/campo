@@ -2,8 +2,9 @@
 // A drawn 고도 단절선 has its own menu (BreaklineContextMenu): its drop, its low side, a point added or removed, delete.
 // It is not modal: Esc, a click anywhere outside, or choosing an item closes it. Every item only asks App for a Plan
 // (or, for a 고도 단절선, for a change of the elevation store).
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { BreakLineSide } from '@campo/core/elevation';
+import { parseLevels } from '../model/building.ts';
 import { parseDropM, sideLabel } from '../model/elevation.ts';
 import type { MenuEdits, MenuFields } from '../model/menu.ts';
 import { tabLabel } from './registry.ts';
@@ -216,6 +217,71 @@ export function BreaklineContextMenu(p: BreaklineMenuProps) {
       {p.onSegment && menuItem('여기에 꺾은점 추가', false, p.onAddPoint, 'add-point')}
       {p.point !== undefined && menuItem('이 꺾은점 삭제', p.points > 2 ? false : '점이 두 개뿐이라 지울 수 없습니다.', p.onRemovePoint, 'remove-point')}
       {menuItem('단절선 삭제', false, p.onDelete, 'delete')}
+    </MenuShell>
+  );
+}
+
+interface BuildingMenuProps {
+  x: number;
+  y: number;
+  /** "건물 1개" */
+  summary: string;
+  name: string;
+  levels: number[];
+  /** ext.floor_height_m, when set. */
+  floorHeight: number | undefined;
+  /** Each returns the reason it did not happen (shown in the menu), or undefined (the menu closes). */
+  onName: (name: string) => string | undefined;
+  onLevels: (levels: number[]) => string | undefined;
+  onFloorHeight: (text: string) => string | undefined;
+  onEditOutline: () => void;
+  deleteBlocked: string | false;
+  onDelete: () => void;
+  onClose: () => void;
+}
+
+/** The right-click menu of a building outline: 이름, 층 목록, 층고 (unfolded), 외곽선 수정, 삭제. */
+export function BuildingContextMenu(p: BuildingMenuProps) {
+  const [editing, setEditing] = useState(true);
+  const [name, setName] = useState(p.name);
+  const [levels, setLevels] = useState([...p.levels].sort((a, b) => b - a).join(', '));
+  const [height, setHeight] = useState(p.floorHeight === undefined ? '' : String(p.floorHeight));
+  const [error, setError] = useState<string | null>(null);
+  const enter = (run: () => string | undefined) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    setError(run() ?? null);
+  };
+
+  return (
+    <MenuShell x={p.x} y={p.y} label="건물 메뉴" onClose={p.onClose} relayout={`${editing}${error ?? ''}`}>
+      <p className="ctx-head">{p.summary}</p>
+      <button type="button" role="menuitem" className="ctx-item" data-item="props" aria-expanded={editing} onClick={() => setEditing((v) => !v)}>속성 바로 편집 {editing ? '▴' : '▾'}</button>
+      {editing && (
+        <div className="ctx-props">
+          <label>건물 이름
+            <input aria-label="건물 이름" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={enter(() => p.onName(name))} />
+          </label>
+          <label>층 목록 (예: -1, 1~5)
+            <input
+              aria-label="층 목록"
+              value={levels}
+              onChange={(e) => setLevels(e.target.value)}
+              onKeyDown={enter(() => {
+                const parsed = parseLevels(levels);
+                return 'error' in parsed ? parsed.error : p.onLevels(parsed.levels);
+              })}
+            />
+          </label>
+          <label>층고 (m, 비우면 기본 3.9 m)
+            <input aria-label="층고" inputMode="decimal" value={height} placeholder="예: 3.9" onChange={(e) => setHeight(e.target.value)} onKeyDown={enter(() => p.onFloorHeight(height))} />
+          </label>
+          {error && <p className="ctx-reason" role="alert">{error}</p>}
+          <p className="field-help">각 칸은 Enter를 눌러 넣습니다.</p>
+        </div>
+      )}
+      {menuItem('외곽선 수정', false, p.onEditOutline, 'edit-outline')}
+      {menuItem('삭제', p.deleteBlocked, p.onDelete, 'delete')}
     </MenuShell>
   );
 }

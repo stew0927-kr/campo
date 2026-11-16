@@ -1,6 +1,6 @@
 // 건물 상세 정보 패널의 편집: 이름, 코드, 층 목록. 화면은 새 코드를 따라가야 한다.
 import { describe, expect, it } from 'vitest';
-import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, renameBlocked } from '../src/model/buildingEdit.ts';
+import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, planSetFloorHeight, renameBlocked } from '../src/model/buildingEdit.ts';
 import { isError, runPlan } from '../src/model/plan.ts';
 import { followBuildingRename, initialUi, reconcileUi, type UiState } from '../src/ui/ui-state.ts';
 import { fixtureSession } from './fixture.ts';
@@ -79,5 +79,23 @@ describe('층 목록', () => {
   it('the last floor cannot be removed', () => {
     const s = fixtureSession();
     expect(levelRemoveBlocked(s.history.current(), 'C', 5)).toMatch(/하나뿐/);
+  });
+});
+
+describe('층고 (우클릭 메뉴)', () => {
+  it('sets ext.floor_height_m, keeps other ext values, clears on blank, refuses nonsense', () => {
+    const s = fixtureSession();
+    const run = (text: string) => {
+      const plan = planSetFloorHeight(s.history.current(), 'B', text);
+      if (isError(plan)) return plan.error;
+      return runPlan(s.history, plan).ok ? 'ok' : 'failed';
+    };
+    expect(run('4,2 m')).toBe('ok');
+    expect(s.history.current().buildings['B']!.props.ext?.floor_height_m).toBe(4.2);
+    expect(run('')).toBe('ok');
+    expect(s.history.current().buildings['B']!.props.ext?.floor_height_m).toBeUndefined();
+    expect(run('abc')).toContain('층고');
+    expect(run('40')).toContain('층고');
+    expect(isError(planSetFloorHeight(s.history.current(), 'nope', '3'))).toBe(true);
   });
 });

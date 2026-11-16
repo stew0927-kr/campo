@@ -125,7 +125,7 @@ interface Props {
   onPolygonDrawn: (ring: Position[]) => void;
   onMapClick: (click: MapClick) => void;
   /** Right-click: the node, drawn 고도 단절선 or edge under the pointer (if any) and where the menu goes (page coordinates). */
-  onContextMenu: (hit: { node: EditNode | undefined; edge: EditEdge | undefined; breakline?: BreaklineHit; x: number; y: number }) => void;
+  onContextMenu: (hit: { node: EditNode | undefined; edge: EditEdge | undefined; building?: EditBuilding; breakline?: BreaklineHit; x: number; y: number }) => void;
   /** 고도 단절선 selection and editing. */
   breaklineEdit: BreaklineEditView;
   /** Shift + drag on the map: the nodes inside the box. */
@@ -425,7 +425,7 @@ export function MapView(props: Props) {
       }
       // A drawing tool keeps the right button to itself only while a shape is being drawn.
       if (DRAW_MODE[latest.current.tool] && drawingNow()) return;
-      const { node, edge } = pickAt(e.point, (n) => nodeStrong(n, latest.current.scope), false);
+      const { node, edge, building } = pickAt(e.point, (n) => nodeStrong(n, latest.current.scope), true);
       let breakline: BreaklineHit | undefined;
       if (!node) {
         const sel = drawnLine(latest.current.breaklineEdit.selected);
@@ -441,7 +441,7 @@ export function MapView(props: Props) {
       }
       const x = e.originalEvent.clientX;
       const y = e.originalEvent.clientY;
-      latest.current.onContextMenu(breakline ? { node: undefined, edge: undefined, breakline, x, y } : { node, edge, x, y });
+      latest.current.onContextMenu(breakline ? { node: undefined, edge: undefined, breakline, x, y } : { node, edge, ...(building ? { building } : {}), x, y });
     });
 
     // ---- node drag and box select (선택 tool) ----

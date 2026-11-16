@@ -52,21 +52,29 @@ button, select, input { font: inherit; color: inherit; }
 .toolbar { grid-area: toolbar; background: var(--surface); border-bottom: 1px solid var(--rule); }
 .toolbar-main {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px 14px;
+  flex-direction: column;
+  gap: 8px;
   padding: var(--gap) calc(var(--gap) * 2);
 }
+/* Two fixed rows: (1) the brand and the drawing tools, (2) the edit operations, the macros and the end controls.
+   A row never wraps its groups (a button label never drops to a line of its own): when the window is too narrow
+   the drawing tools scroll sideways inside their box, and only the second row may wrap, as whole groups. */
+.toolbar-row { display: flex; align-items: flex-end; gap: 10px 14px; min-width: 0; }
+.toolbar-row-draw { flex-wrap: nowrap; }
+.toolbar-row-draw .toolbar-section { flex: 1 1 0; min-width: 0; }
+.toolbar-row-ops { flex-wrap: wrap; }
 /* One section per toolbar group (registry.ts TOOLBAR_GROUPS): a caption, then its buttons. Each group has its own accent. */
 .toolbar-section { display: flex; flex-direction: column; gap: 3px; min-width: 0; --group: var(--ink); }
 .toolbar-section[data-group="draw"] { --group: var(--footway); }
 .toolbar-section[data-group="macro"] { --group: var(--elevator); }
 .toolbar-caption { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; }
 .toolbar-caption::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--group); }
-.toolbar-section .toolbar-group { flex-wrap: wrap; border-color: color-mix(in srgb, var(--group) 40%, var(--rule)); }
+.toolbar-section .toolbar-group { flex-wrap: nowrap; border-color: color-mix(in srgb, var(--group) 40%, var(--rule)); }
 .toolbar-section[data-group="macro"] .toolbar-group { background: color-mix(in srgb, var(--group) 7%, var(--surface)); }
 .toolbar-section .tool[aria-pressed="true"] { background: var(--group); }
-.toolbar-end { display: flex; align-items: center; gap: var(--gap); margin-left: auto; }
+.toolbar-end { display: flex; flex: none; align-items: center; gap: var(--gap); margin-left: auto; white-space: nowrap; }
+.toolbar-end .basemap { display: flex; align-items: center; gap: 6px; }
+.toolbar-end .basemap select { max-width: 190px; }
 .toolbar-active { padding-right: calc(var(--gap) * 2); border-right: 1px solid var(--rule); font-weight: 600; }
 .toolbar-options {
   display: flex;
@@ -77,14 +85,20 @@ button, select, input { font: inherit; color: inherit; }
   border-top: 1px solid var(--rule);
   background: var(--chrome);
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
   white-space: nowrap;
+  box-sizing: border-box;
+  flex: none;
 }
 .tool-hint { margin: 0; color: var(--muted); }
-.brand { align-self: center; margin: 0 var(--gap) 0 0; font-size: var(--text-l); font-weight: 700; letter-spacing: -0.01em; }
+.brand { flex: none; align-self: center; margin: 0 var(--gap) 0 0; white-space: nowrap; font-size: var(--text-l); font-weight: 700; letter-spacing: -0.01em; }
 .brand-campus { margin-left: 6px; font-weight: 400; color: var(--muted); }
 
 .toolbar-group { display: flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
-.tool { padding: 5px 12px; border: 0; background: transparent; cursor: pointer; }
+.toolbar-row-draw .toolbar-group { overflow-x: auto; scrollbar-width: thin; }
+.toolbar-row-draw .tool { padding: 5px 7px; }
+.tool { flex: none; padding: 5px 10px; border: 0; background: transparent; cursor: pointer; white-space: nowrap; }
 .tool + .tool { border-left: 1px solid var(--rule); }
 .tool[aria-pressed="true"] { background: var(--ink); color: #fff; }
 .tool:disabled { color: var(--muted); opacity: 0.5; cursor: not-allowed; }
@@ -274,6 +288,7 @@ button.check-item:hover { background: var(--chrome); }
   .floors { top: auto; bottom: 36px; }
   .panel { border-left: 0; border-top: 1px solid var(--rule); max-height: 40vh; }
   .toolbar-end { margin-left: 0; }
+  .toolbar-row-draw { flex-wrap: wrap; }
 }
 
 /* ---- Scope next to the cursor, tool forms, 연결 안 된 지점 ---- */

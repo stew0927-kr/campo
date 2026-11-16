@@ -1,7 +1,7 @@
 // Background maps (SPEC §3). Google, Naver and Kakao maps or satellite images must never be added here.
 import type { RasterSourceSpecification } from 'maplibre-gl';
 
-export type BasemapId = 'osm' | 'ngii';
+export type BasemapId = 'osm' | 'vworld';
 
 export interface Basemap {
   id: BasemapId;
@@ -11,9 +11,11 @@ export interface Basemap {
   unavailableReason?: string;
 }
 
+/** 브이월드(국토교통부) 위성지도 WMTS. The key comes from VITE_VWORLD_API_KEY (packages/editor/.env). */
+export const VWORLD_TILE_URL = 'https://api.vworld.kr/req/wmts/1.0.0/{key}/Satellite/{z}/{y}/{x}.jpeg';
+
 export function basemaps(env: ImportMetaEnv = import.meta.env): Basemap[] {
-  const key = env.VITE_NGII_API_KEY?.trim();
-  const template = env.VITE_NGII_TILE_URL?.trim();
+  const key = env.VITE_VWORLD_API_KEY?.trim();
   return [
     {
       id: 'osm',
@@ -27,17 +29,18 @@ export function basemaps(env: ImportMetaEnv = import.meta.env): Basemap[] {
       },
     },
     {
-      id: 'ngii',
-      label: '국토지리정보원 영상지도',
-      source: key && template
+      id: 'vworld',
+      label: '브이월드 위성지도',
+      source: key
         ? {
           type: 'raster',
-          tiles: [template.replace('{key}', encodeURIComponent(key))],
+          tiles: [VWORLD_TILE_URL.replace('{key}', encodeURIComponent(key))],
           tileSize: 256,
-          attribution: '국토지리정보원 영상지도 (공공누리 제1유형)',
+          maxzoom: 19,
+          attribution: '© 국토교통부 브이월드',
         }
         : null,
-      ...(key && template ? {} : { unavailableReason: 'packages/editor/.env에 VITE_NGII_API_KEY와 VITE_NGII_TILE_URL을 넣으면 쓸 수 있습니다.' }),
+      ...(key ? {} : { unavailableReason: 'packages/editor/.env에 VITE_VWORLD_API_KEY를 넣으면 쓸 수 있습니다. 브이월드(vworld.kr)에서 인증키를 발급받아 주세요.' }),
     },
   ];
 }

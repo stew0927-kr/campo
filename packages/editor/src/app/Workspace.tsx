@@ -7,7 +7,7 @@
 //   operations below    whether each operation can run now, and how (one entry per operation)
 //   panels below        what each side-panel tab shows              (one entry per tab)
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { buildingById, type EditEdge, type EditNode, type EditState, type Override, type Position, type Survey } from '@campo/core';
+import { buildingById, type EditBuilding, type EditEdge, type EditNode, type EditState, type Override, type Position, type Survey } from '@campo/core';
 import { fetchSurveyFiles, saveCampus, saveSurvey } from '../api.ts';
 import { MapView, type FocusRequest } from '../map/MapView.tsx';
 import { brokenByLevel, brokenIds, findBroken, nextBroken, planConnectNear, type BrokenItem } from '../model/broken.ts';
@@ -30,11 +30,11 @@ import { edgeMidpoint, planSplit } from '../model/split.ts';
 import { planUnsync, syncedIn, withSyncMirror } from '../model/sync.ts';
 import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, toBase64, withSurvey } from '../model/survey.ts';
 import type { PathVertex } from '../model/tools.ts';
-import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, renameBlocked } from '../model/buildingEdit.ts';
+import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, planSetFloorHeight, renameBlocked } from '../model/buildingEdit.ts';
 import { BreaklineForm, BreaklinePanel, breaklineTitle } from '../ui/BreaklineForm.tsx';
 import { BuildingPanel } from '../ui/BuildingPanel.tsx';
 import { ChecksPanel } from '../ui/ChecksPanel.tsx';
-import { BreaklineContextMenu, ContextMenu } from '../ui/ContextMenu.tsx';
+import { BreaklineContextMenu, BuildingContextMenu, ContextMenu } from '../ui/ContextMenu.tsx';
 import { CopyPanel } from '../ui/CopyPanel.tsx';
 import { CrossPicker } from '../ui/CrossPicker.tsx';
 import { FloorPicker } from '../ui/FloorPicker.tsx';
@@ -617,17 +617,25 @@ export function Workspace({ session }: { session: Session }) {
 
   // ---- 우클릭 메뉴, 다른 층에 복사 (SPEC-v0.2 5.1 작업) ----
   /** The target joins the selection when it was not in it (only it is selected then); the menu opens at the pointer. */
-  const onContextMenu = ({ node, edge, breakline, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; breakline?: BreaklineHit; x: number; y: number }) => {
+  const onContextMenu = ({ node, edge, building, breakline, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; building?: EditBuilding; breakline?: BreaklineHit; x: number; y: number }) => {
     if (breakline) {
       setCtxMenu(null);
       if (lineSel !== breakline.id) selectLine(breakline.id);
       return setLineMenu({ ...breakline, x, y });
     }
     setLineMenu(null);
-    const hit = node?.id ?? edge?.id;
+    const hit = node?.id ?? edge?.id ?? building?.id;
     if (!hit) return setCtxMenu(null);
     if (!ui.selection.includes(hit)) patchUi({ selection: [hit], panelTab: 'properties' });
     setCtxMenu({ x, y });
+  };
+  /** The one building selected while the right-click menu is open: it gets the building menu. */
+  const contextBuilding = ui.selection.length === 1 ? buildingById(state, ui.selection[0]!) : undefined;
+  /** A plan from the building menu: its error stays in the menu, success closes it. */
+  const runMenuPlan = (plan: PlanResult): string | undefined => {
+    const err = perform(plan);
+    if (err === undefined) setCtxMenu(null);
+    return err;
   };
   const menuEdit = (edits: MenuEdits) => {
     perform(planMenuEdit(state, ui.selection, edits));
@@ -1007,7 +1015,31 @@ export function Workspace({ session }: { session: Session }) {
         elevation={{ count: elevation.count, busy: elevation.busy, onRecompute: elevation.recompute }}
       />
 
-      {ctxMenu && ui.selection.length > 0 && (
+      {ctxMenu && contextBuilding && (
+        <BuildingContextMenu
+          key={contextBuilding.id}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          summary={selectionSummary(state, ui.selection)}
+          name={contextBuilding.props.name}
+          levels={contextBuilding.props.levels}
+          floorHeight={contextBuilding.props.ext?.floor_height_m}
+          onName={(name) => runMenuPlan(planSetBuildingName(state, contextBuilding.props.code, name))}
+          onLevels={(levels) => runMenuPlan(planSetBuildingLevels(contextBuilding.props.code, levels))}
+          onFloorHeight={(text) => runMenuPlan(planSetFloorHeight(state, contextBuilding.props.code, text))}
+          onEditOutline={() => {
+            setCtxMenu(null);
+            beginOutline({ buildingId: contextBuilding.id, level: null });
+          }}
+          deleteBlocked={blocked.delete}
+          onDelete={() => {
+            setCtxMenu(null);
+            doDelete(false);
+          }}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {ctxMenu && ui.selection.length > 0 && !contextBuilding && (
         <ContextMenu
           x={ctxMenu.x}
           y={ctxMenu.y}

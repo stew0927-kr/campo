@@ -3,6 +3,7 @@
 // contributors); Google, Naver and Kakao maps are never asked (SPEC §3). The outline and the floor count are a starting
 // point: the building is marked needs_check and its source says where it came from.
 import { addBuilding, setProps, type EditState, type Position } from '@campo/core';
+import { FLOOR_OVERRIDES, type FloorSpec } from '../data/building-floors.ts';
 import { buildingAt, pointInRing, ringArea } from './building.ts';
 import type { PlanResult } from './plan.ts';
 
@@ -108,19 +109,28 @@ export function pickBuilding(list: readonly OsmBuilding[], position: Position): 
 /** The campo building code of an OpenStreetMap object: letters and digits only (SPEC 4.4). */
 export const osmCode = (osmId: string): string => `OSM${osmId}`;
 
+/** The floors in data/building-floors.ts for this building, else null. Both lookups (embedded campus file, Overpass) end in planOsmBuilding, so this is the one place the table is read. */
+export function floorOverride(osmId: string): FloorSpec | null {
+  return Object.hasOwn(FLOOR_OVERRIDES, osmId) ? FLOOR_OVERRIDES[osmId] ?? null : null;
+}
+
 /** addBuilding for the outline, marked needs_check. The name, code and floors can be changed afterwards in 상세 정보. */
 export function planOsmBuilding(state: EditState, b: OsmBuilding): PlanResult {
   const code = osmCode(b.osmId);
   if (state.buildings[code]) return { error: `이 건물은 이미 가져왔습니다(${state.buildings[code]!.props.name}).` };
   const name = b.name ?? `이름 없는 건물 ${b.osmId}`;
+  // A default for the import only: the building's levels are ordinary data afterwards (setBuildingLevels, 층 목록).
+  const override = floorOverride(b.osmId);
+  const levels = override ? [...override.levels] : b.levels;
   return {
     annotation: `OSM 건물 "${name}" 가져오기`,
     steps: [
-      () => addBuilding({ polygon: [b.ring.map(([x, y]): Position => [x, y])], code, name, levels: b.levels, source: OSM_SOURCE }),
+      () => addBuilding({ polygon: [b.ring.map(([x, y]): Position => [x, y])], code, name, levels, source: OSM_SOURCE }),
       () => setProps([`bldg_${code}`], { needs_check: true }),
     ],
     notices: [
-      b.levelsKnown ? `OSM의 층수(${b.levels.length}개 층)를 넣었습니다.` : 'OSM에 층수가 없어 1층만 넣었습니다.',
+      override ? `한양대 건물 층수 표의 층수(${levels.length}개 층)를 넣었습니다.`
+        : b.levelsKnown ? `OSM의 층수(${levels.length}개 층)를 넣었습니다.` : 'OSM에 층수가 없어 1층만 넣었습니다.',
       '이름·코드·층은 상세 정보에서 고칠 수 있습니다. 현장에서 확인해 주세요.',
     ],
   };

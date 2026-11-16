@@ -60,7 +60,7 @@ describe('embedded Hanyang Seoul file', () => {
     expect(lookupCampusBuilding(data, [data.bbox[0] + 1e-5, data.bbox[1] + 1e-5])).not.toHaveProperty('outside');
   });
 
-  it('becomes a normal campo building with the OSM name and floors', async () => {
+  it('becomes a normal campo building with the OSM name and the floors of the 한양대 table (OSM says 1~7, the table adds the basement)', async () => {
     const session = fixtureSession();
     const found = await embeddedOsmBuilding(inside(named));
     if (!('building' in found)) throw new Error('no building');
@@ -69,6 +69,6 @@ describe('embedded Hanyang Seoul file', () => {
     if (isError(plan)) throw new Error(plan.error);
     expect(runPlan(session.history, plan)).toMatchObject({ ok: true });
     const b = session.history.current().buildings[`OSM${named.osmId}`]!;
-    expect(b.props).toMatchObject({ name: '국제관', levels: [1, 2, 3, 4, 5, 6, 7], source: 'osm' });
+    expect(b.props).toMatchObject({ name: '국제관', levels: [-1, 1, 2, 3, 4, 5, 6, 7], source: 'osm' }); // data/building-floors.ts: 국제관 has a basement
   });
 });

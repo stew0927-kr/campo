@@ -22,7 +22,7 @@
 | Android 빌드·배포 설정(권한, APK/AAB 프로필) | `apps/app/app.json`, `apps/app/eas.json` |
 | 캠퍼스 데이터 번들(빌드 때 자동) | `apps/app/scripts/bundle-campus.mjs` |
 | 캠퍼스 데이터 읽기 → 그래프·GPS 망·화면 목록 | `apps/app/src/campus/` |
-| **안정 계약 Hook 3개** + 순수 엔진 + 단위 테스트 26개 | `apps/app/src/contracts.ts`, `src/hooks/`, `src/route/`, `src/matching/`, `test/` |
+| **안정 계약 Hook 3개** + 순수 엔진 + 단위 테스트 25개 | `apps/app/src/contracts.ts`, `src/hooks/`, `src/route/`, `src/matching/`, `test/` |
 | 지도 배경(OSM 래스터) 스타일 | `apps/app/src/map/style.ts` |
 
 **일부러 비워 둔 것** — 프론트 담당이 자유롭게 정하면 된다.
@@ -352,7 +352,7 @@ npm run submit:android        # Play 내부 트랙에 초안(draft)으로 제출
 ## 7. 테스트·타입 검사
 
 ```bash
-npm test                   # 전체 (코어·편집기·도구·현장조사 앱 + 이 앱 26개)
+npm test                   # 전체 (코어·편집기·도구·현장조사 앱 + 이 앱 25개)
 npm run typecheck          # 워크스페이스 전체
 ```
 

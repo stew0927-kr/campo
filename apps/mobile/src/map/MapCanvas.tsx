@@ -23,7 +23,7 @@ import { dialHeading, fanPath, polar, touchAngle, wholeDegrees } from '../ui/dia
 import { PictoBadge } from '../ui/Pictogram.tsx';
 import { color, font, radius, space } from '../ui/theme.ts';
 import {
-  coverSide, fitView, fromScreen, mapMatrix, panned, rotated, rotationOf, scaleBar, shortestTurn, toScreen, withRotation, zoomed,
+  coverSide, fitView, fromScreen, isFiniteView, mapMatrix, panned, rotated, rotationOf, sameView, scaleBar, shortestTurn, toScreen, withRotation, zoomed,
   type Projection, type Size, type View as MapView, type XY,
 } from './project.ts';
 import type { TileCache } from './tileCache.ts';
@@ -256,7 +256,8 @@ export function MapCanvas({
   const onLayout = (e: LayoutChangeEvent): void => {
     const { width, height } = e.nativeEvent.layout;
     const next = { width, height };
-    setSize(next);
+    // Same size: no new object, so no render (a layout event that repeats must not re-render this component each time).
+    setSize((old) => (old && old.width === width && old.height === height ? old : next));
     setView((v) => v ?? fit(latest.current.scope, next));
   };
 
@@ -317,7 +318,8 @@ export function MapCanvas({
         let next = p.keepCentre ? cur : panned(cur, p.dx, p.dy);
         if (p.spread !== 1) next = zoomed(next, p.spread);
         if (p.dTurn !== 0) next = rotated(next, p.dTurn);
-        return next;
+        // Keep the old object when nothing changed or the move is not a number: returning it makes React skip the render.
+        return !isFiniteView(next) || sameView(next, cur) ? cur : next;
       });
     }
   };
@@ -367,6 +369,8 @@ export function MapCanvas({
     onPanResponderMove: (e) => {
       const g = gesture.current;
       const now = touchOf(e);
+      // A touch event without usable coordinates is ignored: its NaN would otherwise be added into the pending move and wreck the view.
+      if (!Number.isFinite(now.x) || !Number.isFinite(now.y) || !Number.isFinite(now.spread) || !Number.isFinite(now.angle)) return;
       const before = g.last;
       g.last = now;
       g.maxCount = Math.max(g.maxCount, now.count);
@@ -438,6 +442,10 @@ export function MapCanvas({
       const { mode: m, view: v, size: s, state: st, scope: sc, onTapHit: tap, onBoxPick: pick, onNodeMove: put } = latest.current;
       const quick = Date.now() - g.start.at <= TAP_MS;
       clearHold();
+      // The finger is up: a move still waiting for its frame must not land after the release (and after whatever the release sets
+      // in the screen around the map), on every branch below, including the outline-tap ones that return early.
+      const waitingCarry = pending.current.carry;
+      clearPending();
       // 외곽선 수정: a dragged corner is put down; a tap picks a corner, adds one on a side, or clears the pick.
       const o = latest.current.outline;
       if (o && v && s && g.maxCount === 1) {
@@ -461,8 +469,7 @@ export function MapCanvas({
         }
       }
       // A carried point is put down where it was last drawn (or where the finger last was).
-      const dropped = g.carrying !== null && v && s && g.last ? { id: g.carrying, xy: pending.current.carry?.xy ?? fromScreen(v, s, [g.last.x, g.last.y]) } : null;
-      clearPending();
+      const dropped = g.carrying !== null && v && s && g.last ? { id: g.carrying, xy: waitingCarry?.xy ?? fromScreen(v, s, [g.last.x, g.last.y]) } : null;
       g.carrying = null;
       if (dropped) {
         setCarry(null);

@@ -75,6 +75,11 @@ export function mapMatrix(view: View, size: Size): [number, number, number, numb
   return [k * c, -k * s, -k * s, -k * c, cx, cy];
 }
 
+/** Every number of the view is a real number (a NaN view would draw nothing and compare unequal to itself in every memo). */
+export const isFiniteView = (v: View): boolean => Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.scale) && Number.isFinite(rotationOf(v));
+
+export const sameView = (a: View, b: View): boolean => a.x === b.x && a.y === b.y && a.scale === b.scale && rotationOf(a) === rotationOf(b);
+
 /** The view after the finger dragged the map by (dx, dy) pixels: the map follows the finger, whatever its turn. */
 export function panned(view: View, dx: number, dy: number): View {
   const t = rad(rotationOf(view));

@@ -1,7 +1,7 @@
 // Map arithmetic and time formatting.
 import { describe, expect, it } from 'vitest';
 import { metres, type Position } from '@campo/core';
-import { MAX_SCALE, MIN_SCALE, fitView, panned, projection, toScreen, zoomed, type View } from '../src/map/project.ts';
+import { MAX_SCALE, MIN_SCALE, fitView, isFiniteView, panned, projection, rotated, sameView, toScreen, zoomed, type View } from '../src/map/project.ts';
 import { dayOf, isoLocal } from '../src/time.ts';
 
 const CENTER: Position = [127.0006, 37.0005];
@@ -56,6 +56,32 @@ describe('view', () => {
     }
     expect(fitView([], SIZE)).toEqual({ x: 0, y: 0, scale: 4 });
     expect(fitView([[5, 5]], SIZE).scale).toBe(MAX_SCALE); // one point: as close as allowed
+  });
+});
+
+describe('view guards (MapCanvas flush: no render for a move that changes nothing or is not a number)', () => {
+  const view: View = { x: 10, y: 20, scale: 4 };
+
+  it('a move of nothing gives an equal view, a real move does not', () => {
+    expect(sameView(panned(view, 0, 0), view)).toBe(true);
+    expect(sameView(zoomed(view, 1), view)).toBe(true);
+    expect(sameView(rotated(view, 0), view)).toBe(true);
+    expect(sameView(panned(view, 3, 0), view)).toBe(false);
+    expect(sameView(zoomed(view, 1.1), view)).toBe(false);
+    expect(sameView(rotated(view, 20), view)).toBe(false);
+    expect(sameView({ ...view, scale: MAX_SCALE }, zoomed({ ...view, scale: MAX_SCALE }, 2))).toBe(true); // already at the limit
+    expect(sameView({ ...view, rotation: 0 }, view)).toBe(true);
+  });
+
+  it('a NaN or infinite move is recognised, a normal view is not flagged', () => {
+    expect(isFiniteView(view)).toBe(true);
+    expect(isFiniteView({ ...view, rotation: 45 })).toBe(true);
+    expect(isFiniteView(panned(view, Number.NaN, 0))).toBe(false);
+    expect(isFiniteView(zoomed(view, Number.NaN))).toBe(false);
+    expect(isFiniteView(rotated(view, Number.NaN))).toBe(false);
+    expect(isFiniteView(panned(view, Infinity, 0))).toBe(false);
+    // NaN never equals itself, which is why such a view must not be stored: it would look "changed" to every comparison.
+    expect(sameView(panned(view, Number.NaN, 0), panned(view, Number.NaN, 0))).toBe(false);
   });
 });
 

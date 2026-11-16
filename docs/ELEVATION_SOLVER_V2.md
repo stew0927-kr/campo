@@ -128,6 +128,7 @@ HALF_W 1.0 m / SOFT_RING 0.5 m / A_max 400 m² / R_max 5 m / A_big 3000 m² / κ
 - 기준 접지면 plane(padLevel) = H(padLevel) − plinth (기반층은 최하층 바닥 아래 통짜 블록). 위층 문의 접지면 plane(L) = H(L).
 - 참조값: 사이드카 `h1fM`이 있으면 H_1F⁰ = h1fM, 접지면 참조 = h1fM − plinth. 없으면 링 DEM₀(출입구 쪽 링 중앙값, 없으면 백분위)를 접지면 참조로 보고 H_1F⁰ = 그 값 + plinth.
 - 하한은 접지면에 건다: H(padLevel) − plinth ≥ 접지면 참조(`BuildingPad.lower_bound`). 노드 WLS는 변수 H에 lb = lower_bound + plinth를 넣는다(lsq_linear 그대로). plinth = 0이면 원문의 H_1F ≥ H_1F⁰와 같다. 래칫도 접지면 기준(직전 H − plinth).
+- 알려진 한계(기반층): plinth는 대지 하한(`BuildingPad`)에만 들어간다. 대지 레벨 문의 포탈은 여전히 H(padLevel) − h(바깥) = 0(soft_flat)이고 `campus_corridors`도 H(padLevel)에서 시작하므로, plinth > 0인 건물의 접지층 문 앞 보행로가 plinth만큼 높은 램프로 고정된다(문턱 잔차·수직 단차 로그로 드러남). `test_terrace_edges.py::test_plinth_building_pad_level_door_keeps_the_ground_in_front`(xfail). 제안된 수정: 대지 레벨 포탈 행의 Δh를 +plinth로(`Edge.off_from`/`off_to`) 주고 보행로 시작 높이를 H − plinth로.
 
 ### 테라스 후보와 지지
 - 후보 층 = {padLevel} ∪ {포탈 층} ∪ {ground_levels}(0 제외). 포탈 = `edge_type: "portal"`이고 한쪽 끝이 그 건물 층 노드, 다른 쪽이 실외 노드나 다른 건물 층 노드인 구간. 역할은 `door_role`(구간, 없으면 문 쪽 노드).

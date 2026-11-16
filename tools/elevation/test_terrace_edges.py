@@ -23,7 +23,7 @@ sys.path.insert(0, str(HERE))
 from campo_grid import Grid  # noqa: E402
 from grid_grading import breakline_links, rasterize_polygon  # noqa: E402
 from test_campus_constraints import X0, Y0, feat_edge, feat_node, ident  # noqa: E402
-from test_portal_pads import CFG, FH, building, make_grid, rect, run_v2  # noqa: E402
+from test_portal_pads import CFG, FH, building, make_grid, plinth_scene, rect, run_v2  # noqa: E402
 
 ERROR = CFG.building.terrace_multiple_tol_m
 
@@ -253,6 +253,51 @@ def test_overlapping_footprints_keep_the_cells_with_the_earlier_pad():
     assert rep["bldg_N"]["terraces"][0]["cells"] == 0
     assert rep["bldg_M"]["terraces"][0]["cells"] == int((g.pad_id == ids["bldg_M"]).sum())
     assert g.stats["terraces"] == 0 and g.stats["terrace_wall_pairs"] == 0
+
+
+# ---------------------------------------------------------------- 7. 기반층과 대지 레벨 문
+
+PLINTH_XFAIL = pytest.mark.xfail(strict=True, reason=(
+    "plinth_floors is only known to the pad lower bound (node_wls.BuildingPad). The pad-level portal keeps its dh = 0 "
+    "soft_flat and campus_corridors starts at H(pad level), so the road in front of a ground-level door is fixed on a "
+    "plinth-high ramp (4.83 m step, sill residual +6.93 m logged). Fix: give the pad-level portal an offset of +plinth "
+    "(Edge.off_from/off_to) and start its corridor at H - plinth.") )
+
+
+def plinth_road_strip(g, grid):
+    xs, ys = grid.cell_centers()
+    from test_campus_constraints import X0, Y0
+    return (xs[None, :] > X0 + 20.5) & (xs[None, :] < X0 + 24.5) & (np.abs(ys[:, None] - (Y0 - 35)) < 1.0)
+
+
+@PLINTH_XFAIL
+def test_plinth_building_pad_level_door_keeps_the_ground_in_front():
+    """With plinth floors the ground plane in front of a pad-level door is H - plinth: the door must stand on it."""
+    grid, feats = plinth_scene(2)
+    r = run_v2(feats, grid)
+    g = r["g"]
+    b = r["rep"]["buildings"]["bldg_P"]
+    assert b["plinth_m"] == pytest.approx(2 * FH)
+    assert b["h_pad_m"] == pytest.approx(b["h_pad_ref_m"], abs=1e-6)
+    strip = plinth_road_strip(g, grid)
+    assert np.all(np.abs(g.h[strip] - b["h_pad_m"]) < 0.5), g.h[strip]
+    assert abs(b["portal_contacts"][0]["door_residual_m"]) <= CFG.building.door_sill_tol_m
+    assert g.stats["vertical_steps_over_limit"] == 0
+
+
+def test_plinth_door_ramp_is_the_documented_cause():
+    """The same scene without the xfail: what the pipeline does today (the ground in front of the door is a ramp)."""
+    grid, feats = plinth_scene(2)
+    r = run_v2(feats, grid)
+    g, b = r["g"], r["rep"]["buildings"]["bldg_P"]
+    strip = plinth_road_strip(g, grid)
+    # the pad is right (the bound holds), but the portal corridor is fixed from H(1F) down to the outside node
+    assert b["h_pad_m"] == pytest.approx(b["h_pad_ref_m"], abs=1e-6)
+    assert g.road[strip].any()
+    assert g.h[strip].max() - b["h_pad_m"] > 1.5  # a road cell 2 m in front of the door sits plinth-high
+    assert b["portal_contacts"][0]["door_residual_m"] > 5.0
+    assert any("sill residual" in line and "(1F)" in line for line in r["log"])  # not silent
+    assert g.stats["vertical_steps_over_limit"] > 0
 
 
 # ---------------------------------------------------------------- 6. 실지형 재현 (CLI v2)

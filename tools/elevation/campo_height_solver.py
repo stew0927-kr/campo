@@ -42,6 +42,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -1033,26 +1035,47 @@ def _dem_value(grid: Grid, n: Node) -> Optional[float]:
     return v if np.isfinite(v) else None
 
 
+ENGINE_V2 = "campo-height-solver/2"
+DEFAULT_ENGINE = "v1"  # the editor keeps v1 until v2 is validated on real campus data (CAMPO_ELEVATION_ENGINE=v2 opts in)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--store", required=True, help="ElevationStore JSON")
     ap.add_argument("--dem", required=True, help="campo-grid meta JSON (dem_prep.py 출력, 읽기 전용)")
-    ap.add_argument("--sigma-dem", type=float, default=3.0, help="DEM prior σ(m). 90 m DEM≈3~5, 등고선 TIN≈1.5~2.5")
+    ap.add_argument("--sigma-dem", type=float, default=None, help="DEM prior σ(m). 90 m DEM≈3~5, 등고선 TIN≈1.5~2.5 (기본 3.0)")
     ap.add_argument("--alpha", type=float, default=0.001)
     ap.add_argument("--huber-k", type=float, default=1.5)
     ap.add_argument("--method", choices=["fusion", "rbf"], default="fusion")
     ap.add_argument("--campus", help="캠퍼스 폴더(data/campuses/<id>): 층고 prior, 계단 칸 수, 평지·불연속선 제약")
     ap.add_argument("--floor-height-default", type=float, default=DEFAULT_FLOOR_HEIGHT_M)
     ap.add_argument("--floor-prior-sigma", type=float, default=FLOOR_PRIOR_SIGMA_M)
-    ap.add_argument("--soft-flat-max-grade", type=float, default=SOFT_FLAT_MAX_GRADE, help="표시 없는 footway 평지 보정 허용 경사(비율)")
+    ap.add_argument("--soft-flat-max-grade", type=float, default=None, help="표시 없는 footway 평지 보정 허용 경사(비율, 기본 0.01)")
     ap.add_argument("--breakline-attenuation", type=float, default=0.0, help="불연속선 너머 커널 배수(0 = 완전 분리)")
     ap.add_argument("--dirty", help="packages/core recomputeRequest JSON: 그 성분만 다시 풀기")
     ap.add_argument("--previous-residual", help="지난 residual_field.json(--dirty와 함께: dirty 타일만 갱신)")
     ap.add_argument("--previous-derived", help="지난 derived/elevation.json(--dirty와 함께: 안 푼 성분의 값 유지)")
     ap.add_argument("--derived-out", help="derived/elevation.json 경로(--campus 필요)")
     ap.add_argument("--out", required=True)
+    # engine v2 (docs/ELEVATION_SOLVER_V2.md). All optional; without them the solver behaves as before.
+    env_engine = os.environ.get("CAMPO_ELEVATION_ENGINE") or DEFAULT_ENGINE
+    ap.add_argument("--engine", choices=["v1", "v2"], default=env_engine if env_engine in ("v1", "v2") else DEFAULT_ENGINE,
+                    help="풀이 엔진(기본 v1, 환경 변수 CAMPO_ELEVATION_ENGINE)")
+    ap.add_argument("--legacy", action="store_true", help="--engine v1 의 별칭")
+    ap.add_argument("--config", help="v2 설정 JSON(campo-solver-config/1)")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="v2 설정 한 항목 덮어쓰기(여러 번)")
+    ap.add_argument("--buildings", help="v2 건물 기준고·실측 JSON(campo-elevation-buildings/1, 기본 <store 폴더>/buildings.json)")
     a = ap.parse_args(argv)
+    if a.legacy:
+        a.engine = "v1"
+    if a.engine == "v2":
+        return _run_v2(a)
+    a.sigma_dem = 3.0 if a.sigma_dem is None else a.sigma_dem
+    a.soft_flat_max_grade = SOFT_FLAT_MAX_GRADE if a.soft_flat_max_grade is None else a.soft_flat_max_grade
+    return _run_v1(a)
 
+
+def _run_v1(a: argparse.Namespace):
     import time
     import uuid
     from pyproj import Transformer
@@ -1127,6 +1150,461 @@ def main(argv=None):
         dp.write_text(json.dumps(derived_elevation(cm, res, run_id, now_ms, keep), ensure_ascii=False, indent=2) + "\n",
                       encoding="utf-8")
         print(f"wrote {dp}")
+
+
+# ------------------------------------------------------------------ #
+# engine v2: node_wls (stage 1) + grid_grading (stages 2-5), docs/ELEVATION_SOLVER_V2.md
+# The v1 code above is frozen; v2 only reuses its readers, campus_model, breakline_drop_edges, dirty_seeds,
+# derived_elevation and write_back.
+# ------------------------------------------------------------------ #
+
+BUILDINGS_FORMAT = "campo-elevation-buildings/1"
+REPORT_FORMAT = "campo-solve-report/1"
+
+
+def _ascii(line: str) -> str:
+    """v2 output is ASCII only: the editor reads UTF-8 while Windows Python writes the pipe in the ANSI code page."""
+    line = line.replace("→", "->").replace("χ²", "chi2").replace("≥", ">=").replace("≤", "<=")
+    return line.encode("ascii", "backslashreplace").decode("ascii")
+
+
+def _say(line: str) -> None:
+    print(_ascii(line))
+
+
+def _fail(msg: str, code: int = 2):
+    print(_ascii(msg), file=sys.stderr)
+    raise SystemExit(code)
+
+
+def _kind(f: dict) -> Optional[str]:
+    return (f.get("properties") or {}).get("kind")
+
+
+def _is_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _num(v) -> Optional[float]:
+    return float(v) if _is_number(v) else None
+
+
+def load_buildings_sidecar(path: Optional[Path], log: list[str]) -> dict:
+    """Optional campo-elevation-buildings/1 file (H_1F reference heights, measured building - point differences)."""
+    if path is None:
+        return {}
+    p = Path(path)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        _fail(f"{p}: cannot read the buildings file ({e})")
+    if not isinstance(data, dict) or data.get("format") != BUILDINGS_FORMAT:
+        _fail(f"{p}: format is not {BUILDINGS_FORMAT}")
+    if not isinstance(data.get("buildings", {}), dict) or not isinstance(data.get("measurements", []), list):
+        _fail(f"{p}: 'buildings' must be an object and 'measurements' a list")
+    log.append(f"buildings file {p.name}: {len(data.get('buildings') or {})} building(s), "
+               f"{len(data.get('measurements') or [])} measurement(s)")
+    return data
+
+
+def edge_polyline(feature: dict, xy_from: tuple[float, float], xy_to: tuple[float, float], project) -> np.ndarray:
+    """[from point, inner LineString vertices, to point] in grid CRS (the ends are the node positions)."""
+    g = feature.get("geometry") or {}
+    coords = g.get("coordinates") if g.get("type") == "LineString" else None
+    inner = []
+    if isinstance(coords, list) and len(coords) > 2 and project is not None:
+        for c in coords[1:-1]:
+            if isinstance(c, (list, tuple)) and len(c) >= 2:
+                inner.append(project(c[0], c[1]))
+    return np.array([xy_from, *inner, xy_to], float)
+
+
+def _corridor_edge(f: dict, cm: CampusModel, eid: str) -> bool:
+    p = f.get("properties") or {}
+    if eid not in cm.edge_vars or eid not in cm.edge_xy:
+        return False
+    if p.get("highway") == "elevator" or p.get("edge_type") == "bridge":
+        return False
+    va, vb = cm.edge_vars[eid]
+    return va.startswith("cn:") or vb.startswith("cn:")
+
+
+def campus_corridors(features: list[dict], cm: CampusModel, project, heights: dict[str, float]):
+    """Corridor segments of the outside edges and portals whose both end heights are known (and not floating)."""
+    from grid_grading import Corridors
+
+    xy, z, tr, steps, ids = [], [], [], [], []
+    for f in features:
+        if _kind(f) != "edge" or not _corridor_edge(f, cm, f["id"]):
+            continue
+        p, eid = f["properties"], f["id"]
+        va, vb = cm.edge_vars[eid]
+        ha, hb = heights.get(va), heights.get(vb)
+        if ha is None or hb is None or not (math.isfinite(ha) and math.isfinite(hb)):
+            continue
+        poly = edge_polyline(f, *cm.edge_xy[eid], project)
+        seg = np.hypot(*np.diff(poly, axis=0).T)
+        total = float(seg.sum())
+        frac = np.concatenate([[0.0], np.cumsum(seg)]) / total if total > 0 else np.zeros(len(poly))
+        if total > 0:
+            frac[-1] = 1.0
+        n = p.get("step_count") if p.get("highway") == "steps" else 0
+        n = n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 0
+        for k in range(len(poly) - 1):
+            xy.append([poly[k], poly[k + 1]])
+            z.append([ha + (hb - ha) * frac[k], ha + (hb - ha) * frac[k + 1]])
+            tr.append([frac[k], frac[k + 1]])
+            steps.append(n)
+            ids.append(eid)
+    if not ids:
+        return Corridors.empty()
+    return Corridors(np.array(xy, float), np.array(z, float), np.array(tr, float), np.array(steps, np.int32), tuple(ids))
+
+
+def building_pads(features: list[dict], project, sidecar: dict, grid: Grid, cm: Optional[CampusModel], cfg,
+                  log: list[str], previous: Optional[dict[str, float]] = None):
+    """
+    Building pads: pad level = sidecar padLevel or min(ground_levels); polygon = sidecar polygon, floor_outlines[level] or
+    the building geometry; H_1F^0 = sidecar h1fM ("survey") or the ring DEM (entrance side median, else the percentile).
+    Returns (BuildingPad list, building id -> rings in grid CRS).
+    """
+    from grid_grading import rasterize_polygon, reference_height
+    from node_wls import BuildingPad
+
+    sc = (sidecar or {}).get("buildings") or {}
+    known = {f["id"] for f in features if _kind(f) == "building"}
+    for bid in sorted(set(sc) - known):
+        log.append(f"buildings file: unknown building {bid} -> ignored")
+    node_feats = [f for f in features if _kind(f) == "node"]
+    pads, rings_of = [], {}
+    for f in features:
+        if _kind(f) != "building":
+            continue
+        bid, p = f["id"], f.get("properties") or {}
+        s = sc.get(bid) or {}
+        if p.get("building_type") == "bridge":
+            continue
+        if s.get("noPad") is True:
+            log.append(f"building {bid}: noPad -> no pad")
+            continue
+        gl = [lv for lv in (p.get("ground_levels") or []) if isinstance(lv, int) and not isinstance(lv, bool) and lv != 0]
+        level = s.get("padLevel", min(gl) if gl else None)
+        if not isinstance(level, int) or isinstance(level, bool) or level == 0:
+            log.append(f"building {bid}: no pad level -> no pad")
+            continue
+        coords = s.get("polygon") or (p.get("floor_outlines") or {}).get(str(level))
+        if not coords:
+            g = f.get("geometry") or {}
+            coords = g.get("coordinates") if g.get("type") == "Polygon" else None
+        rings = []
+        for ring in coords or []:
+            if not isinstance(ring, list):
+                continue
+            pts = [project(c[0], c[1]) for c in ring if isinstance(c, (list, tuple)) and len(c) >= 2]
+            if len(pts) >= 3:
+                rings.append(np.array(pts, float))
+        if not rings:
+            log.append(f"building {bid}: no polygon with 3 or more points -> no pad")
+            continue
+        mask = rasterize_polygon(grid, rings)
+        if not mask.any():
+            log.append(f"building {bid}: polygon covers no grid cell -> no pad")
+            continue
+        key = f"fp:{bid}:{floor_id_of_level(level)}"
+        if _is_number(s.get("h1fM")):
+            h_ref, src = float(s["h1fM"]), "survey"
+        else:
+            ents = [project(*nf["geometry"]["coordinates"][:2]) for nf in node_feats
+                    if (nf.get("properties") or {}).get("building_id") == bid and nf["properties"].get("level") == level
+                    and nf["properties"].get("node_type") == "entrance"]
+            ref = reference_height(grid, mask, np.array(ents, float).reshape(-1, 2), cfg.building)
+            if ref is None:
+                log.append(f"building {bid}: no DEM on the pad ring -> no pad")
+                continue
+            h_ref, src = ref
+        lower = h_ref
+        if cfg.building.ratchet and previous and _is_number(previous.get(key)):
+            lower = max(h_ref, float(previous[key]))
+        pads.append(BuildingPad(bid, key, h_ref, src, lower))
+        rings_of[bid] = tuple(rings)
+    return pads, rings_of
+
+
+def wls_problem(nodes: list[Node], edges: list[Edge], cm: Optional[CampusModel], features: list[dict],
+                soft: list[SoftFlat], scale: dict[str, float], pads, sidecar: dict, cfg, log: list[str], project=None):
+    """v1 structures -> node_wls.WlsProblem (stairs and ramps rebuilt from the campus features)."""
+    from node_wls import BuildingMeasurement, DiffRow, FlatLink, HeightVar, Ramp, SoftFlatCand, Stair, WlsProblem
+
+    keyset = {n.key for n in nodes}
+    efeat = {f["id"]: f for f in features if _kind(f) == "edge"}
+    nfeat = {f["id"]: f for f in features if _kind(f) == "node"}
+    level_of = {nid: int(f["properties"]["level"]) for nid, f in nfeat.items()
+                if f["properties"].get("building_id") is not None and f["properties"].get("level") is not None}
+    stairs, ramps = [], []
+    if cm is not None:
+        for eid, f in efeat.items():
+            p = f["properties"]
+            if eid not in cm.edge_vars:
+                continue
+            va, vb = cm.edge_vars[eid]
+            if va == vb:
+                continue
+            hw = p.get("highway")
+            if hw == "steps":
+                n = p.get("step_count")
+                if not (isinstance(n, int) and not isinstance(n, bool) and n > 0) or p.get("conveying") is not None:
+                    continue
+                sign = {"up": 1, "down": -1}.get(p.get("incline"))
+                fa, fb = p.get("from"), p.get("to")
+                if sign is None and fa in level_of and fb in level_of and level_of[fa] != level_of[fb]:
+                    sign = 1 if level_of[fb] > level_of[fa] else -1
+                stairs.append(Stair(f"stair:{eid}", va, vb, n, sign))
+            elif hw == "ramp":
+                poly = edge_polyline(f, *cm.edge_xy[eid], project)
+                length = float(np.hypot(*np.diff(poly, axis=0).T).sum())
+                g = cfg.wls.ramp_gmax_accessible if p.get("step_free") is True else cfg.wls.ramp_gmax_general
+                ramps.append(Ramp(f"ramp:{eid}", va, vb, length, g))
+    stair_edges = {s.id[len("stair:"):] for s in stairs}
+    rows, flats = [], []
+    for e in edges:
+        if e.kind in (MEASURED, "floor_prior"):
+            rows.append(DiffRow(e.id, e.frm, e.to, e.dh, e.sigma, e.kind, e.off_from, e.off_to, e.qc))
+        elif e.kind == "breakline_drop":
+            if any(e.id.endswith(":" + s) for s in stair_edges):
+                log.append(f"{e.id}: the edge is a stair -> stair kept")
+                continue
+            rows.append(DiffRow(e.id, e.frm, e.to, e.dh, e.sigma, "breakline_drop", e.off_from, e.off_to, e.qc))
+        elif e.kind == "flat_exact":
+            eid = e.id[len("flat_exact:"):]
+            f = efeat.get(eid)
+            xy = None
+            if f is not None and cm is not None and _corridor_edge(f, cm, eid):
+                xy = edge_polyline(f, *cm.edge_xy[eid], project)
+            flats.append(FlatLink(e.id, e.frm, e.to, xy))
+        # step_count rows are rebuilt as Stair above
+    touch: dict[str, set] = {}
+    if cm is not None:
+        for eid, (va, vb) in cm.edge_vars.items():
+            hw = (efeat.get(eid, {}).get("properties") or {}).get("highway")
+            for v in (va, vb):
+                if v.startswith("cn:"):
+                    touch.setdefault(v, set()).add(hw)
+    only = {v for v, hs in touch.items() if hs and hs <= {"steps", "ramp"}}
+    padded = {p.building_id for p in pads}
+    meas = []
+    for m in (sidecar or {}).get("measurements") or []:
+        if not isinstance(m, dict):
+            continue
+        mid, bid, pt, d = m.get("id"), m.get("buildingId"), m.get("point") or {}, m.get("buildingMinusPointM")
+        key = None
+        if isinstance(pt, dict) and "campusNode" in pt and cm is not None:
+            key = cm.var_of.get(pt["campusNode"])
+        elif isinstance(pt, dict):
+            key = pt.get("heightNode")
+        if not isinstance(mid, str) or bid not in padded or key not in keyset or not _is_number(d):
+            log.append(f"building measurement {mid}: unknown building pad or point, or no height -> ignored")
+            continue
+        sig = m.get("sigmaM")
+        meas.append(BuildingMeasurement(mid, bid, key, float(d), float(sig) if _is_number(sig) and sig > 0 else None))
+    return WlsProblem([HeightVar(n.key, n.kind, n.x, n.y) for n in nodes], rows, flats,
+                      [SoftFlatCand(s.id, s.frm, s.to, s.length) for s in soft], stairs, ramps, list(pads), meas,
+                      dict(scale), only)
+
+
+def to_solve_result(w, solved: set[str], nodes: Optional[list[Node]] = None,
+                    dem_value: Optional[Callable[[Node], Optional[float]]] = None) -> SolveResult:
+    """node_wls.WlsResult -> v1 SolveResult (so write_back and derived_elevation work unchanged)."""
+    by = {n.key: n for n in nodes or []}
+    out = {}
+    for k, h in w.h.items():
+        d = dem_value(by[k]) if dem_value is not None and k in by else None
+        out[k] = NodeResult(k, h, w.sigma[k], w.floating[k], d, None if d is None else h - d, w.sigma_rel[k])
+    edges = {k: EdgeReport(r.id, r.residual_m, r.w_test, r.redundancy, r.robust_weight, r.qc) for k, r in w.rows.items()}
+    return SolveResult(out, edges, w.chi2, w.dof, w.global_test_passed, w.components, list(w.log), w.soft_flat, w.cov,
+                       w.comp_of, set(solved))
+
+
+def resolve_config(a: argparse.Namespace):
+    """defaults -> <store folder>/solver_config.json -> --config -> --set -> explicit --sigma-dem / --soft-flat-max-grade."""
+    from solver_config import SolverConfig, load_config, parse_set_args, validate, with_overrides
+
+    try:
+        cfg = SolverConfig()
+        auto = Path(a.store).parent / "solver_config.json"
+        if auto.exists():
+            cfg = load_config(auto, cfg)
+        if a.config:
+            cfg = load_config(a.config, cfg)
+        if a.set:
+            cfg = with_overrides(cfg, parse_set_args(a.set))
+        legacy = {}
+        if a.sigma_dem is not None:
+            legacy["wls.sigma_dem_m"] = a.sigma_dem
+        if a.soft_flat_max_grade is not None:
+            legacy["wls.soft_flat_max_grade"] = a.soft_flat_max_grade
+        if legacy:
+            cfg = with_overrides(cfg, legacy)
+    except (ValueError, OSError) as e:
+        _fail(f"solver config: {e}")
+    errs = validate(cfg)
+    if errs:
+        _fail("solver config: " + "; ".join(errs))
+    return cfg
+
+
+def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: dict[str, float]) -> dict:
+    from solver_config import config_to_dict
+
+    conf = config_to_dict(cfg)
+    conf.pop("format", None)
+    counts = {"road_cells", "pad_cells", "apron_cells", "island_cells", "mid_cells", "shoulder_unknowns", "cg_iterations",
+              "cg_converged", "vertical_steps_over_limit"}
+    grid_stats = {k: (int(v) if k in counts else _num(v)) for k, v in g.stats.items()}
+    b_out = {}
+    for bid, b in sorted(w.buildings.items()):
+        extra = buildings.get(bid, {})
+        b_out[bid] = {"h_1f_m": _num(b.h), "h_1f_ref_m": _num(b.h_ref), "ref_source": b.ref_source,
+                      "lower_bound_m": _num(b.lower_bound), "lower_bound_active": bool(b.lower_bound_active),
+                      "sigma_b_m": _num(b.sigma_b), "up_share": _num(b.up_share),
+                      "buried_ref_m2": _num(extra.get("buried_ref_m2")), "buried_m2": _num(extra.get("buried_m2")),
+                      "measurement_residuals_m": {k: _num(v) for k, v in sorted(b.measurement_residuals.items())}}
+    return {
+        "format": REPORT_FORMAT, "engine": ENGINE_V2, "runId": run_id, "config": conf,
+        "timings": {k: _num(v) for k, v in timings.items()},
+        "grid": grid_stats,
+        "buildings": b_out,
+        "stairs": {sid.split(":", 1)[1]: {"riser_m": _num(s.riser_m), "sign": int(s.sign), "direction_source": s.direction_source}
+                   for sid, s in sorted(w.stairs.items())},
+        "ramps_capped": [rid.split(":", 1)[1] for rid in w.ramps_capped],
+        "outliers": [{"id": o.id, "kind": o.kind, "residual_m": _num(o.residual_m), "sigma_m": _num(o.sigma_m),
+                      "ratio": _num(o.ratio)} for o in w.outliers],
+        "log": [_ascii(line) for line in g.log],
+    }
+
+
+def _run_v2(a: argparse.Namespace):
+    import time
+    import uuid
+
+    from pyproj import Transformer
+
+    from grid_grading import Corridors, Pad, SoftPoint, buried_area, corridor_dem_values, effective_half_width, grade_grid
+    from grid_grading import pad_ring, rasterize_polygon
+    from node_wls import solve_nodes
+
+    t_start = time.perf_counter()
+    cfg = resolve_config(a)
+    grid = Grid.load(a.dem)
+    nodes, edges, store = load_store(a.store, grid.crs)
+    tf = Transformer.from_crs("EPSG:4326", grid.crs, always_xy=True)
+    bl_log: list[str] = []
+    breaklines = store_breaklines(store, tf.transform, bl_log)
+    drawn = list(breaklines)
+    cm, soft, drop_scale, features = None, [], {}, []
+    if a.campus:
+        features = read_campus_features(a.campus)
+        cm = campus_model(features, tf.transform, a.floor_height_default, a.floor_prior_sigma)
+        known = {n.key for n in nodes}
+        nodes += [n for n in cm.nodes if n.key not in known]
+        drops, off_soft, drop_scale, drop_log = breakline_drop_edges(breaklines, cm)
+        edges += cm.edges + drops
+        soft = [s for s in cm.soft_flat if s.id not in off_soft]
+        bl_log += drop_log
+        for line in cm.log:
+            _say(line)
+    elif any(b.low_side is not None and b.drop_m is not None for b in breaklines):
+        bl_log.append("breaklines with lowSide/dropM: height constraints need --campus (side separation only)")
+    for line in bl_log:
+        _say(line)
+    if a.method != "fusion":
+        _say("--method is not used by engine v2")
+    if a.previous_residual:
+        _say("v2 recomputes the grid in full (--previous-residual is not read)")
+
+    log: list[str] = []
+    if a.buildings:
+        sidecar = load_buildings_sidecar(Path(a.buildings), log)
+    else:
+        auto = Path(a.store).parent / "buildings.json"
+        sidecar = load_buildings_sidecar(auto, log) if auto.exists() else {}
+    previous_h = {e["key"]: e.get("hM") for e in store.get("estimates", []) or [] if isinstance(e, dict) and "key" in e}
+    pads, rings_of = (building_pads(features, tf.transform, sidecar, grid, cm, cfg, log, previous_h)
+                      if cm is not None else ([], {}))
+    keys = {n.key for n in nodes}
+    for p in pads:
+        if p.var not in keys:
+            nodes.append(Node(p.var, "floor_plane"))
+            keys.add(p.var)
+    problem = wls_problem(nodes, edges, cm, features, soft, drop_scale, pads, sidecar, cfg, log, project=tf.transform)
+    for line in log:
+        _say(line)
+
+    hw = effective_half_width(cfg.raster, grid.res)
+    t0 = time.perf_counter()
+    w = solve_nodes(problem, cfg.wls, cfg.building, dem_at=lambda x, y: float(grid.sample_bilinear(x, y)[0]),
+                    corridor_dem=lambda xy: corridor_dem_values(grid, xy, hw), cell_area_m2=grid.res ** 2,
+                    alpha=a.alpha, huber_k=a.huber_k)
+    t_wls = time.perf_counter() - t0
+    for line in w.log:
+        _say(line)
+
+    prev_derived = json.loads(Path(a.previous_derived).read_text(encoding="utf-8")) if a.previous_derived else None
+    all_keys = set(w.h)
+    solved, partial = all_keys, False
+    if a.dirty:
+        req = json.loads(Path(a.dirty).read_text(encoding="utf-8"))
+        if prev_derived is not None and prev_derived.get("engine") == ENGINE_V2:
+            seeds = dirty_seeds(req, cm, [n.key for n in nodes], tf.transform)
+            solved = {k for comp in w.components if seeds.intersection(comp) for k in comp}
+            partial = True
+        else:
+            _say("previous derived elevation is not from engine v2 -> every component is written")
+    res = to_solve_result(w, solved, nodes, lambda n: _dem_value(grid, n))
+
+    heights = {k: h for k, h in w.h.items() if not w.floating[k]}
+    corr = campus_corridors(features, cm, tf.transform, heights) if cm is not None else Corridors.empty()
+    pad_list = [Pad(p.building_id, rings_of[p.building_id], w.h[p.var]) for p in pads if p.var in w.h]
+    points = [SoftPoint(n.x, n.y, w.h[n.key], n.influence_r) for n in nodes
+              if n.key.startswith("op:") and n.kind == "outdoor_point" and n.x is not None and n.key in w.h
+              and not w.floating[n.key]]
+    segs = [np.array([p0, p1], float) for bl in drawn for p0, p1 in zip(bl.coords[:-1], bl.coords[1:])]
+    g = grade_grid(grid, corr, pad_list, cfg, breaklines=np.array(segs).reshape(-1, 2, 2) if segs else None,
+                   breakline_attenuation=a.breakline_attenuation, soft_points=points)
+    for line in g.log:
+        _say(line)
+    b_extra = {}
+    for p in pads:
+        mask = rasterize_polygon(grid, rings_of[p.building_id])
+        ring = pad_ring(mask)
+        b_extra[p.building_id] = {"buried_ref_m2": buried_area(grid.data, ring, p.h_ref, grid.res),
+                                  "buried_m2": buried_area(grid.data, ring, w.h[p.var], grid.res)}
+
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    Grid(g.h, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(
+        out / "corrected_dem", source=f"{grid.meta.get('source', '')} + CAMPO grading (v2)")
+    Grid(g.residual, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(out / "residual_field")
+    run_id, now_ms = str(uuid.uuid4()), int(time.time() * 1000)
+    (out / "store.solved.json").write_text(
+        json.dumps(write_back(store, res, run_id, now_ms), ensure_ascii=False, indent=2), encoding="utf-8")
+    timings = {"wls": t_wls, **g.timings, "run": time.perf_counter() - t_start}
+    (out / "solve_report.json").write_text(json.dumps(solve_report(cfg, w, g, b_extra, run_id, timings), indent=2) + "\n",
+                                           encoding="utf-8")
+    _say(f"grid: {int(g.stats['road_cells'])} road, {int(g.stats['pad_cells'])} pad, {int(g.stats['island_cells'])} island, "
+         f"{int(g.stats['shoulder_unknowns'])} shoulder cells, CG {int(g.stats['cg_iterations'])} iteration(s), "
+         f"{g.timings['total']:.2f} s")
+    _say(f"wrote {out}/corrected_dem.(json|bin), residual_field.*, store.solved.json, solve_report.json")
+    if a.derived_out:
+        if cm is None:
+            _fail("--derived-out needs --campus", 1)
+        dp = Path(a.derived_out)
+        dp.parent.mkdir(parents=True, exist_ok=True)
+        d = derived_elevation(cm, res, run_id, now_ms, prev_derived if partial else None)
+        for v in d["edges"].values():
+            v["elev_sigma_m"] = max(v["elev_sigma_m"], 0.01)
+        d["engine"] = ENGINE_V2
+        dp.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _say(f"wrote {dp}")
 
 
 if __name__ == "__main__":

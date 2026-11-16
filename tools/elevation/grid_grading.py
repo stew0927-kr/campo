@@ -79,7 +79,7 @@ class TerraceCandidate:
     source: str  # sidecar | ground_level | portal
     doors: tuple[tuple[float, float], ...] = ()  # building side door points
     outside: tuple[tuple[float, float], ...] = ()  # outside points of the same doors
-    outside_dem: tuple[Optional[float], ...] = ()  # DEM_0 at the outside points (fallback of the support)
+    outside_dem: tuple[Optional[float], ...] = ()  # DEM_0 at the outside points (the support of each door)
     storeys: float = math.nan
 
 

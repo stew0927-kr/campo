@@ -117,7 +117,7 @@ HALF_W 1.0 m / SOFT_RING 0.5 m / A_max 400 m² / R_max 5 m / A_big 3000 m² / κ
 
 ---
 
-> 구현 위치: 아래 절은 위 설계 명세 원문에 덧붙인 것이다(2026-11-16). `campo_height_solver.py`의 `building_portals`(건물별 출입문 모음 `PortalContact`), `building_pads`(기반층·접지면 기준 하한), `terraced_pads`(테라스 후보·지지 판정), `building_extras`(접지면 묻힌 면적·문턱 잔차), `grid_grading.py`의 `Terrace`·`TerraceCandidate`·`plan_terraces`·`assign_terraces`·`rasterize_pads`(셀 배정)·`building_targets`(테라스별 사면)·`terrace_walls`·`wall_segments`(옹벽 불연속선), `node_wls.py`의 `BuildingPad.plinth_m`·`BuildingSolve.h_pad`가 구현하고, 튜닝 값은 `solver_config.py`의 `BuildingConfig`(`terrace_*`, `door_sill_tol_m`)에 있다. 검증은 `test_portal_pads.py`가 맡는다. v1 엔진은 바뀌지 않았다.
+> 구현 위치: 아래 절은 위 설계 명세 원문에 덧붙인 것이다(2026-11-16). `campo_height_solver.py`의 `building_portals`(건물별 출입문 모음 `PortalContact`), `building_pads`(기반층·접지면 기준 하한), `terraced_pads`(테라스 후보·지지 판정), `building_extras`(접지면 묻힌 면적·문턱 잔차), `grid_grading.py`의 `Terrace`·`TerraceCandidate`·`plan_terraces`·`door_support`(문 지지값)·`assign_terraces`·`rasterize_pads`(셀 배정)·`building_targets`(테라스별 사면)·`terrace_walls`·`wall_segments`(옹벽 불연속선), `node_wls.py`의 `BuildingPad.plinth_m`·`BuildingSolve.h_pad`가 구현하고, 튜닝 값은 `solver_config.py`의 `BuildingConfig`(`terrace_*`, `door_sill_tol_m`)에 있다. 검증은 `test_portal_pads.py`가 맡는다. v1 엔진은 바뀌지 않았다.
 
 ## 포탈 기준 다단 대지(terraced pads)
 
@@ -132,10 +132,10 @@ HALF_W 1.0 m / SOFT_RING 0.5 m / A_max 400 m² / R_max 5 m / A_big 3000 m² / κ
 
 ### 테라스 후보와 지지
 - 후보 층 = {padLevel} ∪ {포탈 층} ∪ {ground_levels}(0 제외). 포탈 = `edge_type: "portal"`이고 한쪽 끝이 그 건물 층 노드, 다른 쪽이 실외 노드나 다른 건물 층 노드인 구간. 역할은 `door_role`(구간, 없으면 문 쪽 노드).
-- support(padLevel) = 외곽 링 DEM₀ 중앙값(보고용). support(L > padLevel) = 그 층 문들의 바깥 지점 반경 `entrance_ring_radius_m` 안 건물 밖 셀 DEM₀ 중앙값(없으면 바깥 노드 DEM₀)의 중앙값. 한 층의 문이 여럿이어도 테라스는 하나.
+- support(padLevel) = 외곽 링 DEM₀ 중앙값(보고용). support(L > padLevel) = 그 층 문마다 **문 바깥 지점의 원본 DEM₀**(`PortalContact.outside_dem_m`, 쌍선형)을 읽어 그 중앙값. 그 지점에 DEM₀가 없을 때만 바깥 지점 반경 `entrance_ring_radius_m` 안 건물 밖 셀 DEM₀ 중앙값으로 대체한다(`door_support`). 한 층의 문이 여럿이어도 테라스는 하나.
 - |support(L) − plane(L)| ≤ `terrace_tol_m`(0.6 m)이면 테라스. 아니면 만들지 않고(지금처럼 사면과 수직 단차 로그) 이유를 남긴다(`4F door not supported by the terrain: plane 41.70 m, support 32.00 m`). padLevel 아래 층, 문이 없는 ground_level, 층 평면 높이가 없는 층도 테라스가 아니다. 개수는 base 포함 `terrace_max_levels`(3)까지, 지지 오차가 작은 순.
 - **접지면보다 높아야 한다**: 층 번호 순서는 높이 순서를 보장하지 않는다. 건물 `levels`에 없는 층(예: levels `[1,3]`인데 2F에 문)에 문이 있으면 그 층 평면은 층고 prior 사슬 없이 포탈·DEM만으로 풀려 대지 접지면(plane(padLevel))보다 낮게 나올 수 있다. 그런 후보는 `2F plane 31.10 m is at or below the pad ground plane 31.42 m`로 남기고 테라스를 만들지 않는다(역전된 테라스는 대지를 파고 옹벽을 거꾸로 세운다).
-- 알려진 한계: support(L)은 문 바깥 지점 반경 `entrance_ring_radius_m`(5 m) 원판에서 대지 밖 셀의 중앙값이라, 경사면에서는 원판이 위쪽 절반에 치우쳐 대략 `경사 × 2.5 m`만큼 높게 읽힌다(0.5 경사에서 1.0~1.3 m). `terrace_tol_m` 0.6 m보다 커지면 경사면의 위층 문이 지지되지 않는 것으로 판정된다(`test_terrace_edges.py::test_upper_door_on_a_linear_slope_is_supported`, xfail). 문 바깥 지점의 DEM₀(`PortalContact.outside_dem_m`)을 1차 지지값으로 쓰는 것이 제안된 수정이다.
+- 지지값을 문 바깥 지점 DEM₀으로 두는 이유: 반경 `entrance_ring_radius_m`(5 m) 원판 중앙값은 경사면에서 원판이 위쪽 절반에 치우쳐 대략 `경사 × 2.5 m`만큼 높게 읽히고(0.5 경사에서 1.0~1.3 m), `terrace_tol_m` 0.6 m보다 커지면 경사면에 선 위층 문이 지지되지 않는 것으로 잘못 판정되어 다단 대지가 정작 필요한 언덕 건물에서 생기지 않았다(2026-11-17 수정, `test_terrace_edges.py::test_upper_door_on_a_linear_slope_is_supported`). 원판 중앙값은 그 지점에 DEM₀가 없을 때의 폴백으로만 남긴다.
 
 ### 셀 배정과 옹벽
 - 대지 셀마다 DEM₀에 가장 가까운 plane의 테라스. |DEM₀ − plane(base)| ≤ tol/2이거나 DEM₀가 없으면 base. 각 층 문에서 `entrance_ring_radius_m` 안의 대지 셀은 그 층 테라스로 고정(가까운 문 우선). 고정 셀이 없는 `terrace_min_cells`(4) 미만 4-연결 조각은 가장 많이 맞닿은 다른 테라스로 합친다.

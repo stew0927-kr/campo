@@ -419,10 +419,16 @@ def ring_support(grid: Grid, pad_mask: np.ndarray) -> Optional[float]:
     return float(np.median(v)) if v.size else None
 
 
-def door_support(grid: Grid, pad_mask: np.ndarray, outside_xy: tuple[float, float], fallback: Optional[float],
+def door_support(grid: Grid, pad_mask: np.ndarray, outside_xy: tuple[float, float], outside_dem: Optional[float],
                  cfg: BuildingConfig) -> Optional[float]:
-    """DEM_0 in front of one door: median of the cells off the polygon within entrance_ring_radius_m of the outside point,
-    else the DEM_0 of the outside point itself (fallback)."""
+    """
+    DEM_0 the door stands on: the DEM_0 of the outside point itself (PortalContact.outside_dem_m, bilinear DEM_0). Only when
+    that point has no DEM, the median of the cells off the polygon within entrance_ring_radius_m of it. That disc is a
+    fallback, not the first choice: it reaches up a slope, so on a grade s the disc median sits about s x r / 2 high
+    (0.5 grade: about 1.0-1.3 m) and would reject an upper door that does stand on the hillside.
+    """
+    if outside_dem is not None and math.isfinite(outside_dem):
+        return float(outside_dem)
     x, y = outside_xy
     r = cfg.entrance_ring_radius_m
     r0, r1, c0, c1 = _window(grid, x - r, x + r, y - r, y + r)
@@ -433,7 +439,7 @@ def door_support(grid: Grid, pad_mask: np.ndarray, outside_xy: tuple[float, floa
         sel = near & ~pad_mask[r0:r1, c0:c1] & np.isfinite(win)
         if sel.any():
             return float(np.median(win[sel]))
-    return fallback if fallback is not None and math.isfinite(fallback) else None
+    return None
 
 
 def plan_terraces(grid: Grid, pad_mask: np.ndarray, base_level: int, candidates: Sequence[TerraceCandidate],
@@ -441,7 +447,8 @@ def plan_terraces(grid: Grid, pad_mask: np.ndarray, base_level: int, candidates:
     """
     Which candidate levels become terraces. The base (pad level) always is; its support is the ring DEM_0 median. An upper
     level L is a terrace only if plane(L) is above the pad ground plane and |support(L) - plane(L)| <= terrace_tol_m,
-    support(L) = median over the doors of L of the DEM_0 in front of each door. At most terrace_max_levels terraces (the
+    support(L) = median over the doors of L of the DEM_0 each door's outside point stands on (the 5 m off-pad disc median
+    when that point has no DEM). At most terrace_max_levels terraces (the
     base included), best supported first. A candidate whose floor plane is not above the base ground plane is not a step up
     from the ground (the level order alone does not guarantee the height order: a door level that is not one of the
     building's levels gets its own floor plane without a floor prior chain, and it can land below the pad level).
@@ -471,8 +478,8 @@ def plan_terraces(grid: Grid, pad_mask: np.ndarray, base_level: int, candidates:
         elif not c.outside:
             row["reason"] = f"{name} has no door to the outside, nothing in the terrain supports it"
         else:
-            fb = list(c.outside_dem) + [None] * (len(c.outside) - len(c.outside_dem))
-            sups = [door_support(grid, pad_mask, xy, f, cfg) for xy, f in zip(c.outside, fb)]
+            od = list(c.outside_dem) + [None] * (len(c.outside) - len(c.outside_dem))
+            sups = [door_support(grid, pad_mask, xy, z, cfg) for xy, z in zip(c.outside, od)]
             sups = [v for v in sups if v is not None]
             if not sups:
                 row["reason"] = f"{name} door has no DEM in front of it"

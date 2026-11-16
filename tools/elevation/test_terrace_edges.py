@@ -5,7 +5,7 @@
  1) 비볼록(ㄱ자) 건물 폴리곤에서 테라스 분할과 옹벽 선분이 실제 단차 위에만 놓이는지
  2) 포탈이 건물 levels에 없는 층을 가리킬 때(층 평면이 대지 접지면보다 낮게 풀리는 경우) 역전된 테라스가 생기지 않는지
  3) 대지 셀이 모두 위 테라스로 가서 base 테라스가 셀을 갖지 못할 때 보고가 supported=False인지
- 4) 급경사 지형에서 문 지지값(반경 5 m 반원 중앙값)이 경사만큼 치우치는 알려진 한계(수정 전까지 xfail)
+ 4) 급경사 지형에서도 문 지지값이 문 바깥 지점의 DEM₀을 써서 경사만큼 치우치지 않는지(수정 반영)
  5) 겹치는 건물 폴리곤(앞 대지가 셀을 가져감)
  6) 실지형 재현: 급경사 + 1F/3F 출입구 + 건물 2 m 옆 도로를 CLI v2로 끝까지
 좌표는 격자 CRS 미터를 그대로 쓴다(project = 항등). CLI 장면만 경위도로 쓴다.
@@ -178,12 +178,8 @@ def test_base_terrace_that_keeps_no_cell_is_reported_unsupported():
     assert [t["level"] for t in rep["terraces"] if t["supported"]] == [3]
 
 
-# ---------------------------------------------------------------- 4. 급경사에서 문 지지값 치우침 (알려진 한계)
+# ---------------------------------------------------------------- 4. 급경사에서 문 지지값 (문 바깥 지점 DEM₀)
 
-@pytest.mark.xfail(strict=True, reason="door_support() takes the median over the entrance_ring_radius_m (5 m) half disc, "
-                                       "which on a slope sits ~slope x 2.5 m above the outside point: an upper door that "
-                                       "stands on the hillside is rejected (see docs/ELEVATION_SOLVER_V2.md). Fix: use "
-                                       "outside_dem_m (or a 1-2 m ring) as the primary support.")
 def test_upper_door_on_a_linear_slope_is_supported():
     grade = 0.5
     y0 = -46.0                     # terrain 30.0 m here
@@ -200,8 +196,8 @@ def test_upper_door_on_a_linear_slope_is_supported():
     assert r["g"].stats["terraces"] == 1
 
 
-def test_slope_bias_of_the_door_support_is_the_documented_cause():
-    """The same scene as above, without the xfail: the numbers that keep the terrace from being made."""
+def test_door_support_reads_the_outside_point_dem_not_the_half_disc():
+    """The same scene as above: the support comes from the outside point, so there is no slope bias left in it."""
     grade = 0.5
     y0 = -46.0
     y_out = y0 + 7.8 / grade
@@ -214,13 +210,14 @@ def test_slope_bias_of_the_door_support_is_the_documented_cause():
     r = run_v2(feats, grid)
     row = heights_of(r, "bldg_S")[3]
     plane, support = row["plane_m"], row["support_m"]
-    # the DEM at the door's outside point is what the door stands on ...
-    assert float(grid.sample_bilinear(X0 + 40, Y0 + y_out)[0]) == pytest.approx(37.8, abs=0.3)
+    # the DEM at the door's outside point is what the door stands on, and that is the support now
+    outside_dem = float(grid.sample_bilinear(X0 + 40, Y0 + y_out)[0])
+    assert outside_dem == pytest.approx(37.8, abs=0.3)
+    assert support == pytest.approx(outside_dem, abs=0.05)
     assert plane == pytest.approx(37.8, abs=0.5)
-    # ... but the 5 m half disc median reads the upslope half of the disc
-    bias = support - plane
-    assert 0.5 < bias < 2.0, (plane, support)
-    assert row["supported"] is False and "not supported by the terrain" in row["reason"]
+    # ... where the 5 m half disc median would read the upslope half and land ~1 m above the door
+    assert abs(support - plane) <= CFG.building.terrace_tol_m
+    assert row["supported"] is True and "not supported by the terrain" not in (row.get("reason") or "")
 
 
 # ---------------------------------------------------------------- 5. 겹치는 건물 폴리곤

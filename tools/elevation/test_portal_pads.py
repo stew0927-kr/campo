@@ -337,7 +337,10 @@ def test_unsupported_door_makes_no_terrace():
     row = next(t for t in rep["terraces"] if t["level"] == 4)
     assert row["supported"] is False and row["cells"] == 0 and "not supported" in row["reason"]
     assert f"plane {row['plane_m']:.2f} m, support {row['support_m']:.2f} m" in row["reason"]
-    assert abs(row["support_m"] - 32.0) < 0.5 and row["plane_m"] - row["support_m"] > CFG.building.terrace_tol_m
+    # support = DEM_0 at the door's outside point; that node sits exactly on the 2 m step edge, so the bilinear DEM_0 there
+    # is mid-step (31.0 m) and not the 32.0 m of the cells behind it (test_portal_pads 의 장면 한계, 2026-11-17).
+    assert row["support_m"] == pytest.approx(float(grid.sample_bilinear(X0 + 30, Y0)[0]), abs=1e-6)
+    assert row["plane_m"] - row["support_m"] > CFG.building.terrace_tol_m
     assert any("4F door not supported by the terrain" in line for line in r["log"])
     assert any("4F door not supported by the terrain" in line for line in r["rep"]["log"])
     pad = g.pad_id >= 0

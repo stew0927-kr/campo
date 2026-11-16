@@ -440,13 +440,17 @@ def plan_terraces(grid: Grid, pad_mask: np.ndarray, base_level: int, candidates:
                   cfg: BuildingConfig) -> tuple[list[Terrace], list[dict], list[str]]:
     """
     Which candidate levels become terraces. The base (pad level) always is; its support is the ring DEM_0 median. An upper
-    level L is a terrace only if |support(L) - plane(L)| <= terrace_tol_m, support(L) = median over the doors of L of the
-    DEM_0 in front of each door. At most terrace_max_levels terraces (the base included), best supported first.
+    level L is a terrace only if plane(L) is above the pad ground plane and |support(L) - plane(L)| <= terrace_tol_m,
+    support(L) = median over the doors of L of the DEM_0 in front of each door. At most terrace_max_levels terraces (the
+    base included), best supported first. A candidate whose floor plane is not above the base ground plane is not a step up
+    from the ground (the level order alone does not guarantee the height order: a door level that is not one of the
+    building's levels gets its own floor plane without a floor prior chain, and it can land below the pad level).
     Returns (accepted upper terraces sorted by level, one report row per candidate, log).
     """
     rows: list[dict] = []
     log: list[str] = []
     ok: list[tuple[float, TerraceCandidate, dict]] = []
+    base_plane = next((c.plane for c in candidates if c.level == base_level), math.nan)
     for c in sorted(candidates, key=lambda c: c.level):
         row = {"level": c.level, "plane_m": float(c.plane) if math.isfinite(c.plane) else None, "source": c.source,
                "supported": False, "support_m": None, "port_count": len(c.doors), "cells": 0, "boundary_step_m": None}
@@ -462,6 +466,8 @@ def plan_terraces(grid: Grid, pad_mask: np.ndarray, base_level: int, candidates:
             row["reason"] = f"{name} is below the pad level {level_name(base_level)}"
         elif not math.isfinite(c.plane):
             row["reason"] = f"{name} has no floor plane height"
+        elif math.isfinite(base_plane) and c.plane <= base_plane:
+            row["reason"] = (f"{name} plane {c.plane:.2f} m is at or below the pad ground plane {base_plane:.2f} m")
         elif not c.outside:
             row["reason"] = f"{name} has no door to the outside, nothing in the terrain supports it"
         else:

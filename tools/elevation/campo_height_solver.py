@@ -1485,7 +1485,9 @@ def building_extras(grid: Grid, g, pads, pad_list, rings_of: dict, meta: dict[st
             ti = next((t for t in t_info if t["level"] == r["level"]), None)
             if ti is not None and r["supported"]:
                 r.update(plane_m=ti["plane_m"], cells=ti["cells"], boundary_step_m=ti["boundary_step_m"])
-                if planes is not None:
+                if ti["cells"] == 0:  # every pad cell went to another terrace: nothing is drawn at this plane
+                    r.update(supported=False, reason=f"{floor_id_of_level(r['level'])} terrace keeps no pad cell")
+                elif planes is not None:
                     face = ring & (planes == ti["plane_m"])
                     r["buried_m2"] = buried_area(grid.data, face, ti["plane_m"], grid.res)
                     r["buried_ref_m2"] = buried_area(grid.data, face, ti["plane_m"] - (h_pad - h_pad_ref), grid.res)

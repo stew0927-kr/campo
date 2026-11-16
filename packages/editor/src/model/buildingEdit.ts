@@ -45,3 +45,18 @@ export function planSetFloorHeight(state: EditState, code: string, text: string)
   const value = Math.round(v * 100) / 100;
   return { annotation: `건물 ${code} 층고를 ${value} m로 바꾸기`, steps: [() => setProps([building.id], { ext: { ...rest, floor_height_m: value } })] };
 }
+
+/**
+ * 대장 총층수: building.ext.registry_floors. Floors it counts beyond the levels are the plinth (core plinthFloors), drawn
+ * as one block under the building when the 3D terrain is on. Blank clears it (no plinth).
+ */
+export function planSetRegistryFloors(state: EditState, code: string, text: string): PlanResult {
+  const building = state.buildings[code];
+  if (!building) return { error: '건물을 찾을 수 없습니다.' };
+  const t = text.trim().replace(/\s*층$/, '');
+  const { registry_floors: _old, ...rest } = building.props.ext ?? {};
+  if (t === '') return { annotation: `건물 ${code} 대장 총층수 지우기`, steps: [() => setProps([building.id], { ext: Object.keys(rest).length > 0 ? rest : undefined })] };
+  const v = Number(t);
+  if (!Number.isInteger(v) || v < 1 || v > 200) return { error: '대장 총층수는 1~200 사이 정수로 넣어 주세요.' };
+  return { annotation: `건물 ${code} 대장 총층수를 ${v}층으로 바꾸기`, steps: [() => setProps([building.id], { ext: { ...rest, registry_floors: v } })] };
+}

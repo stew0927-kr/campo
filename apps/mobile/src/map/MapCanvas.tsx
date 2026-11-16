@@ -10,7 +10,7 @@
 // The map keeps its own view. Dragging re-renders this component only (the screen around it reads the crosshair through
 // the handle when a record is made), and the drawn Features are redrawn only when the data, the floor or the zoom step changes.
 import {
-  LAYER_STACK_ICON, STACK_COLORS, beltEndIds, buildingById, buildingStack, edgeCoords, isEscalator, outlineOfLevel, pictogramOf, type EditState, type Position,
+  LAYER_STACK_ICON, STACK_COLORS, beltEndIds, buildingById, edgeCoords, isEscalator, outlineOfLevel, pictogramOf, stackLayout, type EditState, type Position,
 } from '@campo/core';
 import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactElement, type RefObject } from 'react';
 import { Image, PanResponder, Vibration, Pressable, StyleSheet, Text, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
@@ -741,7 +741,8 @@ const Stack25D = memo(function Stack25D({ state, projection, scope, px, turn, fl
   const ring = (pts: readonly XY[]) => pts.map((q) => q.join(',')).join(' ');
   const out: ReactElement[] = [];
   for (const b of Object.values(state.buildings)) {
-    const stack = buildingStack(b, floorLevels?.(b.id));
+    // The app has no 3D terrain: the 'flat' layout hides the plinth (기반층), 1F on the map, basements below it.
+    const stack = stackLayout(b, floorLevels?.(b.id), 'flat').floors;
     const here = scope.kind === 'building' && scope.buildingId === b.id;
     stack.forEach((f, i) => {
       const corners = (f.outline[0] ?? []).slice(0, -1);

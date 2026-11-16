@@ -186,7 +186,8 @@
           "additionalProperties": false,
           "properties": {
             "moct_bldg_id": { "type": "string", "minLength": 1 },
-            "floor_height_m": { "type": "number", "exclusiveMinimum": 0 }
+            "floor_height_m": { "type": "number", "exclusiveMinimum": 0 },
+            "registry_floors": { "type": "integer", "minimum": 1 }
           }
         }
       },

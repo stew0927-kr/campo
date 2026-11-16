@@ -30,7 +30,7 @@ import { edgeMidpoint, planSplit } from '../model/split.ts';
 import { planUnsync, syncedIn, withSyncMirror } from '../model/sync.ts';
 import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, toBase64, withSurvey } from '../model/survey.ts';
 import type { PathVertex } from '../model/tools.ts';
-import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, planSetFloorHeight, renameBlocked } from '../model/buildingEdit.ts';
+import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, planSetFloorHeight, planSetRegistryFloors, renameBlocked } from '../model/buildingEdit.ts';
 import { BreaklineForm, BreaklinePanel, breaklineTitle } from '../ui/BreaklineForm.tsx';
 import { BuildingPanel } from '../ui/BuildingPanel.tsx';
 import { ChecksPanel } from '../ui/ChecksPanel.tsx';
@@ -827,6 +827,7 @@ export function Workspace({ session }: { session: Session }) {
             onName={(name) => perform(planSetBuildingName(state, selectedBuilding.props.code, name))}
             onRename={renameSelected}
             onLevels={(levels) => perform(planSetBuildingLevels(selectedBuilding.props.code, levels))}
+            onRegistryFloors={(text) => perform(planSetRegistryFloors(state, selectedBuilding.props.code, text))}
             renameBlocked={(newCode) => renameBlocked(state, ctx, selectedBuilding.props.code, newCode)}
             removeBlocked={(level) => levelRemoveBlocked(state, selectedBuilding.props.code, level)}
             onEditOutline={(level) => beginOutline({ buildingId: selectedBuilding.id, level })}
@@ -1045,6 +1046,8 @@ export function Workspace({ session }: { session: Session }) {
           name={contextBuilding.props.name}
           levels={contextBuilding.props.levels}
           floorHeight={contextBuilding.props.ext?.floor_height_m}
+          registryFloors={contextBuilding.props.ext?.registry_floors}
+          onRegistryFloors={(text) => runMenuPlan(planSetRegistryFloors(state, contextBuilding.props.code, text))}
           onName={(name) => runMenuPlan(planSetBuildingName(state, contextBuilding.props.code, name))}
           onLevels={(levels) => runMenuPlan(planSetBuildingLevels(contextBuilding.props.code, levels))}
           onFloorHeight={(text) => runMenuPlan(planSetFloorHeight(state, contextBuilding.props.code, text))}

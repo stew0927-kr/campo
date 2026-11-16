@@ -2,7 +2,7 @@
 // conversion from EPSG:5186 (the grid files of tools/elevation), the terrain mesh, paths draped on it, and the heights of
 // the floors, the indoor points and the vertical links between floors. Display only: nothing here changes the data, and
 // routing never reads a height.
-import { buildingStack, edgeCoords, outlineOfLevel, type EditBuilding, type EditState, type Level, type Position } from '@campo/core';
+import { edgeCoords, outlineOfLevel, stackLayout, type EditBuilding, type StackMode, type EditState, type Level, type Position } from '@campo/core';
 
 // ---- EPSG:5186 (Korea 2000 / Central Belt 2010): transverse Mercator on GRS80 ----
 
@@ -216,18 +216,23 @@ export function buildingGround(b: Pick<EditBuilding, 'polygon' | 'props'>, groun
   return Number.isFinite(min) ? min : 0;
 }
 
-/** Height of each floor's base of a building (level → z of its floor), on its ground; floor heights × k. */
-export function floorBases(b: Pick<EditBuilding, 'polygon' | 'props'>, ground: Ground, measured?: ReadonlyMap<Level, number>, k = 1): Map<Level, number> {
+/**
+ * Height of each floor's base of a building (level → z of its floor), on its ground; floor heights × k. With the
+ * terrain on (mode 'terrain') the floors stand on the building's plinth (core stackLayout), if it has one.
+ */
+export function floorBases(
+  b: Pick<EditBuilding, 'polygon' | 'props'>, ground: Ground, measured?: ReadonlyMap<Level, number>, k = 1, mode: StackMode = 'flat',
+): Map<Level, number> {
   const g = buildingGround(b, ground);
-  return new Map(buildingStack(b, measured).map((s) => [s.level, g + s.baseM * k]));
+  return new Map(stackLayout(b, measured, mode).floors.map((s) => [s.level, g + s.baseM * k]));
 }
 
 /** z of every point: outdoors on the ground, indoors on its floor (a little above, so it does not sink into the slab). */
 export function nodeHeights(
-  state: EditState, ground: Ground, measured: (buildingId: string) => ReadonlyMap<Level, number> = () => new Map(), k = 1,
+  state: EditState, ground: Ground, measured: (buildingId: string) => ReadonlyMap<Level, number> = () => new Map(), k = 1, mode: StackMode = 'flat',
 ): Map<string, number> {
   const bases = new Map<string, Map<Level, number>>();
-  for (const b of Object.values(state.buildings)) bases.set(b.id, floorBases(b, ground, measured(b.id), k));
+  for (const b of Object.values(state.buildings)) bases.set(b.id, floorBases(b, ground, measured(b.id), k, mode));
   const out = new Map<string, number>();
   for (const n of Object.values(state.nodes)) {
     const { building_id: id, level } = n.props;

@@ -4,7 +4,8 @@
 // A floor's height is, in order: the measured height difference to the floor above (the recompute's estimates of the
 // floor planes, fp:<building>:<floor>), the building's ext.floor_height_m, else DEFAULT_FLOOR_HEIGHT_M (3.9 m, the same
 // prior the height solver uses). Floor 1 stands on the ground (base 0); floors above stand on the ones below, basements
-// hang below the ground (B1's top is 0).
+// hang below the ground (B1's top is 0). stackLayout adds the plinth (기반층, ext.registry_floors − levels) when the 3D
+// terrain is on.
 import { outlineOfLevel } from './outline.ts';
 import type { EditBuilding } from './edit/state.ts';
 import type { Level, Position } from './types.ts';
@@ -61,6 +62,56 @@ export function buildingStack(building: Pick<EditBuilding, 'polygon' | 'props'>,
 }
 
 /**
+ * 기반층 수: the floors the building register counts (ext.registry_floors) beyond the floors the map lists. Taking the
+ * top floor off `levels` adds one; without registry_floors it is 0.
+ */
+export function plinthFloors(building: Pick<EditBuilding, 'props'>): number {
+  return Math.max(0, (building.props.ext?.registry_floors ?? 0) - building.props.levels.length);
+}
+
+/** The plinth (기단부): one block for all the plinth floors, no floor lines inside it. */
+export interface PlinthBlock {
+  floors: number;
+  baseM: number;
+  topM: number;
+  outline: Position[][];
+}
+
+/**
+ * How the 3D views lay a building out:
+ * - 'flat' (2D map, terrain off): no plinth; floor 1 on the ground (0 m), basements below it (buildingStack as is).
+ * - 'terrain' (terrain on): with plinth floors, a single block plinthFloors × floor height stands on the ground (0 m) and
+ *   the listed floors stack right on top of it, lowest first (basements, then 1F, then the floors above). Without
+ *   plinth floors the building is laid out as in 'flat'.
+ */
+export type StackMode = 'flat' | 'terrain';
+
+export interface StackLayout {
+  plinth: PlinthBlock | null;
+  floors: FloorSlab[];
+}
+
+export function stackLayout(
+  building: Pick<EditBuilding, 'polygon' | 'props'>,
+  measured: ReadonlyMap<Level, number> = new Map(),
+  mode: StackMode = 'flat',
+): StackLayout {
+  const floors = buildingStack(building, measured);
+  const n = plinthFloors(building);
+  if (mode === 'flat' || n === 0) return { plinth: null, floors };
+  // The plinth floors are not listed, so nothing is measured on them: the building's floor height, else 3.9 m.
+  const own = building.props.ext?.floor_height_m;
+  const plinthTop = n * (own !== undefined && own > 0 ? own : DEFAULT_FLOOR_HEIGHT_M);
+  // The lowest listed floor (the deepest basement, else 1F) sits on the plinth's top.
+  const lowest = Math.min(0, ...floors.map((f) => f.baseM));
+  const lift = plinthTop - lowest;
+  return {
+    plinth: { floors: n, baseM: 0, topM: plinthTop, outline: building.polygon },
+    floors: floors.map((f) => ({ ...f, baseM: f.baseM + lift, topM: f.topM + lift })),
+  };
+}
+
+/**
  * Measured floor heights of one building from the recompute's estimates (ElevationStore.estimates, key
  * fp:<building id>:<floor id>, floor id 1F / B1): level → height in metres.
  */
@@ -88,5 +139,5 @@ export const LAYER_STACK_ICON: readonly { d: string; opacity: number }[] = [
   { d: 'M12 2L21 5L12 8L3 5Z', opacity: 1 },
 ];
 
-/** Colours of the 3D views (both apps): the floor shown, floors above the ground, basements, and the ground plate. */
-export const STACK_COLORS = { selected: '#f2b705', floor: '#c5ced8', below: '#4f6378', ground: '#6f8a5c', edge: '#1e2933' } as const;
+/** Colours of the 3D views (both apps): the floor shown, floors above the ground, basements, the ground plate, the plinth. */
+export const STACK_COLORS = { selected: '#f2b705', floor: '#c5ced8', below: '#4f6378', ground: '#6f8a5c', plinth: '#8c8273', edge: '#1e2933' } as const;

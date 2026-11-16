@@ -1,6 +1,6 @@
 // OSM 건물 가져오기 (osm.ts): the Overpass query, reading its answer, and the building it becomes.
 import { describe, expect, it } from 'vitest';
-import { setBuildingLevels, type Position } from '@campo/core';
+import { plinthFloors, setBuildingLevels, type Position } from '@campo/core';
 import hanyang from '../src/data/osm-campus/hanyang-seoul.json';
 import { FLOOR_OVERRIDES } from '../src/data/building-floors.ts';
 import type { OsmCampusData } from '../src/model/osmCampus.ts';
@@ -102,7 +102,32 @@ describe('한양대 건물 층수 기본값 (FLOOR_OVERRIDES)', () => {
       ];
       expect(spec.levels, id).toEqual(expected);
       expect(spec.levels, id).not.toContain(0);
+      expect(spec.registryTotal, id).toBeGreaterThanOrEqual(spec.levels.length);
     }
+  });
+
+  it('register totals: four buildings have plinth floors, the others count exactly their levels', () => {
+    const plinth = { w187185124: 10, w187181263: 12, w187178757: 11, w187178760: 11 } as Record<string, number>;
+    expect(FLOOR_OVERRIDES['w187185124']!.levels).toEqual([-1, 1, 2, 3, 4, 5, 6]);
+    expect(FLOOR_OVERRIDES['w187181263']!.levels).toEqual([-2, -1, 1, 2, 3, 4, 5, 6, 7]);
+    expect(FLOOR_OVERRIDES['w187178757']!.levels).toEqual([-1, 1, 2, 3, 4, 5, 6, 7]);
+    expect(FLOOR_OVERRIDES['w187178760']!.levels).toEqual([-1, 1, 2, 3, 4, 5, 6, 7]);
+    for (const [id, spec] of Object.entries(FLOOR_OVERRIDES)) {
+      expect(spec.registryTotal, id).toBe(plinth[id] ?? spec.basement + spec.above);
+    }
+  });
+
+  it('the import writes ext.registry_floors with the levels, so the plinth follows', () => {
+    const s = fixtureSession(41);
+    const el = { type: 'way', id: 187185124, tags: { building: 'university' }, geometry: square(HERE[0], HERE[1], 0.0002) };
+    expect(runPlan(s.history, planned(s, parseOverpass({ elements: [el] })[0]!))).toMatchObject({ ok: true });
+    const b = s.history.current().buildings['OSMw187185124']!;
+    expect(b.props.levels).toEqual([-1, 1, 2, 3, 4, 5, 6]);
+    expect(b.props.ext?.registry_floors).toBe(10);
+    expect(plinthFloors(b)).toBe(3);
+    // Taking the top floor off: one more plinth floor.
+    s.history.perform(setBuildingLevels('OSMw187185124', [-1, 1, 2, 3, 4, 5]));
+    expect(plinthFloors(s.history.current().buildings['OSMw187185124']!)).toBe(4);
   });
 
   it('Overpass path: a listed building takes the table floors instead of building:levels', () => {
@@ -111,7 +136,7 @@ describe('한양대 건물 층수 기본값 (FLOOR_OVERRIDES)', () => {
     const [b] = parseOverpass({ elements: [el] });
     expect(b!.levels).toEqual([1, 2, 3]); // what OpenStreetMap says
     const plan = planned(s, b!);
-    expect(plan.notices![0]).toBe('한양대 건물 층수 표의 층수(8개 층)를 넣었습니다.');
+    expect(plan.notices![0]).toBe('한양대 건물 층수 표의 층수(8개 층, 대장 총 8층)를 넣었습니다.');
     expect(runPlan(s.history, plan)).toMatchObject({ ok: true });
     expect(s.history.current().buildings['OSMw187181264']!.props.levels).toEqual([-2, -1, 1, 2, 3, 4, 5, 6]);
   });

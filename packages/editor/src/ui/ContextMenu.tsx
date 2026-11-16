@@ -230,22 +230,26 @@ interface BuildingMenuProps {
   levels: number[];
   /** ext.floor_height_m, when set. */
   floorHeight: number | undefined;
+  /** ext.registry_floors (대장 총층수), when set. */
+  registryFloors: number | undefined;
   /** Each returns the reason it did not happen (shown in the menu), or undefined (the menu closes). */
   onName: (name: string) => string | undefined;
   onLevels: (levels: number[]) => string | undefined;
   onFloorHeight: (text: string) => string | undefined;
+  onRegistryFloors: (text: string) => string | undefined;
   onEditOutline: () => void;
   deleteBlocked: string | false;
   onDelete: () => void;
   onClose: () => void;
 }
 
-/** The right-click menu of a building outline: 이름, 층 목록, 층고 (unfolded), 외곽선 수정, 삭제. */
+/** The right-click menu of a building outline: 이름, 층 목록, 층고, 대장 총층수 (unfolded), 외곽선 수정, 삭제. */
 export function BuildingContextMenu(p: BuildingMenuProps) {
   const [editing, setEditing] = useState(true);
   const [name, setName] = useState(p.name);
   const [levels, setLevels] = useState([...p.levels].sort((a, b) => b - a).join(', '));
   const [height, setHeight] = useState(p.floorHeight === undefined ? '' : String(p.floorHeight));
+  const [registry, setRegistry] = useState(p.registryFloors === undefined ? '' : String(p.registryFloors));
   const [error, setError] = useState<string | null>(null);
   const enter = (run: () => string | undefined) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return;
@@ -275,6 +279,9 @@ export function BuildingContextMenu(p: BuildingMenuProps) {
           </label>
           <label>층고 (m, 비우면 기본 3.9 m)
             <input aria-label="층고" inputMode="decimal" value={height} placeholder="예: 3.9" onChange={(e) => setHeight(e.target.value)} onKeyDown={enter(() => p.onFloorHeight(height))} />
+          </label>
+          <label>대장 총층수 (층 목록보다 많으면 기반층)
+            <input aria-label="대장 총층수" inputMode="numeric" value={registry} placeholder="예: 10" onChange={(e) => setRegistry(e.target.value)} onKeyDown={enter(() => p.onRegistryFloors(registry))} />
           </label>
           {error && <p className="ctx-reason" role="alert">{error}</p>}
           <p className="field-help">각 칸은 Enter를 눌러 넣습니다.</p>

@@ -90,6 +90,23 @@ describe('floors and points of a building in 3D', () => {
     expect(floorBases(a, () => 0).get(3)).toBeCloseTo(7.8, 9);
   });
 
+  it('with plinth floors: terrain off keeps 1F on the map and B1 below; terrain on stacks B1, 1F… on the plinth block', () => {
+    const s = state();
+    const a = Object.values(s.buildings).find((b) => b.id === 'bldg_A')!;
+    // Register: 7 floors; listed: B1, 1F–4F → 2 plinth floors.
+    const b = { ...a, props: { ...a.props, levels: [-1, 1, 2, 3, 4], ext: { registry_floors: 7 } } };
+    const flat = floorBases(b, () => 0);
+    expect(flat.get(1)).toBeCloseTo(0, 9);
+    expect(flat.get(-1)).toBeCloseTo(-3.9, 9);
+    const ground = (p: Position) => (p[0] - 127) * 10_000;
+    const g = buildingGround(b, ground);
+    const onTerrain = floorBases(b, ground, undefined, 1, 'terrain');
+    expect(onTerrain.get(-1)).toBeCloseTo(g + 7.8, 9);
+    expect(onTerrain.get(1)).toBeCloseTo(g + 7.8 + 3.9, 9);
+    // × the height exaggeration, plinth included.
+    expect(floorBases(b, ground, undefined, 2, 'terrain').get(1)).toBeCloseTo(g + (7.8 + 3.9) * 2, 9);
+  });
+
   it('indoor points sit on their floor, outdoor points on the ground; elevators and stairs between floors are upright lines', () => {
     const s = state();
     const z = nodeHeights(s, () => 0);

@@ -6,7 +6,7 @@
 // the cursor itself, model/terrain3d.ts pickSurface).
 import type { Layer } from '@deck.gl/core';
 import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer } from '@deck.gl/layers';
-import { PICTOGRAM_COLORS, STACK_COLORS, beltEndIds, buildingById, buildingStack, edgeCoords, outlineOfLevel, pictogramOf, type EditState, type Level, type Position } from '@campo/core';
+import { PICTOGRAM_COLORS, STACK_COLORS, beltEndIds, buildingById, edgeCoords, outlineOfLevel, pictogramOf, stackLayout, type EditState, type Level, type Position, type StackMode } from '@campo/core';
 import type { Scope } from '../model/scope.ts';
 import {
   ROUTE_LIFT_M, buildingGround, buildingSegments, drapePath, floorBases, groundOf, nodeHeights, routePath3D, terrainMesh, terrainWire,
@@ -58,12 +58,13 @@ export interface Deck3DInput {
 interface Slab {
   polygon: [number, number, number][][];
   height: number;
-  role: 'floor' | 'below' | 'selected' | 'ground';
+  role: 'floor' | 'below' | 'selected' | 'ground' | 'plinth';
 }
 
 export function deckLayers({ state, scope, grid, terrain, buildings, measured, exaggeration: k, routes, slopes }: Deck3DInput): Layer[] {
   const layers: Layer[] = [];
   const ground: Ground = terrain ? groundOf(grid, k) : () => 0;
+  const mode: StackMode = terrain ? 'terrain' : 'flat';
 
   if (terrain && grid) {
     const cells = terrainMesh(grid, 1, k);
@@ -100,7 +101,15 @@ export function deckLayers({ state, scope, grid, terrain, buildings, measured, e
     const slabs: Slab[] = [];
     for (const b of Object.values(state.buildings)) {
       const g = buildingGround(b, ground);
-      const stack = buildingStack(b, measured(b.id));
+      // Terrain off: no plinth, 1F on the map, basements below. Terrain on: the plinth as one block, the floors on it.
+      const { plinth, floors: stack } = stackLayout(b, measured(b.id), mode);
+      if (plinth) {
+        slabs.push({
+          polygon: plinth.outline.map((ring) => ring.map((p): [number, number, number] => [p[0], p[1], g + plinth.baseM * k])),
+          height: Math.max(0.2, (plinth.topM - plinth.baseM) * k - SLAB_GAP_M),
+          role: 'plinth',
+        });
+      }
       for (const s of stack) {
         const z = g + s.baseM * k;
         const selected = scope.kind === 'building' && scope.buildingId === b.id && scope.level === s.level;
@@ -111,8 +120,9 @@ export function deckLayers({ state, scope, grid, terrain, buildings, measured, e
           role: selected ? 'selected' : s.level < 0 ? 'below' : 'floor',
         });
       }
-      // Where a building has basements: a thin translucent plate at its ground, between them and floor 1.
-      if (stack.some((s) => s.level < 0)) slabs.push({ polygon: b.polygon.map((ring) => ring.map((p): [number, number, number] => [p[0], p[1], g - 0.15])), height: 0.3, role: 'ground' });
+      // Where a building has basements: a thin translucent plate at its ground, between them and floor 1 (on a plinth the
+      // ground is under the plinth, so no plate).
+      if (!plinth && stack.some((s) => s.level < 0)) slabs.push({ polygon: b.polygon.map((ring) => ring.map((p): [number, number, number] => [p[0], p[1], g - 0.15])), height: 0.3, role: 'ground' });
     }
     // A role with no slab gets no layer: an empty extruded SolidPolygonLayer draws its sides with -1 instances (a GL warning every frame).
     const slabLayer = (role: Slab['role'], color: string, opacity: number): Layer[] => {
@@ -124,6 +134,7 @@ export function deckLayers({ state, scope, grid, terrain, buildings, measured, e
       })];
     };
     layers.push(
+      ...slabLayer('plinth', STACK_COLORS.plinth, 0.55),
       ...slabLayer('below', STACK_COLORS.below, 0.4),
       ...slabLayer('ground', STACK_COLORS.ground, 0.3),
       ...slabLayer('floor', STACK_COLORS.floor, 0.22),
@@ -132,7 +143,7 @@ export function deckLayers({ state, scope, grid, terrain, buildings, measured, e
 
     // The building shown: its points and paths at their floors, the floor shown strong, the links between floors upright.
     if (scope.kind === 'building') {
-      const z = nodeHeights(state, ground, measured, k);
+      const z = nodeHeights(state, ground, measured, k, mode);
       const segments = buildingSegments(state, scope.buildingId, scope.level, z);
       const segColor = (s: Segment3D): RGBA => (s.kind === 'elevator' ? rgb(PICTOGRAM_COLORS.elevator) : s.kind === 'steps' ? rgb(PICTOGRAM_COLORS.stairs)
         : s.strong ? rgb(STACK_COLORS.edge) : rgb(STACK_COLORS.edge, 70));
@@ -165,7 +176,7 @@ export function deckLayers({ state, scope, grid, terrain, buildings, measured, e
       );
     }
   }
-  layers.push(...routeLayers(state, ground, measured, k, routes, slopes));
+  layers.push(...routeLayers(state, ground, measured, k, mode, routes, slopes));
   return layers;
 }
 
@@ -178,7 +189,7 @@ type Line3D = { path: [number, number, number][]; color: RGBA };
 type Pin3D = { at: [number, number, number]; end: 'start' | 'end' };
 
 function routeLayers(
-  state: EditState, ground: Ground, measured: (buildingId: string) => ReadonlyMap<Level, number>, k: number,
+  state: EditState, ground: Ground, measured: (buildingId: string) => ReadonlyMap<Level, number>, k: number, mode: StackMode,
   routes: readonly RouteLine[], slopes: readonly SlopeLine[],
 ): Layer[] {
   if (routes.length === 0 && slopes.length === 0) return [];
@@ -188,7 +199,7 @@ function routeLayers(
     let m = bases.get(buildingId);
     if (!m) {
       const b = buildingById(state, buildingId);
-      m = b ? floorBases(b, ground, measured(b.id), k) : new Map<Level, number>();
+      m = b ? floorBases(b, ground, measured(b.id), k, mode) : new Map<Level, number>();
       bases.set(buildingId, m);
     }
     return m.get(level);

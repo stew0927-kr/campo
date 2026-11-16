@@ -61,7 +61,7 @@ v0.1은 아래가 모두 되면 끝이다.
 
 | kind | geometry | 필수 속성 | 선택 속성 |
 |---|---|---|---|
-| `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m`, `floor_outlines`(층별 외곽선, 아래 참고) |
+| `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m`, `ext.registry_floors`(건축물대장 총층수, 아래 참고), `floor_outlines`(층별 외곽선, 아래 참고) |
 | `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check`, `hours`, `closed_period`, `access_condition`, `sync_group` |
 | `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check`, `flat_exact`, `is_breakline`, `elev_diff_m`, `elev_sigma_m`, `grade_pct` |
 
@@ -90,6 +90,12 @@ v0.1은 아래가 모두 되면 끝이다.
 - 계산 값 셋은 편집 동작 `setEdgeElevation`만 쓴다. 구간을 뒤집으면 `elev_diff_m`·`grade_pct`의 부호가 바뀌고, 나누거나 합치면 지워졌다가 다음 재계산이 다시 쓴다.
 - 길찾기는 이 값들을 구간 자신의 속성으로만 읽는다(층 번호는 여전히 비교하지 않음). 경사가 오르막·내리막 시간과 프로필 벌점에 들어간다.
 - 건물을 OpenStreetMap에서 가져오면 `source`는 `osm`이다(ODbL, © OpenStreetMap 기여자).
+
+건물의 대장 총층수와 기반층(선택 속성, 3D 보기 전용, 길찾기는 읽지 않음)
+
+- `ext.registry_floors`(1 이상 정수): 건축물대장의 총층수(지하 + 지상). 편집기에서 고칠 수 있다.
+- 기반층 수 `plinthFloors = max(0, registry_floors − levels 개수)`. 꼭대기 층을 지워 `levels`가 줄면 기반층이 그만큼 는다. `registry_floors`가 없으면 0.
+- 3D 보기(core `stackLayout`): 지형 3D가 꺼져 있으면 기반층은 그리지 않고 1층 바닥이 지면(0 m), 지하층은 그 아래. 지형 3D가 켜져 있고 기반층이 있으면 지형 위에 기반층 × 층고 높이의 통짜 블록(기단부)을 세우고 그 바로 위에 지하층 → 1층 → 지상층을 쌓는다.
 
 `node_type` 값
 

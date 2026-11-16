@@ -126,11 +126,11 @@ export function planOsmBuilding(state: EditState, b: OsmBuilding): PlanResult {
     annotation: `OSM 건물 "${name}" 가져오기`,
     steps: [
       () => addBuilding({ polygon: [b.ring.map(([x, y]): Position => [x, y])], code, name, levels, source: OSM_SOURCE }),
-      // The register's total floors go in with the floors: more than the levels and the rest is the plinth (core plinthFloors).
-      () => setProps([`bldg_${code}`], override ? { needs_check: true, ext: { registry_floors: override.registryTotal } } : { needs_check: true }),
+      // The plinth (ext.plinth_floors) is left unset (0); it is typed in by hand in 상세 정보.
+      () => setProps([`bldg_${code}`], { needs_check: true }),
     ],
     notices: [
-      override ? `한양대 건물 층수 표의 층수(${levels.length}개 층, 대장 총 ${override.registryTotal}층)를 넣었습니다.`
+      override ? `한양대 건물 층수 표의 층수(${levels.length}개 층)를 넣었습니다.`
         : b.levelsKnown ? `OSM의 층수(${levels.length}개 층)를 넣었습니다.` : 'OSM에 층수가 없어 1층만 넣었습니다.',
       '이름·코드·층은 상세 정보에서 고칠 수 있습니다. 현장에서 확인해 주세요.',
     ],

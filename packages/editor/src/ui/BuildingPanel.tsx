@@ -1,4 +1,4 @@
-// 상세 정보 of a building outline: name, code, the list of floors and the register's total floors, all editable.
+// 상세 정보 of a building outline: name, code, the list of floors and the plinth floors, all editable.
 import { useEffect, useState } from 'react';
 import { plinthFloors, type EditBuilding } from '@campo/core';
 import { parseLevels } from '../model/building.ts';
@@ -10,8 +10,8 @@ interface Props {
   onName: (name: string) => string | undefined;
   onRename: (code: string) => string | undefined;
   onLevels: (levels: number[]) => string | undefined;
-  /** 대장 총층수 (ext.registry_floors), as typed; blank clears it. */
-  onRegistryFloors: (text: string) => string | undefined;
+  /** 기반층 (ext.plinth_floors), as typed; blank or 0 clears it. */
+  onPlinthFloors: (text: string) => string | undefined;
   /** Why the code cannot be that (while typing), why a floor cannot be taken out. */
   renameBlocked: (code: string) => string | false;
   removeBlocked: (level: number) => string | false;
@@ -20,21 +20,19 @@ interface Props {
   onResetOutline: (level: number) => void;
 }
 
-export function BuildingPanel({ building, onName, onRename, onLevels, onRegistryFloors, renameBlocked, removeBlocked, onEditOutline, onResetOutline }: Props) {
+export function BuildingPanel({ building, onName, onRename, onLevels, onPlinthFloors, renameBlocked, removeBlocked, onEditOutline, onResetOutline }: Props) {
   const { code, name, levels, ground_levels } = building.props;
   const [nameText, setNameText] = useState(name);
   const [codeText, setCodeText] = useState(code);
   const [levelText, setLevelText] = useState('');
-  const registry = building.props.ext?.registry_floors;
-  const registryShown = registry === undefined ? '' : String(registry);
-  const [registryText, setRegistryText] = useState(registryShown);
+  const plinthShown = String(plinthFloors(building));
+  const [plinthText, setPlinthText] = useState(plinthShown);
   const [error, setError] = useState<string>();
   // Another building was selected, or an undo changed this one.
   useEffect(() => setNameText(name), [name, building.id]);
   useEffect(() => setCodeText(code), [code, building.id]);
-  useEffect(() => setRegistryText(registryShown), [registryShown, building.id]);
+  useEffect(() => setPlinthText(plinthShown), [plinthShown, building.id]);
   useEffect(() => setError(undefined), [building.id]);
-  const plinth = plinthFloors(building);
 
   const sorted = [...levels].sort((a, b) => b - a);
   const typedCode = codeText.trim();
@@ -51,11 +49,11 @@ export function BuildingPanel({ building, onName, onRename, onLevels, onRegistry
     if (unchanged || codeReason !== false) return;
     setError(onRename(typedCode));
   };
-  const commitRegistry = () => {
-    if (registryText.trim() === registryShown) return;
-    const err = onRegistryFloors(registryText);
+  const commitPlinth = () => {
+    if (plinthText.trim() === plinthShown) return;
+    const err = onPlinthFloors(plinthText);
     setError(err);
-    if (err) setRegistryText(registryShown);
+    if (err) setPlinthText(plinthShown);
   };
   const addLevels = () => {
     const parsed = parseLevels(levelText);
@@ -125,21 +123,20 @@ export function BuildingPanel({ building, onName, onRename, onLevels, onRegistry
         <p className="field-help">지점이나 구간, 강의실 영역이 이미 있는 층은 지울 수 없습니다. 지하 1층은 -1입니다.</p>
       </fieldset>
       <div className="field">
-        <label htmlFor="building-registry">대장 총층수</label>
+        <label htmlFor="building-plinth">기반층</label>
         <div className="inline-row">
           <input
-            id="building-registry"
-            inputMode="numeric"
-            value={registryText}
-            placeholder="예: 10"
-            onChange={(e) => setRegistryText(e.target.value)}
-            onBlur={commitRegistry}
+            id="building-plinth"
+            inputMode="decimal"
+            value={plinthText}
+            placeholder="0"
+            onChange={(e) => setPlinthText(e.target.value)}
+            onBlur={commitPlinth}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
           />
         </div>
         <p className="field-help">
-          {plinth > 0 ? `기반층 ${plinth}개 층(대장 총층수 − 층 목록 ${levels.length}개). ` : ''}
-          층 목록보다 많은 층은 기반층으로, 지형 3D에서 건물 아래 한 덩어리로 그립니다. 비우면 기반층이 없습니다.
+          지형 3D에서 건물 아래 한 덩어리로 그리는 층수입니다(0, 0.5, 1, 2처럼 소수도 됩니다). 기본은 0이고, 지형 3D를 끄면 그리지 않습니다.
         </p>
       </div>
       <fieldset className="field outline-field">

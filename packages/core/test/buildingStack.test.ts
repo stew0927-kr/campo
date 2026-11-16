@@ -41,27 +41,28 @@ describe('buildingStack', () => {
     expect(stack[1]!.outline).toBe(b.polygon);
   });
 
-  it('plinthFloors is registry_floors minus the listed floors, never below 0, and grows when the top floor is taken off', () => {
+  it('plinthFloors reads ext.plinth_floors as typed (decimals too), 0 when unset, and ignores the listed floors', () => {
     expect(plinthFloors(building([-1, 1, 2, 3, 4, 5, 6]))).toBe(0);
-    expect(plinthFloors(building([-1, 1, 2, 3, 4, 5, 6], { ext: { registry_floors: 10 } }))).toBe(3);
-    expect(plinthFloors(building([-1, 1, 2, 3, 4, 5], { ext: { registry_floors: 10 } }))).toBe(4);
-    expect(plinthFloors(building([-1, 1, 2], { ext: { registry_floors: 2 } }))).toBe(0);
+    expect(plinthFloors(building([-1, 1, 2, 3, 4, 5, 6], { ext: { plinth_floors: 3 } }))).toBe(3);
+    expect(plinthFloors(building([-1, 1, 2], { ext: { plinth_floors: 0.5 } }))).toBe(0.5);
+    expect(plinthFloors(building([-1, 1], { ext: { plinth_floors: 0 } }))).toBe(0);
+    expect(plinthFloors(building([-1, 1], { ext: { plinth_floors: -1 } }))).toBe(0);
   });
 
   it("stackLayout 'flat' (terrain off): no plinth, 1F on the ground, basements below it", () => {
-    const b = building([-2, -1, 1, 2], { ext: { registry_floors: 7 } });
+    const b = building([-2, -1, 1, 2], { ext: { plinth_floors: 3 } });
     const flat = stackLayout(b, undefined, 'flat');
     expect(flat.plinth).toBeNull();
     expect(flat.floors.map((s) => [s.level, +s.baseM.toFixed(2), +s.topM.toFixed(2)])).toEqual([[-2, -7.8, -3.9], [-1, -3.9, 0], [1, 0, 3.9], [2, 3.9, 7.8]]);
   });
 
   it("stackLayout 'terrain': one plinth block on the ground, then B2, B1, 1F, 2F right on top of it", () => {
-    const b = building([-2, -1, 1, 2], { ext: { registry_floors: 7, floor_height_m: 4 } });
+    const b = building([-2, -1, 1, 2], { ext: { plinth_floors: 3, floor_height_m: 4 } });
     const { plinth, floors } = stackLayout(b, undefined, 'terrain');
     expect(plinth).toEqual({ floors: 3, baseM: 0, topM: 12, outline: b.polygon });
     expect(floors.map((s) => [s.level, +s.baseM.toFixed(2), +s.topM.toFixed(2)])).toEqual([[-2, 12, 16], [-1, 16, 20], [1, 20, 24], [2, 24, 28]]);
     // Without basements 1F stands on the plinth.
-    const noBasement = stackLayout(building([1, 2], { ext: { registry_floors: 4 } }), undefined, 'terrain');
+    const noBasement = stackLayout(building([1, 2], { ext: { plinth_floors: 2 } }), undefined, 'terrain');
     expect(noBasement.floors.map((s) => +s.baseM.toFixed(2))).toEqual([7.8, 11.7]);
     // Without plinth floors the terrain layout is the flat one.
     const none = stackLayout(building([-1, 1]), undefined, 'terrain');
@@ -69,12 +70,13 @@ describe('buildingStack', () => {
     expect(none.floors.map((s) => s.baseM)).toEqual([-3.9, 0]);
   });
 
-  it('taking the top floor off grows the plinth block and keeps the stack on it', () => {
-    const before = stackLayout(building([1, 2, 3], { ext: { registry_floors: 4 } }), undefined, 'terrain');
-    const after = stackLayout(building([1, 2], { ext: { registry_floors: 4 } }), undefined, 'terrain');
-    expect(before.plinth!.floors).toBe(1);
-    expect(after.plinth!.floors).toBe(2);
-    expect(+after.floors[0]!.baseM.toFixed(2)).toBe(7.8);
+  it('a fractional plinth makes a block of that many floors; changing the floor list does not change it', () => {
+    const half = stackLayout(building([1, 2, 3], { ext: { plinth_floors: 0.5 } }), undefined, 'terrain');
+    expect(half.plinth!.floors).toBe(0.5);
+    expect(+half.plinth!.topM.toFixed(2)).toBe(1.95);
+    expect(+half.floors[0]!.baseM.toFixed(2)).toBe(1.95);
+    const fewer = stackLayout(building([1, 2], { ext: { plinth_floors: 0.5 } }), undefined, 'terrain');
+    expect(fewer.plinth!.topM).toBe(half.plinth!.topM);
   });
 
   it('reads measured floor heights from the recompute estimates of one building', () => {

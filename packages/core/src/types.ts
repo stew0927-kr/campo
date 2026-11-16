@@ -55,11 +55,10 @@ export interface BuildingProperties extends CommonProperties {
     moct_bldg_id?: string;
     floor_height_m?: number;
     /**
-     * 대장 총층수: the building's total floor count in the building register (지하 + 지상). Floors it counts beyond
-     * `levels` are the plinth (기반층, plinthFloors), drawn as one block under the stack when the 3D terrain is on.
-     * Display only: routing never reads it.
+     * 기반층: the height of the plinth under the listed floors, in floors (default 0; 0.5, 1, 2 … allowed), typed in by
+     * hand. Drawn as one block under the stack when the 3D terrain is on (plinthFloors). Display only: routing never reads it.
      */
-    registry_floors?: number;
+    plinth_floors?: number;
   };
 }
 

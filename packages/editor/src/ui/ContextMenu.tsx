@@ -230,26 +230,26 @@ interface BuildingMenuProps {
   levels: number[];
   /** ext.floor_height_m, when set. */
   floorHeight: number | undefined;
-  /** ext.registry_floors (대장 총층수), when set. */
-  registryFloors: number | undefined;
+  /** ext.plinth_floors (기반층), 0 when unset. */
+  plinthFloors: number;
   /** Each returns the reason it did not happen (shown in the menu), or undefined (the menu closes). */
   onName: (name: string) => string | undefined;
   onLevels: (levels: number[]) => string | undefined;
   onFloorHeight: (text: string) => string | undefined;
-  onRegistryFloors: (text: string) => string | undefined;
+  onPlinthFloors: (text: string) => string | undefined;
   onEditOutline: () => void;
   deleteBlocked: string | false;
   onDelete: () => void;
   onClose: () => void;
 }
 
-/** The right-click menu of a building outline: 이름, 층 목록, 층고, 대장 총층수 (unfolded), 외곽선 수정, 삭제. */
+/** The right-click menu of a building outline: 이름, 층 목록, 층고, 기반층 (unfolded), 외곽선 수정, 삭제. */
 export function BuildingContextMenu(p: BuildingMenuProps) {
   const [editing, setEditing] = useState(true);
   const [name, setName] = useState(p.name);
   const [levels, setLevels] = useState([...p.levels].sort((a, b) => b - a).join(', '));
   const [height, setHeight] = useState(p.floorHeight === undefined ? '' : String(p.floorHeight));
-  const [registry, setRegistry] = useState(p.registryFloors === undefined ? '' : String(p.registryFloors));
+  const [plinth, setPlinth] = useState(String(p.plinthFloors));
   const [error, setError] = useState<string | null>(null);
   const enter = (run: () => string | undefined) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return;
@@ -280,8 +280,8 @@ export function BuildingContextMenu(p: BuildingMenuProps) {
           <label>층고 (m, 비우면 기본 3.9 m)
             <input aria-label="층고" inputMode="decimal" value={height} placeholder="예: 3.9" onChange={(e) => setHeight(e.target.value)} onKeyDown={enter(() => p.onFloorHeight(height))} />
           </label>
-          <label>대장 총층수 (층 목록보다 많으면 기반층)
-            <input aria-label="대장 총층수" inputMode="numeric" value={registry} placeholder="예: 10" onChange={(e) => setRegistry(e.target.value)} onKeyDown={enter(() => p.onRegistryFloors(registry))} />
+          <label>기반층 (지형 3D에서 건물 아래 층수, 기본 0)
+            <input aria-label="기반층" inputMode="decimal" value={plinth} placeholder="0" onChange={(e) => setPlinth(e.target.value)} onKeyDown={enter(() => p.onPlinthFloors(plinth))} />
           </label>
           {error && <p className="ctx-reason" role="alert">{error}</p>}
           <p className="field-help">각 칸은 Enter를 눌러 넣습니다.</p>

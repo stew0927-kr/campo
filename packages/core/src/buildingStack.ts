@@ -4,7 +4,7 @@
 // A floor's height is, in order: the measured height difference to the floor above (the recompute's estimates of the
 // floor planes, fp:<building>:<floor>), the building's ext.floor_height_m, else DEFAULT_FLOOR_HEIGHT_M (3.9 m, the same
 // prior the height solver uses). Floor 1 stands on the ground (base 0); floors above stand on the ones below, basements
-// hang below the ground (B1's top is 0). stackLayout adds the plinth (기반층, ext.registry_floors − levels) when the 3D
+// hang below the ground (B1's top is 0). stackLayout adds the plinth (기반층, ext.plinth_floors) when the 3D
 // terrain is on.
 import { outlineOfLevel } from './outline.ts';
 import type { EditBuilding } from './edit/state.ts';
@@ -61,12 +61,10 @@ export function buildingStack(building: Pick<EditBuilding, 'polygon' | 'props'>,
   });
 }
 
-/**
- * 기반층 수: the floors the building register counts (ext.registry_floors) beyond the floors the map lists. Taking the
- * top floor off `levels` adds one; without registry_floors it is 0.
- */
+/** 기반층 수: ext.plinth_floors as typed in by hand (0.5 and the like are fine); 0 when unset or not a positive number. */
 export function plinthFloors(building: Pick<EditBuilding, 'props'>): number {
-  return Math.max(0, (building.props.ext?.registry_floors ?? 0) - building.props.levels.length);
+  const n = building.props.ext?.plinth_floors;
+  return n !== undefined && Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 /** The plinth (기단부): one block for all the plinth floors, no floor lines inside it. */

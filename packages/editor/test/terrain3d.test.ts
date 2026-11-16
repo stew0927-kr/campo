@@ -93,8 +93,8 @@ describe('floors and points of a building in 3D', () => {
   it('with plinth floors: terrain off keeps 1F on the map and B1 below; terrain on stacks B1, 1F… on the plinth block', () => {
     const s = state();
     const a = Object.values(s.buildings).find((b) => b.id === 'bldg_A')!;
-    // Register: 7 floors; listed: B1, 1F–4F → 2 plinth floors.
-    const b = { ...a, props: { ...a.props, levels: [-1, 1, 2, 3, 4], ext: { registry_floors: 7 } } };
+    // Typed in by hand: 2 plinth floors under B1, 1F–4F.
+    const b = { ...a, props: { ...a.props, levels: [-1, 1, 2, 3, 4], ext: { plinth_floors: 2 } } };
     const flat = floorBases(b, () => 0);
     expect(flat.get(1)).toBeCloseTo(0, 9);
     expect(flat.get(-1)).toBeCloseTo(-3.9, 9);

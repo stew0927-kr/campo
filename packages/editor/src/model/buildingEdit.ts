@@ -47,16 +47,19 @@ export function planSetFloorHeight(state: EditState, code: string, text: string)
 }
 
 /**
- * 대장 총층수: building.ext.registry_floors. Floors it counts beyond the levels are the plinth (core plinthFloors), drawn
- * as one block under the building when the 3D terrain is on. Blank clears it (no plinth).
+ * 기반층: building.ext.plinth_floors, typed in by hand (0, 0.5, 1, 2 …). Drawn as one block under the building when the
+ * 3D terrain is on (core plinthFloors). Blank or 0 clears it (no plinth).
  */
-export function planSetRegistryFloors(state: EditState, code: string, text: string): PlanResult {
+export function planSetPlinthFloors(state: EditState, code: string, text: string): PlanResult {
   const building = state.buildings[code];
   if (!building) return { error: '건물을 찾을 수 없습니다.' };
-  const t = text.trim().replace(/\s*층$/, '');
-  const { registry_floors: _old, ...rest } = building.props.ext ?? {};
-  if (t === '') return { annotation: `건물 ${code} 대장 총층수 지우기`, steps: [() => setProps([building.id], { ext: Object.keys(rest).length > 0 ? rest : undefined })] };
+  const t = text.trim().replace(',', '.').replace(/\s*층$/, '');
+  const { plinth_floors: _old, ...rest } = building.props.ext ?? {};
+  const clear = { annotation: `건물 ${code} 기반층 지우기`, steps: [() => setProps([building.id], { ext: Object.keys(rest).length > 0 ? rest : undefined })] };
+  if (t === '') return clear;
   const v = Number(t);
-  if (!Number.isInteger(v) || v < 1 || v > 200) return { error: '대장 총층수는 1~200 사이 정수로 넣어 주세요.' };
-  return { annotation: `건물 ${code} 대장 총층수를 ${v}층으로 바꾸기`, steps: [() => setProps([building.id], { ext: { ...rest, registry_floors: v } })] };
+  if (!Number.isFinite(v) || v < 0 || v > 50) return { error: '기반층은 0~50 사이 숫자로 넣어 주세요(예: 0, 0.5, 1, 2).' };
+  const value = Math.round(v * 100) / 100;
+  if (value === 0) return clear;
+  return { annotation: `건물 ${code} 기반층을 ${value}층으로 바꾸기`, steps: [() => setProps([building.id], { ext: { ...rest, plinth_floors: value } })] };
 }

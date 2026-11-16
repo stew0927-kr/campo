@@ -1,7 +1,7 @@
 // 건물 상세 정보 패널의 편집: 이름, 코드, 층 목록. 화면은 새 코드를 따라가야 한다.
 import { describe, expect, it } from 'vitest';
 import { plinthFloors } from '@campo/core';
-import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, planSetFloorHeight, planSetRegistryFloors, renameBlocked } from '../src/model/buildingEdit.ts';
+import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, planSetFloorHeight, planSetPlinthFloors, renameBlocked } from '../src/model/buildingEdit.ts';
 import { isError, runPlan } from '../src/model/plan.ts';
 import { followBuildingRename, initialUi, reconcileUi, type UiState } from '../src/ui/ui-state.ts';
 import { fixtureSession } from './fixture.ts';
@@ -101,26 +101,30 @@ describe('층고 (우클릭 메뉴)', () => {
   });
 });
 
-describe('대장 총층수', () => {
-  it('sets ext.registry_floors (the plinth follows), keeps other ext values, clears on blank, refuses nonsense', () => {
+describe('기반층', () => {
+  it('sets ext.plinth_floors (decimals too), keeps other ext values, clears on blank or 0, refuses nonsense', () => {
     const s = fixtureSession();
     const run = (text: string) => {
-      const plan = planSetRegistryFloors(s.history.current(), 'A', text);
+      const plan = planSetPlinthFloors(s.history.current(), 'A', text);
       if (isError(plan)) return plan.error;
       return runPlan(s.history, plan).ok ? 'ok' : 'failed';
     };
     const a = () => s.history.current().buildings['A']!;
-    expect(run('4.2')).toContain('대장 총층수');
-    expect(run('7층')).toBe('ok');
-    expect(a().props.ext?.registry_floors).toBe(7);
-    expect(plinthFloors(a())).toBe(7 - a().props.levels.length);
+    expect(run('-1')).toContain('기반층');
+    expect(run('2층')).toBe('ok');
+    expect(a().props.ext?.plinth_floors).toBe(2);
+    expect(run('0.5')).toBe('ok');
+    expect(plinthFloors(a())).toBe(0.5);
     const height = planSetFloorHeight(s.history.current(), 'A', '4');
     if (isError(height)) throw new Error(height.error);
     expect(runPlan(s.history, height).ok).toBe(true);
-    expect(run('8')).toBe('ok');
-    expect(a().props.ext).toEqual({ floor_height_m: 4, registry_floors: 8 });
+    expect(run('1')).toBe('ok');
+    expect(a().props.ext).toEqual({ floor_height_m: 4, plinth_floors: 1 });
     expect(run('')).toBe('ok');
     expect(a().props.ext).toEqual({ floor_height_m: 4 });
-    expect(run('0')).toContain('대장 총층수');
+    expect(run('1')).toBe('ok');
+    expect(run('0')).toBe('ok');
+    expect(a().props.ext).toEqual({ floor_height_m: 4 });
+    expect(run('abc')).toContain('기반층');
   });
 });

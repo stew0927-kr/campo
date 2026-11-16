@@ -83,6 +83,30 @@ describe('findRouteBetween', () => {
   });
 });
 
+describe('findRouteBetween: both ends on one edge (QA regression)', () => {
+  it('walks straight from foot to foot instead of out to an end node and back', () => {
+    const a = snapToRoutes(g, [127.00013, 37.0002])!;
+    const b = snapToRoutes(g, [127.00015, 37.00026])!;
+    expect(b.edgeId).toBe(a.edgeId);
+    const r = found(findRouteBetween(g, { snap: a }, { snap: b }, 'shortest'));
+    const edgeLen = found(findRoute(g, 'n_out_0001', 'n_out_0002', 'shortest')).distanceM;
+    expect(r.distanceM).toBeCloseTo(edgeLen * Math.abs(b.along - a.along), 0);
+    expect(r.distanceM).toBeLessThan(10);
+    expect(r.nodes).toEqual([]);
+    expect(r.edgeIds).toEqual([a.edgeId]);
+    expect([r.startFoot, r.endFoot]).toEqual([a.foot, b.foot]);
+    // And back the other way: the same stretch, walked against the drawing.
+    expect(found(findRouteBetween(g, { snap: b }, { snap: a }, 'shortest')).distanceM).toBeCloseTo(r.distanceM, 1);
+  });
+
+  it('the same picked point as start and destination is a zero route', () => {
+    const a = snapToRoutes(g, [127.00013, 37.0002])!;
+    const r = found(findRouteBetween(g, { snap: a }, { snap: a }, 'shortest'));
+    expect([r.distanceM, r.timeSec, r.cost]).toEqual([0, 0, 0]);
+    expect(r.edgeIds).toEqual([]);
+  });
+});
+
 describe('findRouteBetween: slope of the partial edges', () => {
   it('a point picked on a steep edge counts its stretch in slopeSegments (start and destination)', async () => {
     const campus = await loadCampus(FIXTURE_DIR);

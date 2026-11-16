@@ -111,6 +111,26 @@ describe('SurveySession', () => {
     expect(validateSurvey(smaller).ok).toBe(true);
   });
 
+  it('a damaged snapshot that still parses is refused with a reason, never thrown (QA regression)', () => {
+    const s = newSession();
+    walk(s);
+    const good = JSON.parse(JSON.stringify(s.snapshot())) as Record<string, unknown>;
+    const damaged: Record<string, unknown>[] = [
+      { ...good, vertical: null },
+      { ...good, scope: null },
+      { ...good, scope: { kind: 'building' } },
+      { ...good, attachments: [] },
+      { ...good, photoSeq: '3' },
+      { ...good, timings: {} },
+      { ...good, changeset: { changes: 'x' } },
+    ];
+    for (const snap of damaged) {
+      let out: ReturnType<typeof SurveySession.restore> | undefined;
+      expect(() => (out = SurveySession.restore({ campus: CAMPUS, base, ids: createIdGen(99) }, snap as unknown as ReturnType<SurveySession['snapshot']>))).not.toThrow();
+      expect(out && 'error' in out).toBe(true);
+    }
+  });
+
   it('continues after a restart: same map, same place, same photo numbering', () => {
     const s = newSession();
     const { doorId } = walk(s);

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MatchNetwork, SensorFix } from '@campo/core';
 import { EMPTY_GPS_SNAPSHOT, type GpsMatcherApi, type GpsMatcherOptions, type GpsMatcherSnapshot } from '../contracts.ts';
-import { createGpsMatcherSession, type GpsMatcherSession } from '../matching/matcherSession.ts';
+import { createGpsMatcherSession, routeKeyOf, type GpsMatcherSession } from '../matching/matcherSession.ts';
 
 /**
  * @param network useCampusData().network (캠퍼스 데이터를 읽기 전에는 null)
@@ -14,8 +14,9 @@ export function useGpsMatcher(network: MatchNetwork | null, options: GpsMatcherO
   const [snapshot, setSnapshot] = useState<GpsMatcherSnapshot>(EMPTY_GPS_SNAPSHOT);
   const routeNodeIds = options.routeNodeIds ?? null;
   // 배열은 매 렌더 새 객체일 수 있으므로 내용으로 같은지 본다.
-  const routeKey = routeNodeIds === null ? '' : routeNodeIds.join('>');
+  const routeKey = routeKeyOf(routeNodeIds);
 
+  // 세션(추적 상태)은 캠퍼스 망이 바뀔 때만 새로 만든다. 경로가 바뀌어도 위치·모드·층 추적은 이어져야 한다.
   useEffect(() => {
     if (network === null) {
       sessionRef.current = null;
@@ -25,8 +26,13 @@ export function useGpsMatcher(network: MatchNetwork | null, options: GpsMatcherO
     const session = createGpsMatcherSession(network, routeNodeIds !== null && routeNodeIds.length > 0 ? { routeNodeIds } : {});
     sessionRef.current = session;
     setSnapshot(session.snapshot());
+    // 경로(routeKey)는 의존성이 아니다: 아래 effect가 세션을 그대로 두고 경로만 바꾼다.
+  }, [network]);
+
+  useEffect(() => {
+    sessionRef.current?.setRoute(routeNodeIds);
     // routeKey는 routeNodeIds의 내용을 대표한다.
-  }, [network, routeKey]);
+  }, [routeKey]);
 
   const pushFix = useCallback((fix: SensorFix): GpsMatcherSnapshot => {
     const session = sessionRef.current;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeRoute } from '../src/route/routeEngine.ts';
+import { MAX_SNAP_DISTANCE_M, computeRoute } from '../src/route/routeEngine.ts';
 import type { CampusRuntime } from '../src/campus/types.ts';
 import { loadBundledCampus } from '../src/campus/loadBundledCampus.ts';
 import { META, bundleFrom, edgeFeature, fixtureRuntime, nodeFeature } from './helpers.ts';
@@ -116,5 +116,57 @@ describe('computeRoute', () => {
     expect(warning?.gradePct).toBe(12);
     expect(warning?.message).toContain('급경사');
     expect(warning?.message).toContain('오르막');
+  });
+
+  it('캠퍼스 밖(걷는 길에서 150 m 이상)을 고르면 not-found', async () => {
+    const runtime = await fixtureRuntime();
+    const [lng, lat] = coordinatesOf(runtime, GATE);
+    expect(MAX_SNAP_DISTANCE_M).toBe(150);
+
+    const far = computeRoute(runtime, { from: { kind: 'point', lat: lat + 1, lng: lng + 1 }, to: { kind: 'node', nodeId: ROOM_408 } });
+    expect(far.status).toBe('not-found');
+    expect(far.route).toBeNull();
+    expect(far.message).toContain('걷는 길이 없는');
+
+    const farDestination = computeRoute(runtime, { from: { kind: 'node', nodeId: GATE }, to: { kind: 'point', lat: lat + 1, lng: lng + 1 } });
+    expect(farDestination.status).toBe('not-found');
+
+    // 길 가까이(수십 m)는 그대로 된다.
+    const near = computeRoute(runtime, { from: { kind: 'point', lat: lat + 0.0002, lng }, to: { kind: 'node', nodeId: ROOM_408 } });
+    expect(near.status).toBe('ok');
+    expect(near.route!.snappedStartM).toBeLessThan(MAX_SNAP_DISTANCE_M);
+  });
+
+  it('유한하지 않거나 범위를 벗어난 좌표는 not-found와 한국어 설명', async () => {
+    const runtime = await fixtureRuntime();
+    const to = { kind: 'node', nodeId: ROOM_408 } as const;
+    for (const point of [
+      { lat: Number.NaN, lng: 127 },
+      { lat: 37, lng: Number.NaN },
+      { lat: Number.POSITIVE_INFINITY, lng: 127 },
+      { lat: 91, lng: 127 },
+      { lat: 37, lng: -181 },
+    ]) {
+      const state = computeRoute(runtime, { from: { kind: 'point', ...point }, to });
+      expect(state.status, JSON.stringify(point)).toBe('not-found');
+      expect(state.route).toBeNull();
+      expect(state.message).toContain('좌표가 올바르지 않습니다');
+    }
+  });
+
+  it('출발과 도착이 같아도 선은 항상 두 점 이상이다(한 점짜리 LineString 방지)', async () => {
+    const runtime = await fixtureRuntime();
+    const state = computeRoute(runtime, { from: { kind: 'node', nodeId: GATE }, to: { kind: 'node', nodeId: GATE } });
+    expect(state.status).toBe('ok');
+    expect(state.route!.timeSec).toBe(0);
+    expect(state.route!.nodeIds).toEqual([GATE]);
+    expect(state.route!.polyline).toHaveLength(2);
+    expect(state.route!.polyline[0]).toEqual(state.route!.polyline[1]);
+  });
+
+  it('길이 있는 경로의 선은 지점 수만큼이다(복사하지 않는다)', async () => {
+    const runtime = await fixtureRuntime();
+    const state = computeRoute(runtime, { from: { kind: 'node', nodeId: GATE }, to: { kind: 'node', nodeId: ROOM_408 } });
+    expect(state.route!.polyline).toHaveLength(state.route!.nodeIds.length);
   });
 });

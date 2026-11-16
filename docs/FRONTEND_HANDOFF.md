@@ -3,11 +3,18 @@
 > 대상: 5탭 화면을 만드는 프론트 담당과 그 AI. 이 문서 하나로 시작할 수 있게 썼다.
 > 관련 문서: 저장소 규칙 `AGENTS.md`, 길찾기 명세 `docs/v0.2/SPEC-v0.2.md`, GPS 매칭 설계 `docs/MAP_MATCHING.md`.
 
+**이번 과제의 범위(먼저 읽는다)**
+
+- **한양대학교(서울캠퍼스)만** 다룬다. 다른 캠퍼스 선택·전환 화면은 만들지 않는다(`bundle-campus`의 캠퍼스 인자는 개발용).
+- 5탭 중 **논술·축제·학교행사 탭은 가상(mock) 데이터**로 만든다. 서버·크롤링·실제 일정 연동은 하지 않는다. 화면 문구와 가상 데이터는 한국어 존댓말로 쓴다.
+- **지도·길찾기, 내정보 탭**만 이 문서의 계약 Hook(`useCampusData`·`useCampusRoute`·`useGpsMatcher`)과 실제 캠퍼스 데이터를 쓴다.
+- 5탭 UI와 탭 네비게이션은 **프론트 담당과 그 AI가 만드는 것이 이 과제의 일이다.** 아래 "빈 시작 화면 1개"는 스캐폴드 커밋의 상태일 뿐이며, 5탭을 만드는 것을 막는 규칙이 아니다.
+
 ---
 
 ## 0. 지금 무엇이 되어 있나
 
-브랜치 `feat/user-app-scaffold`(기준: `feat/gps-map-matching`)에 **최종 사용자용 앱의 뼈대**를 만들었다.
+브랜치 `feat/user-app-scaffold`(기준 브랜치: `feat/elevation-integration`, PR #3)에 **최종 사용자용 앱의 뼈대**를 만들었다.
 
 | 되어 있는 것 | 파일 |
 |---|---|
@@ -15,7 +22,7 @@
 | Android 빌드·배포 설정(권한, APK/AAB 프로필) | `apps/app/app.json`, `apps/app/eas.json` |
 | 캠퍼스 데이터 번들(빌드 때 자동) | `apps/app/scripts/bundle-campus.mjs` |
 | 캠퍼스 데이터 읽기 → 그래프·GPS 망·화면 목록 | `apps/app/src/campus/` |
-| **안정 계약 Hook 3개** + 순수 엔진 + 단위 테스트 16개 | `apps/app/src/contracts.ts`, `src/hooks/`, `src/route/`, `src/matching/`, `test/` |
+| **안정 계약 Hook 3개** + 순수 엔진 + 단위 테스트 26개 | `apps/app/src/contracts.ts`, `src/hooks/`, `src/route/`, `src/matching/`, `test/` |
 | 지도 배경(OSM 래스터) 스타일 | `apps/app/src/map/style.ts` |
 
 **일부러 비워 둔 것** — 프론트 담당이 자유롭게 정하면 된다.
@@ -26,6 +33,8 @@
 - 로그인·설정 저장
 
 **데이터 현황(중요)**: `data/campuses/hanyang-seoul/`에는 지금 `campus.json`과 **빈 GeoJSON 두 개**뿐이다. 즉 현재 앱을 켜면 `지점 0 · 구간 0`으로 정상 동작한다(오류 아님). 데이터 담당이 지점·구간을 채우면 `npm run bundle-campus`만 다시 돌리면 앱에 반영된다. 데이터는 `data/` 담당 영역이므로 앱에서 고치지 않는다.
+
+데이터가 비어 있는 동안 길찾기·지점 목록 화면을 시험하려면 `useCampusData(bundle)`에 **개발용 번들을 직접 넘긴다**(`BundledCampus` 모양은 `src/campus/types.ts`, 만드는 예는 `test/helpers.ts`의 `bundleOf`·`bundleFrom`; 코어의 `packages/core/test/fixtures/campus-basic`을 읽으면 지점·건물·층·엘리베이터가 다 있다). 개발용 번들은 `data/`에 넣거나 커밋하지 않는다.
 
 ---
 
@@ -39,9 +48,11 @@ npm test                   # 전체 테스트(Vitest)
 npm run typecheck          # 워크스페이스 전체 타입 검사(앱은 캠퍼스 번들 후 tsc)
 ```
 
-- `npm run app` → 터미널 QR을 Android 폰의 Expo Go로 찍으면 화면이 뜬다. **단, MapLibre 지도는 네이티브 모듈이라 Expo Go에서 그려지지 않는다**(나머지 화면·훅은 그대로 동작). 지도가 필요하면 개발 빌드를 쓴다(6장).
+- **`expo-dev-client`가 설치되어 있어서 `npm run app`(= `expo start`)은 기본으로 개발 빌드(development client)용으로 뜬다.** 개발 빌드 APK를 폰에 설치해 두었다면(6장 `build:development`) 터미널 QR을 그 앱으로 찍는다. MapLibre 지도는 네이티브 모듈이라 **개발 빌드에서만** 그려진다.
+- 개발 빌드 없이 빠르게 화면·훅만 보려면 Expo Go로 연다: `npm run start -w @campo/app -- --go` (터미널에서 `s`를 눌러 전환해도 된다). Expo Go에서는 **MapLibre 지도가 그려지지 않고**(나머지 화면·훅·위치·기압 센서는 동작), 개발 빌드에서만 확인되는 부분이 있다.
+- `npm run android`도 실행 전에 캠퍼스 번들을 만든다(`preandroid`). EAS 클라우드 빌드는 `eas-build-post-install`이 같은 일을 한다.
 - 캠퍼스 바꾸기: `npm run bundle-campus -w @campo/app -- <campus id>` (기본 `hanyang-seoul`).
-- 생성되는 `apps/app/assets/campus.generated.json`은 **커밋하지 않는다**(`prestart`, `typecheck`, `export` 때마다 다시 만든다).
+- 생성되는 `apps/app/assets/campus.generated.json`은 **커밋하지 않는다**(`prestart`·`preandroid`·`typecheck`·`export`와 EAS 빌드의 `eas-build-post-install`이 매번 다시 만든다).
 
 ---
 
@@ -91,7 +102,7 @@ const data = useCampusData();
 // data.runtime       CampusRuntime | null   ← useCampusRoute에 넘기는 값
 // data.campus        { id, name, center: {lat,lng}, bbox } | null
 // data.counts        { nodes, edges, buildings }
-// data.places        [{ id, name, nodeType, buildingId, level, lat, lng }]   (이름 있는 지점·화장실·출입구)
+// data.places        [{ id, name, nodeType, buildingId, level, lat, lng, roomRef? }]   (이름 있는 지점·장소·출입구·화장실·강의실 문. name은 항상 한국어, 강의실 문은 nodeType 'door'에 roomRef(호수))
 // data.buildings     [{ id, name, levels }]
 // data.graph         CampusGraph | null     (코어 그래프, 직접 읽어도 된다)
 // data.network       MatchNetwork | null    (useGpsMatcher에 넘긴다)
@@ -150,7 +161,9 @@ setRequest({
 | `fallbackMessage` | `string \| null` | 계단·턱을 피할 수 없을 때 코어가 만든 안내 |
 | `polyline` | `{ lat, lng }[]` | 지도에 그릴 선(출발 → 도착) |
 | `nodeIds` | `string[]` | 경로가 지나는 지점 id — `useGpsMatcher`의 `routeNodeIds`로 넘긴다 |
-| `snappedStartM?`, `snappedEndM?` | `number` | 지도에서 고른 점이 길에서 떨어진 거리(m) |
+| `snappedStartM?`, `snappedEndM?` | `number` | 지도에서 고른 점이 길에서 떨어진 거리(m). 150 m 이상 떨어진 점(캠퍼스 밖)과 NaN 같은 잘못된 좌표는 `not-found`와 한국어 `message`로 돌아온다 |
+
+출발과 도착이 같은 지점이면 `ok`(걸리는 시간 0, 단계 없음)이고 `polyline`은 같은 점 두 개다. 그래서 `polyline`은 항상 LineString으로 그릴 수 있다.
 
 지도에 그리는 예(자유 영역이므로 참고만):
 
@@ -182,6 +195,7 @@ gps.pushFix({ tMs: Date.now(), lat, lng, accuracyM, speedMps, headingDeg, compas
 
 - `pushFix`는 넣은 즉시 스냅숏을 돌려주고, 동시에 `gps` 상태도 갱신한다.
 - `position`이 `null`이면 아직 첫 표본 전이다.
+- `routeNodeIds`가 바뀌어도(재탐색 등) 세션은 그대로 이어진다. 위치·모드·층 추적은 `network`가 바뀔 때만 처음부터 다시 시작한다.
 
 `gps`(스냅숏, `GpsMatcherApi`)
 
@@ -196,35 +210,63 @@ gps.pushFix({ tMs: Date.now(), lat, lng, accuracyM, speedMps, headingDeg, compas
 | `fixCount` | `number` | 지금까지 쓴 표본 수 |
 | `pushFix(fix)` / `setRoute(nodeIds \| null)` / `reset()` | 함수 | 표본 넣기 / 따라갈 경로 바꾸기 / 처음부터 |
 
-센서 표본 만들기(참고 구현 — 값의 단위를 정확히 지켜야 한다):
+센서 표본 만들기(참고 구현 — 값의 단위와 부호를 정확히 지켜야 한다). `Barometer`는 `addListener`로만 값을 받는다(마지막 값을 읽는 동기 함수는 없다).
 
 ```tsx
+import { useEffect } from 'react';
 import * as Location from 'expo-location';
 import { Barometer } from 'expo-sensors';
+import type { SensorFix } from '@campo/core';
 
-// 기준 기압: 안내를 시작할 때의 값. 절대 기압을 넘기지 말고, 차이를 m로 바꿔 baroDeltaM으로 넘긴다(0.12 hPa ≈ 1 m).
-let baseHpa: number | null = null;
-Barometer.addListener(({ pressure }) => { baseHpa ??= pressure; });
+const HPA_TO_M = 8.3; // 지표 근처에서 1 hPa ≈ 8.3 m (0.12 hPa ≈ 1 m)
 
-const sub = await Location.watchPositionAsync(
-  { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 1000, distanceInterval: 0 },
-  (position) => {
-    const baro = Barometer.getLastReadingSync?.();
-    gps.pushFix({
-      tMs: position.timestamp,
-      lat: position.coords.latitude,
-      lng: position.coords.longitude,
-      accuracyM: position.coords.accuracy ?? 999,
-      speedMps: position.coords.speed ?? undefined,
-      headingDeg: position.coords.heading ?? undefined,
-      baroDeltaM: baro && baseHpa !== null ? (baro.pressure - baseHpa) * 8.3 : undefined, // 1 hPa ≈ 8.3 m
-    });
-  },
-);
-// 화면을 떠날 때 sub.remove()
+function useSensorFixes(pushFix: (fix: SensorFix) => unknown) {
+  useEffect(() => {
+    let cancelled = false;
+    let locationSub: Location.LocationSubscription | null = null;
+    let baroSub: { remove: () => void } | null = null;
+    let baseHpa: number | null = null; // 안내를 시작할 때의 기압(기준)
+    let lastHpa: number | null = null; // 가장 최근 기압
+
+    (async () => {
+      // 위치 권한이 먼저다. 거절되면 fix를 못 받으므로 안내 문구를 보여 주고 끝낸다.
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted' || cancelled) return;
+
+      // 기압계는 없는 기기가 있다. 없으면 baroDeltaM 없이(층 판정 없이) 위치만 쓴다.
+      if (await Barometer.isAvailableAsync()) {
+        baroSub = Barometer.addListener(({ pressure }) => {
+          baseHpa ??= pressure;
+          lastHpa = pressure;
+        });
+      }
+
+      locationSub = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 1000, distanceInterval: 0 },
+        (position) => {
+          const { coords } = position;
+          // 이 저장소는 exactOptionalPropertyTypes를 켜 두었다: 값이 없는 선택 필드에 undefined를 넣지 말고 아예 빼야 한다.
+          const fix: SensorFix = { tMs: position.timestamp, lat: coords.latitude, lng: coords.longitude, accuracyM: coords.accuracy ?? 999 };
+          if (coords.speed !== null) fix.speedMps = coords.speed;
+          if (coords.heading !== null) fix.headingDeg = coords.heading;
+          // 위로 올라가면 기압이 내려가므로 부호를 뒤집는다: 상승 = 양수(코어의 baroDeltaM 약속).
+          if (baseHpa !== null && lastHpa !== null) fix.baroDeltaM = -(lastHpa - baseHpa) * HPA_TO_M;
+          pushFix(fix);
+        },
+      );
+      if (cancelled) locationSub.remove();
+    })();
+
+    return () => {
+      cancelled = true;
+      locationSub?.remove();
+      baroSub?.remove();
+    };
+  }, [pushFix]);
+}
 ```
 
-> `tMs`는 **뒤로 가지 않아야 한다**(`position.timestamp` 사용). 기압은 `baroDeltaM`(시작점 대비 높이 차, m)만 넘긴다 — 절대 기압은 코어가 받지 않는다.
+> `tMs`는 **뒤로 가지 않아야 한다**(`position.timestamp` 사용). 기압은 `baroDeltaM`(시작점 대비 높이 차, m, **올라가면 양수**)만 넘긴다 — 절대 기압은 코어가 받지 않는다. 기압(hPa)은 높이가 오를수록 **내려가므로** `-(현재 − 기준) × 8.3`이다. 기준(`baseHpa`)을 새로 잡고 싶으면(안내를 다시 시작할 때) 값을 비워 다음 값으로 다시 시작한다.
 
 ---
 
@@ -252,9 +294,9 @@ const sub = await Location.watchPositionAsync(
 | 구역 | 규칙 |
 |---|---|
 | `apps/app/App.tsx`, `apps/app/src/features/**`, 새 컴포넌트·테마·화면 | **자유.** 마음대로 만들고 지워도 된다 |
-| `apps/app/src/contracts.ts`, `src/hooks/**`, `src/campus/**`, `src/route/**`, `src/matching/**` | **계약 영역.** 이름·의미를 유지하고 새 필드는 optional로만. 바꿔야 하면 PR 설명에 이유를 쓴다 |
+| `apps/app/src/contracts.ts`, `src/hooks/**`, `src/campus/**`, `src/route/**`, `src/matching/**` | **계약 영역.** 이름·의미를 유지하고 새 필드는 optional로만 더한다. 바꿔야 할 것 같으면 **바꾸지 말고 먼저 사람(리드)에게 묻는다.** PR 설명에 이유를 쓰는 것으로 대신하지 않는다 |
 | `apps/app/app.json`, `eas.json` | 패키지명 `kr.hanyang.campo`, `versionCode` 규칙, 권한 목록은 유지. 바꿀 때는 6장을 먼저 읽는다 |
-| `packages/core/**`, `data/**`, `packages/tools/**` | **건드리지 않는다.** 필요하면 리드와 상의하고 PR 설명에 이유를 쓴다 |
+| `packages/core/**`, `data/**`, `packages/tools/**` | **건드리지 않는다.** 필요하면 먼저 리드에게 묻는다 |
 | `apps/mobile/**`, `apps/editor/**` | **건드리지 않는다**(다른 담당·다른 앱) |
 
 시험 삼아 코어를 고쳐야 할 것 같으면, 먼저 이 앱의 계약 안에서 해결할 수 있는지 본다(대부분은 `computeRoute`·`matcherSession`에서 감싸면 된다).
@@ -310,12 +352,12 @@ npm run submit:android        # Play 내부 트랙에 초안(draft)으로 제출
 ## 7. 테스트·타입 검사
 
 ```bash
-npm test                   # 전체 (2026-11-16 기준: 코어·편집기·도구·현장조사 앱 + 이 앱 16개)
+npm test                   # 전체 (코어·편집기·도구·현장조사 앱 + 이 앱 26개)
 npm run typecheck          # 워크스페이스 전체
 ```
 
 - 이 앱의 테스트는 **React 없이 도는 순수 엔진**만 본다(`test/campusRoute.test.ts`, `test/gpsMatcher.test.ts`, `test/loadBundledCampus.test.ts`).
-  - `computeRoute`(경로·층 이동·경사), `createGpsMatcherSession`(위치·건너뛰기·재탐색), `loadBundledCampus`(데이터 읽기·빈 캠퍼스·오류).
+  - `computeRoute`(경로·층 이동·경사·캠퍼스 밖·잘못된 좌표·출발=도착), `createGpsMatcherSession`(위치·건너뛰기·재탐색·경로 교체·빈 망), `loadBundledCampus`(데이터 읽기·빈 캠퍼스·오류·강의실 문·한국어 이름).
 - 테스트는 코어의 `campus-basic` fixture를 그대로 읽어 쓴다(`test/helpers.ts`) — 지점·구간·건물·층·엘리베이터가 다 들어 있는 작은 캠퍼스다.
 - 화면 테스트(렌더링 스냅숏 등)는 아직 없다. 필요해지면 `@testing-library/react-native` 도입을 팀에서 정한다.
 - 커밋 전에 `npm test`와 `npm run typecheck` 결과를 PR 설명에 붙인다(저장소 규칙).
@@ -342,4 +384,4 @@ npm run typecheck          # 워크스페이스 전체
 6. 논술·축제·학교행사: 가상 데이터 모양을 팀에서 먼저 합의하고 `src/features/<tab>/mock.ts`로 시작.
 7. EAS `preview` APK로 팀 배포 → 발표 전 `production` AAB 준비.
 
-막히면 이 문서 3장(계약)과 `apps/app/src/contracts.ts`의 주석이 기준이다. 계약을 바꾸는 편이 맞다고 판단되면 바꾸지 말고 먼저 상의한다.
+막히면 이 문서 3장(계약)과 `apps/app/src/contracts.ts`의 주석이 기준이다. 계약을 바꾸는 편이 맞다고 판단되면 바꾸지 말고 먼저 사람에게 묻는다(PR 설명으로 대신하지 않는다).

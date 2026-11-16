@@ -6,6 +6,11 @@ import type { CampusRuntime } from '../campus/types.ts';
 
 const DEFAULT_MODE = 'shortest';
 
+/** 지도에서 고른 점이 가장 가까운 걷는 길에서 이만큼(m) 이상 떨어져 있으면 길이 없는 곳으로 본다(캠퍼스 밖을 골랐을 때). */
+export const MAX_SNAP_DISTANCE_M = 150;
+
+const NO_WALKWAY = '걷는 길이 없는 위치입니다. 캠퍼스 안에서 다시 골라 주세요.';
+
 const VIA_LABEL: Record<FloorChange['kind'], string> = {
   elevator: '엘리베이터',
   stairs: '계단',
@@ -22,8 +27,12 @@ function endOf(runtime: CampusRuntime, endpoint: RouteEndpoint): { end: RouteEnd
     }
     return { end: { nodeId: endpoint.nodeId }, snapM: null };
   }
-  const snap = snapToRoutes(runtime.graph, [endpoint.lng, endpoint.lat]);
-  if (snap === null) return { message: '걷는 길이 없는 위치입니다. 캠퍼스 안에서 다시 골라 주세요.' };
+  const { lat, lng } = endpoint;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    return { message: '고른 위치의 좌표가 올바르지 않습니다. 지도에서 다시 골라 주세요.' };
+  }
+  const snap = snapToRoutes(runtime.graph, [lng, lat]);
+  if (snap === null || !(snap.distanceM < MAX_SNAP_DISTANCE_M)) return { message: NO_WALKWAY };
   return { end: { snap }, snapM: snap.distanceM };
 }
 
@@ -38,6 +47,9 @@ function polylineOf(runtime: CampusRuntime, route: PointRoute): RoutePoint[] {
     if (node !== undefined) push(node.geometry.coordinates as Position);
   }
   if (route.endFoot !== null) push(route.endFoot);
+  // 출발과 도착이 같은 자리면 점이 하나뿐이다. 한 점짜리 LineString은 지도에 그릴 수 없으므로 같은 점을 한 번 더 둔다.
+  const only = points.length === 1 ? points[0] : undefined;
+  if (only !== undefined) points.push({ lat: only.lat, lng: only.lng });
   return points;
 }
 

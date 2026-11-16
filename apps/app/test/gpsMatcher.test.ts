@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { SensorFix } from '@campo/core';
-import { createGpsMatcherSession } from '../src/matching/matcherSession.ts';
-import { fixtureRuntime } from './helpers.ts';
+import { createGpsMatcherSession, routeKeyOf } from '../src/matching/matcherSession.ts';
+import { loadBundledCampus } from '../src/campus/loadBundledCampus.ts';
+import { META, bundleFrom, fixtureRuntime } from './helpers.ts';
 
 // e_out_0001__out_0002: (127, 37) → (127.0002, 37.0004), 약 48 m 보도.
 const START: [number, number] = [127, 37];
@@ -67,18 +68,55 @@ describe('createGpsMatcherSession', () => {
     expect(rerouted).toBe(true);
   });
 
-  it('경로를 넣고 바꾸고 초기화할 수 있다', async () => {
+  it('경로를 바꿔도 추적 상태(위치·표본 수)는 이어진다', async () => {
+    const runtime = await fixtureRuntime();
+    const session = createGpsMatcherSession(runtime.network, { routeNodeIds: ['n_out_0001', 'n_out_0002'] });
+    for (let second = 0; second < 6; second++) session.pushFix(walkFix(second));
+    const before = session.snapshot();
+    expect(before.fixCount).toBe(6);
+
+    // 재탐색 뒤 새 경로를 넣는 상황: 세션을 새로 만들지 않고 setRoute만 부른다.
+    session.setRoute(['n_out_0002', 'n_out_0001']);
+    session.setRoute(null);
+    session.setRoute([]);
+    session.setRoute(['unknown_a', 'unknown_b']);
+
+    expect(session.snapshot()).toBe(before);
+    const next = session.pushFix(walkFix(6));
+    expect(next.fixCount).toBe(7);
+    expect(next.position).not.toBeNull();
+    expect(next.mode).toBe(before.mode);
+  });
+
+  it('초기화하면 처음부터 다시 시작한다', async () => {
     const runtime = await fixtureRuntime();
     const session = createGpsMatcherSession(runtime.network, { routeNodeIds: ['n_out_0001', 'n_out_0002'] });
     expect(session.snapshot().position).toBeNull();
 
-    session.pushFix(walkFix(0));
-    session.setRoute(null);
-    session.setRoute([]);
-    session.setRoute([1, 2].map(() => 'n_out_0002'));
+    for (let second = 0; second < 3; second++) session.pushFix(walkFix(second));
+    expect(session.snapshot().fixCount).toBe(3);
 
     session.reset();
     expect(session.snapshot().position).toBeNull();
     expect(session.snapshot().fixCount).toBe(0);
+    expect(session.pushFix(walkFix(3)).fixCount).toBe(1);
+  });
+
+  it('데이터가 비어 있는 망(현재 한양대 번들)에서도 던지지 않는다', () => {
+    const empty = loadBundledCampus(bundleFrom(META, []));
+    const session = createGpsMatcherSession(empty.network);
+    const snapshot = session.pushFix({ tMs: 1000, lat: 37.0, lng: 127.0, accuracyM: 8 });
+    expect(snapshot.mode).toBe('OUTDOOR');
+    expect(snapshot.rerouteRequested).toBe(false);
+  });
+});
+
+describe('routeKeyOf', () => {
+  it('내용이 같으면 새 배열이어도 같은 키, null·빈 배열·undefined는 모두 빈 키', () => {
+    expect(routeKeyOf(['a', 'b'])).toBe(routeKeyOf(['a', 'b']));
+    expect(routeKeyOf(['a', 'b'])).not.toBe(routeKeyOf(['b', 'a']));
+    expect(routeKeyOf(null)).toBe('');
+    expect(routeKeyOf([])).toBe('');
+    expect(routeKeyOf(undefined)).toBe('');
   });
 });

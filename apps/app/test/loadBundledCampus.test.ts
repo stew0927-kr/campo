@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CampusDataError, loadBundledCampus } from '../src/campus/loadBundledCampus.ts';
-import { CORE_FIXTURE_DIR, bundleOf, fixtureRuntime } from './helpers.ts';
+import { META, CORE_FIXTURE_DIR, bundleFrom, bundleOf, fixtureRuntime, nodeFeature } from './helpers.ts';
 
 describe('loadBundledCampus', () => {
   it('번들을 그래프·GPS 망·화면용 목록으로 읽는다', async () => {
@@ -46,5 +46,34 @@ describe('loadBundledCampus', () => {
     expect(runtime.counts).toEqual({ nodes: 0, edges: 0, buildings: 0 });
     expect(runtime.places).toEqual([]);
     expect(runtime.network.nodeIds).toEqual([]);
+  });
+
+  it('강의실 문(space_name/ref)도 places에 들어가고 호수를 준다', async () => {
+    const runtime = await fixtureRuntime();
+    const room = runtime.places.find((place) => place.id === 'n_A_4_408door');
+    expect(room).toBeDefined();
+    expect(room?.name).toBe('408호 강의실');
+    expect(room?.nodeType).toBe('door');
+    expect(room?.roomRef).toBe('408');
+    expect(room?.buildingId).toBe('bldg_A');
+    expect(room?.level).toBe(4);
+    // 강의실이 아닌 문은 일부러 넣지 않는다.
+    expect(runtime.places.filter((place) => place.nodeType === 'door').every((place) => place.roomRef !== undefined)).toBe(true);
+  });
+
+  it('이름이 없는 지점은 영어 코드 대신 한국어 종류 이름을 쓴다', () => {
+    const runtime = loadBundledCampus(
+      bundleFrom(META, [
+        nodeFeature('n_poi', 127.0, 37.0, { node_type: 'poi' }),
+        nodeFeature('n_wc', 127.0001, 37.0, { node_type: 'restroom' }),
+        nodeFeature('n_gate', 127.0002, 37.0, { node_type: 'entrance' }),
+        nodeFeature('n_plain', 127.0003, 37.0, { node_type: 'outdoor' }),
+        nodeFeature('n_door_plain', 127.0004, 37.0, { node_type: 'door' }),
+        nodeFeature('n_door_ref', 127.0005, 37.0, { node_type: 'door', ref: '101' }),
+      ]),
+    );
+    const names = Object.fromEntries(runtime.places.map((place) => [place.id, place.name]));
+    expect(names).toEqual({ n_poi: '장소', n_wc: '화장실', n_gate: '출입구', n_door_ref: '101호' });
+    expect(runtime.places.some((place) => /^[a-z_]+$/.test(place.name))).toBe(false);
   });
 });

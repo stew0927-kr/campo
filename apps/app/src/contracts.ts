@@ -67,7 +67,7 @@ export interface CampusRouteView {
   slopeWarnings: SlopeWarning[];
   /** 계단·턱을 피할 수 없을 때 코어가 만든 안내. 없으면 null. */
   fallbackMessage: string | null;
-  /** 지도 선으로 그릴 좌표(출발 → 도착). */
+  /** 지도 선으로 그릴 좌표(출발 → 도착). 점이 하나뿐인 경로(출발=도착)는 같은 점을 두 번 담아 항상 LineString으로 그릴 수 있다. */
   polyline: RoutePoint[];
   /** 경로가 지나는 캠퍼스 지점 id. useGpsMatcher의 routeNodeIds로 그대로 넘긴다. */
   nodeIds: string[];
@@ -99,7 +99,10 @@ export interface CampusSummary {
   bbox: [number, number, number, number] | null;
 }
 
-/** 지도에 표시할 만한 지점(이름이 있는 지점과 화장실·출입구 등). 문 하나하나는 들어가지 않는다. */
+/**
+ * 지도에 표시하거나 출발·도착으로 고를 만한 지점: 이름이 있는 지점, 장소·출입구·화장실, 그리고 강의실 문(`nodeType: 'door'`).
+ * `name`은 항상 화면에 그대로 쓸 수 있는 한국어다. 이름 없는 복도·계단 지점과 강의실이 아닌 문은 들어가지 않는다.
+ */
 export interface CampusPlace {
   id: string;
   name: string;
@@ -108,6 +111,8 @@ export interface CampusPlace {
   level: number | null;
   lat: number;
   lng: number;
+  /** 강의실 문일 때 호수(예: "408"). 화면에서 호수로 찾을 때 쓴다. 강의실 문이 아니면 없다. */
+  roomRef?: string;
 }
 
 export interface CampusBuilding {

@@ -29,6 +29,11 @@ export interface GpsMatcherSessionOptions {
   navParams?: Readonly<NavParams>;
 }
 
+/** 경로의 내용을 대표하는 키. 배열이 매 렌더 새 객체여도 내용이 같으면 같은 키다(null·빈 배열은 둘 다 ''). */
+export function routeKeyOf(nodeIds: readonly string[] | null | undefined): string {
+  return nodeIds === null || nodeIds === undefined ? '' : nodeIds.join('>');
+}
+
 export interface GpsMatcherSession {
   pushFix: (fix: SensorFix) => GpsMatcherSnapshot;
   setRoute: (nodeIds: readonly string[] | null) => void;

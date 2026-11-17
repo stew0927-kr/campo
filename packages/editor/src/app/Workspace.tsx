@@ -882,7 +882,7 @@ export function Workspace({ session }: { session: Session }) {
           <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))} />
         )}
         {one && <SurveyNotes notes={surveyNotes(surveys, one.id, state)} />}
-        {measure && measureTarget && (
+        {measure && measureTarget && !selectedPlaza && (
           <MeasurePanel
             summary={measure}
             pending={'target' in measureTarget ? session.pendingObservations.filter((o) => o.target === measureTarget.target).length : 0}

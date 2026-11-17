@@ -207,7 +207,7 @@ export function Workspace({ session }: { session: Session }) {
     setUi((u) => reconcileUi(u, state));
   }, [state]);
 
-  const { checks, graph, places, routeResults, routeShown, nearest, routeLines, measureTarget, measure } = useInspection(session, state, ui, obsRev);
+  const { checks, graph, places, routeResults, routeShown, nearest, routeLines, routeNotices, measureTarget, measure } = useInspection(session, state, ui, obsRev);
 
   // ---- Edits: every one is a Plan of core actions run as one history entry ----
 
@@ -915,6 +915,8 @@ export function Workspace({ session }: { session: Session }) {
         shown={routeShown}
         nearest={nearest}
         warnings={graph?.warnings ?? []}
+        notices={routeNotices}
+        plazaName={(id) => state.plazas[id]?.props.name ?? id}
         onPick={(end, id) => patchUi(end === 'from'
           ? { routeFrom: id, routeFromPoint: null, routePick: null, routeShown: null }
           : { routeTo: id, routeToPoint: null, routePick: null, routeShown: null, nearest: null })}

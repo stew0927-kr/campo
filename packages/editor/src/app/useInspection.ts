@@ -2,24 +2,20 @@
 // Everything is core's own functions run on exactly what would be saved; nothing here changes the data.
 import { useDeferredValue, useMemo } from 'react';
 import {
-  buildGraph, findNearestRestroomFrom, findRouteBetween, snapToRoutes, validateCampus,
-  type CampusGraph, type EditEdge, type EditState, type PointRouteResult, type RouteEnd, type RouteSnap,
+  buildGraph, findNearestRestroomFrom, findRouteBetween, validateCampus,
+  type EditState, type PointRouteResult, type RouteEnd, type RouteSnap,
 } from '@campo/core';
+import { HOLE_NOTICE, plazaWalks, pointEnd, routeStops } from '../model/plazaRoute.ts';
 import type { RouteLine } from '../map/layers.ts';
 import { measureSummary, measureTargetOf, type MeasureSummary } from '../model/measure.ts';
 import { routePlaces } from '../model/places.ts';
-import { OUTDOOR, edgeInScope } from '../model/scope.ts';
+import { OUTDOOR } from '../model/scope.ts';
 import type { RouteRef } from '../model/terrain3d.ts';
 import { stateToCampus, type Session } from '../model/session.ts';
 import type { RouteKind, RoutePoint, UiState } from '../ui/ui-state.ts';
 
 /** The three routes 경로 테스트 works out every time, in the order they are listed. */
 export const ROUTE_KINDS: readonly RouteKind[] = ['step_free', 'shortest', 'elevator_first'];
-
-/** The snap of a 직접 선택 point: the nearest edge on the floor (or outdoors) it was picked on. */
-function snapOf(g: CampusGraph, state: EditState, p: RoutePoint): RouteSnap | null {
-  return snapToRoutes(g, p.at, (e) => edgeInScope(state, { props: e.properties } as unknown as EditEdge, p.scope));
-}
 
 /** The fastest of the found routes (the one shown when nothing is toggled). */
 export function fastestOf(results: readonly { kind: RouteKind; result: PointRouteResult }[]): RouteKind | null {
@@ -47,12 +43,9 @@ export function useInspection(
   /** The two ends: a place, or a 직접 선택 point snapped to the nearest edge (with the snap, for the dashed foot line). */
   const ends = useMemo(() => {
     if (!graph) return { from: null, to: null };
-    const end = (id: string | null, p: RoutePoint | null): { end: RouteEnd; snap: RouteSnap | null } | null => {
-      if (p) {
-        const snap = snapOf(graph, checkedState, p);
-        return snap ? { end: { snap }, snap } : null;
-      }
-      return id && graph.nodes.has(id) ? { end: { nodeId: id }, snap: null } : null;
+    const end = (id: string | null, p: RoutePoint | null): { end: RouteEnd; snap: RouteSnap | null; inHole: boolean } | null => {
+      if (p) return pointEnd(graph, checkedState, p);
+      return id && graph.nodes.has(id) ? { end: { nodeId: id }, snap: null, inHole: false } : null;
     };
     return { from: end(routeFrom, routeFromPoint), to: end(routeTo, routeToPoint) };
   }, [graph, checkedState, routeFrom, routeTo, routeFromPoint, routeToPoint]);
@@ -80,12 +73,13 @@ export function useInspection(
     const toRef: RouteRef = { scope: routeToPoint?.scope ?? OUTDOOR };
     const draw = (profile: RouteLine['profile'], r: PointRouteResult) => {
       if (!r.found) return;
-      const ids = r.nodes.filter((id) => !!checkedState.nodes[id]);
-      lines.push({
-        profile,
-        coordinates: [...(r.startFoot ? [r.startFoot] : []), ...ids.map((id) => checkedState.nodes[id]!.coord), ...(r.endFoot ? [r.endFoot] : [])],
-        refs: [...(r.startFoot ? [fromRef] : []), ...ids.map((node): RouteRef => ({ node })), ...(r.endFoot ? [toRef] : [])],
-      });
+      // A plaza end walks straight across the plaza (around its holes) to where the route meets it: drawn as part of the
+      // route, and dashed on top like the foot of a perpendicular.
+      lines.push({ profile, ...routeStops(r, (id) => checkedState.nodes[id]?.coord, fromRef, toRef) });
+      for (const leg of plazaWalks(r)) {
+        const ref = leg === r.startPlaza ? fromRef : toRef;
+        lines.push({ profile: 'snap', coordinates: leg.path, refs: leg.path.map(() => ref) });
+      }
     };
     if (nearest) draw(nearest.kind === 'wheelchair' ? 'wheelchair' : 'shortest', nearest.result);
     else for (const { kind, result } of routeResults) if (shown.includes(kind)) draw(kind, result);
@@ -115,5 +109,7 @@ export function useInspection(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measureTarget, measureGraph, session, obsRev]);
 
-  return { checks, graph, places, routeResults, routeShown: shown, nearest, routeLines, measureTarget, measure };
+  /** A 직접 선택 point in a plaza's hole is snapped to the nearest edge as if it were outside the plaza: say so. */
+  const routeNotices = useMemo(() => (routesOpen && (ends.from?.inHole || ends.to?.inHole) ? [HOLE_NOTICE] : []), [routesOpen, ends]);
+  return { checks, graph, places, routeResults, routeShown: shown, nearest, routeLines, routeNotices, measureTarget, measure };
 }

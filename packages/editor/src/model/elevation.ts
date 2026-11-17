@@ -124,6 +124,46 @@ export function parseStore(text: string | null): ElevationStore {
   return v as ElevationStore;
 }
 
+/**
+ * The phone's measurements (an exported zip's elevation store) taken into the editor's store. Nothing of the editor's is
+ * lost: measured points are matched by key (the phone's copy wins: it is the one re-measured), sessions, Δh edges and the
+ * other records by id (a Δh edge the phone has since marked superseded takes that mark; one the editor has stays).
+ * Break lines, the solver's estimates and its last run stay the editor's.
+ */
+export function mergeMeasurements(base: ElevationStore, incoming: ElevationStore): { store: ElevationStore; nodes: number; edges: number; sessions: number } {
+  const union = <T>(mine: readonly T[] | undefined, theirs: readonly T[] | undefined, id: (x: T) => string): { list: T[] | undefined; added: number } => {
+    if (!theirs || theirs.length === 0) return { list: mine ? [...mine] : undefined, added: 0 };
+    const seen = new Set((mine ?? []).map(id));
+    const extra = theirs.filter((x) => !seen.has(id(x)));
+    return { list: [...(mine ?? []), ...extra], added: extra.length };
+  };
+  const byKey = new Map(incoming.nodes.map((n) => [n.key, n]));
+  const known = new Set(base.nodes.map((n) => n.key));
+  const nodes = [...base.nodes.map((n) => byKey.get(n.key) ?? n), ...incoming.nodes.filter((n) => !known.has(n.key))];
+  const theirEdges = new Map(incoming.edges.map((e) => [e.edgeId, e]));
+  const myEdges = new Set(base.edges.map((e) => e.edgeId));
+  const edges = [
+    ...base.edges.map((e) => (theirEdges.get(e.edgeId)?.qc === 'superseded' && e.qc !== 'superseded' ? { ...e, qc: 'superseded' as const } : e)),
+    ...incoming.edges.filter((e) => !myEdges.has(e.edgeId)),
+  ];
+  const sessions = union(base.sessions, incoming.sessions, (x) => x.sessionId);
+  const profiles = union(base.profiles, incoming.profiles, (x) => x.profileId);
+  const passes = union(base.anchorPasses, incoming.anchorPasses, (x) => `${x.sessionId}|${x.nodeKey}|${x.at}`);
+  const photos = union(base.photos, incoming.photos, (x) => x.photoId);
+  const assignments = union(base.photoAssignments, incoming.photoAssignments, (x) => x.photoId);
+  const store: ElevationStore = {
+    ...base,
+    nodes,
+    sessions: sessions.list ?? [],
+    edges,
+    ...(profiles.list ? { profiles: profiles.list } : {}),
+    ...(passes.list ? { anchorPasses: passes.list } : {}),
+    ...(photos.list ? { photos: photos.list } : {}),
+    ...(assignments.list ? { photoAssignments: assignments.list } : {}),
+  };
+  return { store, nodes: incoming.nodes.filter((n) => !known.has(n.key)).length, edges: edges.length - base.edges.length, sessions: sessions.added };
+}
+
 export function withBreakline(store: ElevationStore, coords: readonly Position[], id: string, now: number): ElevationStore | { error: string } {
   const line = coords.map(([lng, lat]) => ({ lat: lat!, lng: lng! }));
   const length = coords.slice(1).reduce((s, c, i) => s + metres(coords[i]!, c), 0);

@@ -22,9 +22,33 @@ export interface SurveyFile {
   photos: Record<string, Uint8Array>;
   /** Photo paths the survey lists that the file does not hold. */
   missingPhotos: string[];
+  /**
+   * Photos the phone could not read when it made the zip (export_report.json). They were taken out of survey.json, so
+   * missingPhotos does not list them; without this they would be lost without a word.
+   */
+  phoneMissingPhotos: string[];
+  /** The phone's barometer measurements (elevation_store.json) and the height variables to recompute (elevation_dirty.json). */
+  elevation: { storeText: string; dirtyKeys: string[] } | null;
+  /** Files in the zip that the import does not read (anything but the above and photos/), by name. */
+  ignored: string[];
 }
 
 const PHOTO_PREFIX = `${SURVEY_PHOTOS_DIR}/`;
+/** Names the survey app writes next to survey.json (apps/mobile: storage/elevationRepo.ts, export/archive.ts). */
+export const ARCHIVE_ELEVATION_STORE = 'elevation_store.json';
+export const ARCHIVE_ELEVATION_DIRTY = 'elevation_dirty.json';
+export const ARCHIVE_REPORT = 'export_report.json';
+const KNOWN = new Set([SURVEY_FILE, ARCHIVE_ELEVATION_STORE, ARCHIVE_ELEVATION_DIRTY, ARCHIVE_REPORT]);
+
+const stringsAt = (text: string | undefined, key: string): string[] => {
+  if (text === undefined) return [];
+  try {
+    const v = (JSON.parse(text) as Record<string, unknown>)[key];
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+};
 const isZip = (bytes: Uint8Array): boolean => bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
 
 /** Why a survey file cannot be imported: one sentence, and every single reason when there are several. */
@@ -51,9 +75,16 @@ function parseSurvey(text: string): Survey | SurveyRefusal {
 export function readSurveyFile(bytes: Uint8Array): SurveyFile | SurveyRefusal {
   let text: string;
   let entries: Record<string, Uint8Array> = {};
+  const ignored: string[] = [];
   try {
     if (isZip(bytes)) {
-      entries = unzipSync(bytes, { filter: (f) => f.name === SURVEY_FILE || f.name.startsWith(PHOTO_PREFIX) });
+      entries = unzipSync(bytes, {
+        filter: (f) => {
+          const take = KNOWN.has(f.name) || (f.name.startsWith(PHOTO_PREFIX) && !f.name.includes('..'));
+          if (!take && !f.name.endsWith('/')) ignored.push(f.name);
+          return take;
+        },
+      });
       const inner = entries[SURVEY_FILE];
       if (!inner) return refuse(`zip 안에 ${SURVEY_FILE}이 없습니다. 현장 조사 앱에서 내보낸 파일인지 확인해 주세요.`);
       text = strFromU8(inner);
@@ -73,7 +104,16 @@ export function readSurveyFile(bytes: Uint8Array): SurveyFile | SurveyRefusal {
     if (found) photos[path.slice(PHOTO_PREFIX.length)] = found;
     else missingPhotos.push(path);
   }
-  return { survey, text, photos, missingPhotos };
+  const listed = new Set(surveyPhotoPaths(survey));
+  for (const name of Object.keys(entries)) if (name.startsWith(PHOTO_PREFIX) && !listed.has(name)) ignored.push(name);
+  const textOf = (name: string): string | undefined => (entries[name] ? strFromU8(entries[name]!) : undefined);
+  const storeText = textOf(ARCHIVE_ELEVATION_STORE);
+  return {
+    survey, text, photos, missingPhotos,
+    phoneMissingPhotos: stringsAt(textOf(ARCHIVE_REPORT), 'missingPhotos'),
+    elevation: storeText === undefined ? null : { storeText, dirtyKeys: stringsAt(textOf(ARCHIVE_ELEVATION_DIRTY), 'heightNodes') },
+    ignored: ignored.sort(),
+  };
 }
 
 export interface SurveyImport {

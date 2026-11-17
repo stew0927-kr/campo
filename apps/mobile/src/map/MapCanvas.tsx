@@ -26,7 +26,9 @@ import {
   coverSide, fitView, fromScreen, isFiniteView, mapMatrix, panned, rotated, rotationOf, sameView, scaleBar, shortestTurn, toScreen, withRotation, zoomed,
   type Projection, type Size, type View as MapView, type XY,
 } from './project.ts';
+import { buildSnapIndex } from './snapIndex.ts';
 import type { TileCache } from './tileCache.ts';
+import { MAX_FAILED, boundedKeys, createFailedTiles } from './tileRetry.ts';
 import { MIN_TILE_ZOOM, visibleTiles, type Tile } from './tiles.ts';
 
 export interface MapHandle {
@@ -99,6 +101,9 @@ interface Props {
   /** Measured floor heights of a building (level → metres), when the phone has the recompute's estimates. */
   floorLevels?: (buildingId: string) => ReadonlyMap<number, number>;
 }
+
+/** Loaded tile keys remembered (for the no-white-flash zoom step); the ones on screen are always kept. */
+const MAX_LOADED = 512;
 
 /** Floor heights are drawn at this share of the horizontal scale: an oblique view, steep enough to read, low enough to keep the map. */
 const LIFT = 0.8;
@@ -247,7 +252,9 @@ export function MapCanvas({
     },
     show: (target) => {
       const on = latest.current.size;
-      if (on) setView(fit(target, on));
+      if (!on) return;
+      const next = fit(target, on);
+      if (isFiniteView(next)) setView(next);
     },
     // `fit` only reads refs and the projection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -255,10 +262,13 @@ export function MapCanvas({
 
   const onLayout = (e: LayoutChangeEvent): void => {
     const { width, height } = e.nativeEvent.layout;
+    // A hidden or not yet measured view reports 0 × 0 (or nothing usable): a view fitted to that would be useless, and
+    // it would be kept (v ?? …) once the real size arrives.
+    if (!(Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)) return;
     const next = { width, height };
     // Same size: no new object, so no render (a layout event that repeats must not re-render this component each time).
     setSize((old) => (old && old.width === width && old.height === height ? old : next));
-    setView((v) => v ?? fit(latest.current.scope, next));
+    setView((v) => (v && isFiniteView(v) ? v : fit(latest.current.scope, next)));
   };
 
   // ---- the turn back to north ----
@@ -520,28 +530,41 @@ export function MapCanvas({
     () => Object.values(state.nodes).filter((n) => nodeInScope(n, scope)).map((n) => ({ id: n.id, xy: projection.toXY(n.coord) })),
     [state.nodes, scope, projection],
   );
-  const snap = useMemo(() => {
-    if (!view) return null;
-    let best: { id: string; xy: XY } | null = null;
-    let bestSq = SNAP_M * SNAP_M;
-    for (const p of points) {
-      const sq = (p.xy[0] - view.x) ** 2 + (p.xy[1] - view.y) ** 2;
-      if (sq <= bestSq) {
-        best = p;
-        bestSq = sq;
-      }
-    }
-    return best;
-  }, [points, view]);
-  const anchor = useMemo(() => points.find((p) => p.id === anchorId) ?? null, [points, anchorId]);
+  // Bucketed once per floor, so the search on each frame looks at the few points near the crosshair only; and it runs
+  // again only when the crosshair moved (a zoom or a turn about the crosshair does not move it).
+  const snapIndex = useMemo(() => buildSnapIndex(points, SNAP_M), [points]);
+  const snap = useMemo(() => (view ? snapIndex.nearest([view.x, view.y], SNAP_M) : null), [snapIndex, view?.x, view?.y]); // eslint-disable-line react-hooks/exhaustive-deps
+  const anchor = useMemo(() => (anchorId === null ? null : snapIndex.byId(anchorId)), [snapIndex, anchorId]);
   const snapId = snap?.id ?? null;
   const onSnapRef = useRef(onSnap);
   onSnapRef.current = onSnap;
   useEffect(() => onSnapRef.current?.(snapId), [snapId]);
 
-  // Tiles the server could not give (no network, no tile there) are left out: the plain background shows instead.
+  // Tiles the server could not give (no network, no tile there) are left out: the plain background shows instead. They
+  // are tried again after a wait that doubles each time (tileRetry.ts), so the background comes back with the network.
   // They are laid out north-up on a square that covers the screen at any turn, and the square is turned with the map.
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  const failures = useRef(createFailedTiles());
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const armRetry = useCallback((): void => {
+    if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+    retryTimer.current = null;
+    const at = failures.current.nextAt(Date.now());
+    if (at === null) return;
+    retryTimer.current = setTimeout(() => {
+      retryTimer.current = null;
+      const due = new Set(failures.current.due(Date.now()));
+      // Taken out of `failed`, a tile is drawn again and asks the cache once more.
+      if (due.size > 0) setFailed((old) => (([...old].some((k) => due.has(k))) ? new Set([...old].filter((k) => !due.has(k))) : old));
+      armRetry();
+    }, Math.max(50, at - Date.now()));
+  }, []);
+  useEffect(() => () => {
+    if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+    retryTimer.current = null;
+  }, []);
+  /** The tiles on screen now: never forgotten when the bounded records are cut down. */
+  const onScreen = useRef<ReadonlySet<string>>(new Set());
   const cover = size ? coverSide(size) : 0;
   const coverSize = useMemo(() => ({ width: cover, height: cover }), [cover]);
   const flat = view ? unturned(view) : null;
@@ -556,8 +579,17 @@ export function MapCanvas({
   }, [z, tiles, loaded, failed]);
   const baseZ = settledZ !== null && z !== null && settledZ !== z ? settledZ : z !== null && z > MIN_TILE_ZOOM ? z - 1 : null;
   const baseTiles = useMemo(() => (size && flat && baseZ !== null ? visibleTiles(flat, coverSize, projection, baseZ) : []), [size, flat?.x, flat?.y, flat?.scale, coverSize, projection, baseZ]); // eslint-disable-line react-hooks/exhaustive-deps
-  const onLoad = useCallback((key: string) => setLoaded((old) => (old.has(key) ? old : new Set(old).add(key))), []);
-  const onFail = useCallback((key: string) => setFailed((old) => (old.has(key) ? old : new Set(old).add(key))), []);
+  onScreen.current = new Set([...tiles, ...baseTiles].map((t) => t.key));
+  // Both records are bounded: a long walk over the whole campus would otherwise keep a key for every tile ever seen.
+  const onLoad = useCallback((key: string) => {
+    failures.current.succeed(key);
+    setLoaded((old) => (old.has(key) ? old : boundedKeys(new Set(old).add(key), onScreen.current, MAX_LOADED)));
+  }, []);
+  const onFail = useCallback((key: string) => {
+    failures.current.fail(key, Date.now());
+    setFailed((old) => (old.has(key) ? old : boundedKeys(new Set(old).add(key), onScreen.current, MAX_FAILED)));
+    armRetry();
+  }, [armRetry]);
 
   const turn = view ? rotationOf(view) : 0;
   const hint = mode === 'select' ? '선택 지도. 눌러서 고르고, 끌어서 여러 개를 고릅니다. 두 손가락으로 옮기고 확대하고 돌립니다.'

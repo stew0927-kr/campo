@@ -9,7 +9,7 @@ import bundle from './assets/campus.generated.json';
 import { SurveyScreen } from './src/SurveyScreen.tsx';
 import { loadCampus, type BundledCampus, type Campus } from './src/campus.ts';
 import { expoStore } from './src/storage/expoStore.ts';
-import { clearSnapshot, loadSnapshot } from './src/storage/store.ts';
+import { SURVEY_DIR, clearSnapshot, loadSnapshot } from './src/storage/store.ts';
 import { SurveySession } from './src/survey/session.ts';
 import { isoLocal } from './src/time.ts';
 import { BigButton } from './src/ui/controls.tsx';
@@ -38,7 +38,19 @@ async function boot(): Promise<Boot> {
   if (!snapshot) return fresh(campus, unread);
   const restored = SurveySession.restore({ campus: campus.id, base: campus.base, ids: newIds() }, snapshot);
   if ('error' in restored) return { status: 'stale', campus, reason: restored.error };
-  return { status: 'ready', campus, session: restored.session, greeting: '저장된 조사를 이어서 합니다.' };
+  if (!restored.rebased) return { status: 'ready', campus, session: restored.session, greeting: '저장된 조사를 이어서 합니다.' };
+  // The campus in the app changed under the walk. The walk goes on against the new data; the snapshot as it was is
+  // kept beside it first, because the next save replaces it.
+  const { alreadyIn, dropped } = restored.rebased;
+  const backup = `${SURVEY_DIR}/restore-backup-${Date.now()}.json`;
+  await expoStore.writeText(backup, JSON.stringify(snapshot));
+  const parts = [
+    '앱의 캠퍼스 데이터가 바뀌어 저장된 조사를 새 데이터에 맞춰 이어서 합니다.',
+    ...(alreadyIn > 0 ? [`이미 반영된 변경 ${alreadyIn}개는 건너뛰었습니다.`] : []),
+    ...(dropped.length > 0 ? [`새 데이터와 맞지 않는 변경 ${dropped.length}개는 뺐습니다(원본은 기기에 따로 보관했습니다).`] : []),
+    '사진과 측정 기록은 그대로입니다.',
+  ];
+  return { status: 'ready', campus, session: restored.session, greeting: parts.join(' ') };
 }
 
 export default function App() {

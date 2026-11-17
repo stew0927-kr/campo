@@ -73,6 +73,27 @@ export function memoryStore() {
       bytes.set(`cache/${name}`, data);
       return `file:///cache/${name}`;
     },
+    async openShared(name) {
+      const parts: Uint8Array[] = [];
+      return {
+        async write(chunk) {
+          parts.push(chunk.slice());
+        },
+        async close() {
+          const all = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
+          let at = 0;
+          for (const c of parts) {
+            all.set(c, at);
+            at += c.length;
+          }
+          bytes.set(`cache/${name}`, all);
+          return `file:///cache/${name}`;
+        },
+        async abort() {
+          bytes.delete(`cache/${name}`);
+        },
+      };
+    },
   };
   return store;
 }

@@ -608,12 +608,21 @@ export function Workspace({ session }: { session: Session }) {
       return fail(`현장 기록을 저장하지 못해 지도에도 반영하지 않았습니다. ${(err as Error).message}`);
     }
     setSurveys((list) => withSurvey(list, read.survey));
-    const heights = read.elevationStore !== null ? await elevation.importPhoneStore(read.elevationStore) : null;
+    // The barometer measurements in the zip go into the elevation store; when they cannot, or when the zip itself was
+    // missing something, the notice says so.
+    const extra: string[] = [];
+    let warn = read.missingPhotos.length > 0 || read.phoneMissingPhotos.length > 0 || read.ignored.length > 0;
+    if (read.elevationStore !== null) {
+      const heights = await elevation.importPhoneStore(read.elevationStore, read.elevationDirtyKeys);
+      extra.push(heights.line);
+      if (heights.warn) warn = true;
+    }
     if (planned.plan && perform(planned.plan) !== undefined) return;
-    const lines = [...planned.lines];
+    const lines = [...planned.lines, ...extra];
     if (read.missingPhotos.length > 0) lines.push(`파일에 없는 사진이 ${read.missingPhotos.length}장 있습니다.`);
-    if (heights) lines.push(heights.line);
-    setNotice({ text: lines.join(' '), tone: read.missingPhotos.length > 0 || heights?.warn ? 'warn' : 'info' });
+    if (read.phoneMissingPhotos.length > 0) lines.push(`조사 앱이 내보낼 때 읽지 못한 사진 ${read.phoneMissingPhotos.length}장은 빠졌습니다: ${read.phoneMissingPhotos.slice(0, 3).join(', ')}${read.phoneMissingPhotos.length > 3 ? ' 외' : ''}`);
+    if (read.ignored.length > 0) lines.push(`읽지 않은 파일 ${read.ignored.length}개: ${read.ignored.slice(0, 3).join(', ')}${read.ignored.length > 3 ? ' 외' : ''}`);
+    setNotice({ text: lines.join(' '), tone: warn ? 'warn' : 'info' });
   };
 
   /** V on a selected elevator stop: edit its floors; otherwise the 엘리베이터 tool. */

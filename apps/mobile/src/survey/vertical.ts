@@ -110,6 +110,11 @@ export interface VerticalInfo {
   /** Stairs: the flights at the landing (step_count goes on them) and their step count when they all agree. */
   flights: string[];
   stepCount: number | undefined;
+  /**
+   * Stairs: each flight on its own — where it leads and its own step count. A landing between two floors has a flight up
+   * and a flight down, and they seldom have the same number of steps, so the count is saved per flight.
+   */
+  flightList: { id: string; to: string; stepCount: number | undefined }[];
   /** Escalator: the belts at the point, for the stopwatch. */
   belts: string[];
 }
@@ -127,6 +132,7 @@ export function verticalInfo(state: EditState, nodeId: string, escalatorSpots: R
       linked: flights.flatMap((e) => placeOf(state, other(e, nodeId)) ?? []),
       flights: flights.map((e) => e.id),
       stepCount: counts.length > 0 && counts.every((c) => c === counts[0]) ? counts[0] : undefined,
+      flightList: flights.map((e) => ({ id: e.id, to: placeOf(state, other(e, nodeId)) ?? '?', stepCount: e.props.step_count })),
       belts: [],
     };
   }
@@ -135,11 +141,11 @@ export function verticalInfo(state: EditState, nodeId: string, escalatorSpots: R
     const stops = Object.values(state.nodes).filter((n) => n.id !== nodeId && n.props.node_type === 'elevator_stop'
       && n.props.building_id === node.props.building_id && n.props.elevator_id !== undefined && n.props.elevator_id === node.props.elevator_id);
     const linked = [...new Set(stops.flatMap((n) => (n.props.level === null ? [] : [n.props.level])))].sort((a, b) => a - b).map(floorLabel);
-    return { kind: 'elevator', linked, flights: [], stepCount: undefined, belts: [] };
+    return { kind: 'elevator', linked, flights: [], stepCount: undefined, flightList: [], belts: [] };
   }
   const belts = at(state, nodeId, (e) => isEscalator(e.props));
   if (isWalkPoint(node) && (belts.length > 0 || escalatorSpots.has(nodeId))) {
-    return { kind: 'escalator', linked: belts.flatMap((e) => placeOf(state, other(e, nodeId)) ?? []), flights: [], stepCount: undefined, belts: belts.map((e) => e.id) };
+    return { kind: 'escalator', linked: belts.flatMap((e) => placeOf(state, other(e, nodeId)) ?? []), flights: [], stepCount: undefined, flightList: [], belts: belts.map((e) => e.id) };
   }
   return null;
 }

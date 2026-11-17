@@ -5,10 +5,14 @@ import {
   accessPatch,
   applyChangeset,
   buildSurvey,
+  changeIdOf,
+  checkChangeset,
   compose,
   createHistory,
+  featuresById,
   findFeature,
   historyToChangeset,
+  sameFeature,
   setProps,
   surveyId,
   type AccessInfo,
@@ -111,6 +115,49 @@ function snapshotShapeOk(s: SessionSnapshot): boolean {
     typeof seq === 'number' && Number.isInteger(seq) && seq >= 0;
 }
 
+/** What restore did to a saved walk whose map changes no longer fit the bundled campus as a whole. */
+export interface RestoreRebase {
+  /** Changes the bundled campus already has (an earlier export of this walk was imported and the app re-bundled). */
+  alreadyIn: number;
+  /** Changes that conflict with the bundled campus (the same place was edited in the editor), left out. Their ids. */
+  dropped: string[];
+}
+
+/**
+ * The changes of `cs` that still fit `base`: those `base` already holds are left out, then the ones that conflict (and
+ * the ones that only made sense with them, such as an edge to a dropped point) are dropped until the rest applies.
+ * Returns null changes when nothing is left to apply.
+ */
+export function rebaseChangeset(base: EditState, cs: Changeset): { changeset: Changeset | null; alreadyIn: number; dropped: string[] } {
+  const now = featuresById(base);
+  const fresh = cs.changes.filter((c) => {
+    if (c.op === 'delete') return now.has(c.id);
+    const have = now.get(c.feature.id);
+    return !(have && sameFeature(have, c.feature));
+  });
+  const alreadyIn = cs.changes.length - fresh.length;
+  let changes = fresh;
+  const dropped: string[] = [];
+  // Each round drops at least one change, so this ends; a problem no change can be blamed for drops the rest.
+  while (changes.length > 0) {
+    const check = checkChangeset(base, { ...cs, changes });
+    if (check.ok) break;
+    const ids = changes.map(changeIdOf);
+    const blamed = new Set<string>([
+      ...check.conflicts.map((c) => c.id),
+      ...check.problems.flatMap((p) => (p.id === null ? [] : [p.id])),
+    ].filter((id) => ids.includes(id)));
+    if (blamed.size === 0) {
+      dropped.push(...ids);
+      changes = [];
+      break;
+    }
+    dropped.push(...ids.filter((id) => blamed.has(id)));
+    changes = changes.filter((c) => !blamed.has(changeIdOf(c)));
+  }
+  return { changeset: changes.length > 0 ? { ...cs, changes } : null, alreadyIn, dropped };
+}
+
 export class SurveySession {
   readonly campus: string;
   readonly base: EditState;
@@ -143,22 +190,34 @@ export class SurveySession {
   }
 
   /**
-   * Continue a saved walk on the bundled campus. Fails with the reason when the snapshot is for another campus or its
-   * changes no longer fit the data (the app was rebuilt with a newer campus): the saved file is then left alone.
+   * Continue a saved walk on the bundled campus. Fails with the reason when the snapshot is for another campus, another
+   * snapshot version or damaged: the saved file is then left alone. When the app was rebuilt with a newer campus (the
+   * editor took in an earlier export of this walk, or someone edited the same place) the walk is not thrown away: its
+   * changes are rebased onto the bundled campus (rebaseChangeset) and `rebased` says what was left out. Photos, readings
+   * and timings are kept as they were. The caller should keep a copy of the original snapshot before saving over it.
    */
-  static restore(init: Omit<SessionInit, 'startedAt'>, snapshot: SessionSnapshot): { session: SurveySession } | { error: string } {
+  static restore(init: Omit<SessionInit, 'startedAt'>, snapshot: SessionSnapshot): { session: SurveySession; rebased?: RestoreRebase } | { error: string } {
     if (snapshot.version !== SNAPSHOT_VERSION) return { error: '저장된 조사가 이 앱 버전과 맞지 않습니다.' };
     if (snapshot.campus !== init.campus) return { error: `저장된 조사는 다른 캠퍼스(${snapshot.campus})의 것입니다.` };
     // The file parsed as JSON, but a damaged field would throw here or later on the map; the 'stale' screen can clear it.
     if (!snapshotShapeOk(snapshot)) return { error: '저장된 조사 파일이 손상되었습니다.' };
     const session = new SurveySession({ ...init, startedAt: snapshot.startedAt });
+    let rebased: RestoreRebase | undefined;
     if (snapshot.changeset) {
       try {
-        const action = applyChangeset(snapshot.changeset);
-        const reason = action.disabled(init.base);
-        if (reason !== false) return { error: reason };
+        let cs: Changeset | null = snapshot.changeset;
+        if (applyChangeset(cs).disabled(init.base) !== false) {
+          const r = rebaseChangeset(init.base, cs);
+          rebased = { alreadyIn: r.alreadyIn, dropped: r.dropped };
+          cs = r.changeset;
+        }
         // One history with one baseline, the bundled campus. Undo stops here because this run's trail is empty.
-        session.history.perform(action);
+        if (cs) {
+          const action = applyChangeset(cs);
+          const reason = action.disabled(init.base);
+          if (reason !== false) return { error: reason };
+          session.history.perform(action);
+        }
       } catch {
         return { error: '저장된 조사의 지도 변경 내용을 읽지 못했습니다.' };
       }
@@ -169,7 +228,7 @@ export class SurveySession {
     session.measurements = [...snapshot.vertical];
     session.timed = [...(snapshot.timings ?? [])];
     session.photoSeq = snapshot.photoSeq;
-    return { session };
+    return rebased ? { session, rebased } : { session };
   }
 
   // ---- reading ----

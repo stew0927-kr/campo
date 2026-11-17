@@ -1654,7 +1654,8 @@ def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: di
     conf = config_to_dict(cfg)
     conf.pop("format", None)
     counts = {"road_cells", "pad_cells", "apron_cells", "island_cells", "mid_cells", "shoulder_unknowns", "cg_iterations",
-              "cg_converged", "vertical_steps_over_limit", "terraces", "terrace_wall_pairs"}
+              "cg_converged", "vertical_steps_over_limit", "terraces", "terrace_wall_pairs", "drop_walls", "drop_wall_links",
+              "drop_wall_pins"}
     grid_stats = {k: (int(v) if k in counts else _num(v)) for k, v in g.stats.items()}
     b_out = {}
     for bid, b in sorted(w.buildings.items()):
@@ -1678,6 +1679,11 @@ def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: di
         "stairs": {sid.split(":", 1)[1]: {"riser_m": _num(s.riser_m), "sign": int(s.sign), "direction_source": s.direction_source}
                    for sid, s in sorted(w.stairs.items())},
         "ramps_capped": [rid.split(":", 1)[1] for rid in w.ramps_capped],
+        # drawn break lines with a drop (optional key, campo-solve-report/1 unchanged)
+        "dropWalls": [{"id": e["id"], "dropM": _num(e["drop_m"]), "measuredMin": _num(e["measured_min_m"]),
+                       "measuredMedian": _num(e["measured_median_m"]), "measuredMax": _num(e["measured_max_m"]),
+                       "links": int(e["links"]), "conflicts": int(e["conflicts"])}
+                      for e in g.wall_report],
         "outliers": [{"id": o.id, "kind": o.kind, "residual_m": _num(o.residual_m), "sigma_m": _num(o.sigma_m),
                       "ratio": _num(o.ratio)} for o in w.outliers],
         "log": [_ascii(line) for line in [*extra_log, *g.log]],
@@ -1690,7 +1696,7 @@ def _run_v2(a: argparse.Namespace):
 
     from pyproj import Transformer
 
-    from grid_grading import Corridors, SoftPoint, corridor_dem_values, effective_half_width, grade_grid
+    from grid_grading import Corridors, DropWall, SoftPoint, corridor_dem_values, effective_half_width, grade_grid
     from node_wls import solve_nodes
 
     t_start = time.perf_counter()
@@ -1714,7 +1720,7 @@ def _run_v2(a: argparse.Namespace):
         for line in cm.log:
             _say(line)
     elif any(b.low_side is not None and b.drop_m is not None for b in breaklines):
-        bl_log.append("breaklines with lowSide/dropM: height constraints need --campus (side separation only)")
+        bl_log.append("breaklines with lowSide/dropM: node height constraints need --campus (the grid still makes the drop)")
     for line in bl_log:
         _say(line)
     if a.method != "fusion":
@@ -1775,8 +1781,11 @@ def _run_v2(a: argparse.Namespace):
               if n.key.startswith("op:") and n.kind == "outdoor_point" and n.x is not None and n.key in w.h
               and not w.floating[n.key]]
     segs = [np.array([p0, p1], float) for bl in drawn for p0, p1 in zip(bl.coords[:-1], bl.coords[1:])]
+    # drawn lines with lowSide and dropM > 0 also make the drop on the grid (campus edge lines have no lowSide)
+    drop_walls = [DropWall(bl.id, bl.coords, bl.low_side, bl.drop_m) for bl in drawn
+                  if bl.low_side in ("left", "right") and bl.drop_m is not None and bl.drop_m > 0]
     g = grade_grid(grid, corr, pad_list, cfg, breaklines=np.array(segs).reshape(-1, 2, 2) if segs else None,
-                   breakline_attenuation=a.breakline_attenuation, soft_points=points)
+                   breakline_attenuation=a.breakline_attenuation, soft_points=points, drop_walls=drop_walls)
     for line in g.log:
         _say(line)
     x_log: list[str] = []

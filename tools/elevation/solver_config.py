@@ -50,6 +50,10 @@ class ShoulderConfig:
     point_alpha: float = 1.0  # soft target weight of barometer points (1/m^2)
     cg_rtol: float = 1e-6
     cg_maxiter: int = 500
+    # drawn break lines with lowSide / dropM (retaining walls): pinned ring cells on both sides of the line
+    wall_high_share: float = 0.5  # 0..1: share of the drop the high side goes up (0 = only the low side goes down)
+    wall_tip_slope: float = 0.5  # the drop shrinks to 0 at the open ends of a line with this slope (0 = no taper)
+    wall_min_step_m: float = 0.001  # crossing links whose drop is at or below this keep no pin
 
 
 @dataclass(frozen=True)

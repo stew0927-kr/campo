@@ -91,6 +91,15 @@ class SoftPoint:  # barometer point (op:) off the corridors
     radius_m: float
 
 
+@dataclass(frozen=True)
+class DropWall:
+    """A drawn break line with lowSide and dropM (a retaining wall): the low side is drop_m below the high side."""
+    id: str
+    coords: np.ndarray  # (k, 2) float64 grid CRS m polyline (closed when coords[0] == coords[-1])
+    low_side: str  # 'left' | 'right' of the direction coords[0] -> coords[-1]
+    drop_m: float  # > 0
+
+
 @dataclass
 class RoadRaster:
     road: np.ndarray  # (H, W) bool: d <= half_width
@@ -131,6 +140,7 @@ class GridResult:
     terrace_h: np.ndarray = field(default_factory=lambda: np.zeros(0))  # (T,) ground plane per terrace
     terraces: list[dict] = field(default_factory=list)  # per terrace: building_id, level, plane_m, cells, boundary_step_m
     wall_segments: Optional[np.ndarray] = None  # (K, 2, 2) terrace boundary (retaining wall) segments, grid CRS m
+    wall_report: list = field(default_factory=list)  # per drawn drop wall: id, drop_m, links, conflicts, measured_*_m
 
 
 # ------------------------------------------------------------------ #
@@ -751,6 +761,207 @@ def breakline_links(grid: Grid, lines: Optional[np.ndarray], attenuation: float)
     return link_e, link_s
 
 
+# drawn break lines with a drop (retaining walls): pinned ring cells, docs/ELEVATION_SOLVER_V2.md "고도 단절선 단차"
+
+
+def wall_links(grid: Grid, coords: np.ndarray, low_side: str):
+    """
+    4-neighbour links P -> Q (Q east or south of P) that cross the polyline: (p_flat, q_flat, p_is_high, arc_s, L).
+    P is left of the segment a -> b when (b - a) x (P - a) >= 0 (closed half plane, so a centre on the line has one side
+    whatever the direction). A link crosses when its ends are on different sides and the line PQ meets the segment at
+    t in [0, 1). The low side is the left (low_side 'left') or the right one. arc_s = arc length at the crossing, L = the
+    polyline length. A link may be listed once per segment it crosses.
+    """
+    H, W = grid.height, grid.width
+    pts = np.asarray(coords, float).reshape(-1, 2)
+    seg_len = np.hypot(*np.diff(pts, axis=0).T) if len(pts) >= 2 else np.zeros(0)
+    cum = np.concatenate([[0.0], np.cumsum(seg_len)])
+    xs, ys = grid.cell_centers()
+    res = grid.res
+    flat = np.arange(H * W, dtype=np.int64).reshape(H, W)
+    left_low = low_side == "left"
+    out_p, out_q, out_hi, out_s = [], [], [], []
+    for j in range(len(pts) - 1):
+        (ax, ay), (bx, by) = pts[j], pts[j + 1]
+        if not seg_len[j] > 0:
+            continue
+        r0, r1, c0, c1 = _window(grid, min(ax, bx) - res, max(ax, bx) + res, min(ay, by) - res, max(ay, by) + res)
+        if r0 >= r1 or c0 >= c1:
+            continue
+        ex, ey = bx - ax, by - ay
+        for horizontal in (True, False):  # the same windows as breakline_links
+            if horizontal:
+                cc1 = min(c1, W - 1)
+                if c0 >= cc1:
+                    continue
+                PX, PY = xs[None, c0:cc1], ys[r0:r1, None]
+                QX, QY = xs[None, c0 + 1:cc1 + 1], PY
+                PF, QF = flat[r0:r1, c0:cc1], flat[r0:r1, c0 + 1:cc1 + 1]
+            else:
+                rr1 = min(r1, H - 1)
+                if r0 >= rr1:
+                    continue
+                PX, PY = xs[None, c0:c1], ys[r0:rr1, None]
+                QX, QY = PX, ys[r0 + 1:rr1 + 1, None]
+                PF, QF = flat[r0:rr1, c0:c1], flat[r0 + 1:rr1 + 1, c0:c1]
+            shape = PF.shape
+            dP = np.broadcast_to(ex * (PY - ay) - ey * (PX - ax), shape)
+            dQ = np.broadcast_to(ex * (QY - ay) - ey * (QX - ax), shape)
+            fx, fy = QX - PX, QY - PY
+            d3 = fx * (ay - PY) - fy * (ax - PX)
+            d4 = fx * (by - PY) - fy * (bx - PX)
+            den = d3 - d4
+            t = np.broadcast_to(np.where(den != 0, d3 / np.where(den != 0, den, 1.0), -1.0), shape)
+            lp, lq = dP >= 0, dQ >= 0
+            cross = (lp != lq) & (t >= 0) & (t < 1)
+            if not cross.any():
+                continue
+            out_p.append(PF[cross])
+            out_q.append(QF[cross])
+            out_hi.append(lp[cross] != left_low)
+            out_s.append(cum[j] + t[cross] * seg_len[j])
+    if not out_p:
+        return np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0, bool), np.zeros(0), float(cum[-1])
+    return (np.concatenate(out_p), np.concatenate(out_q), np.concatenate(out_hi), np.concatenate(out_s), float(cum[-1]))
+
+
+def _is_closed(coords: np.ndarray) -> bool:
+    c = np.asarray(coords, float).reshape(-1, 2)
+    return len(c) >= 3 and bool(np.array_equal(c[0], c[-1]))
+
+
+def wall_pins(grid: Grid, walls: Sequence[DropWall], fixed: np.ndarray, d_fixed: np.ndarray, usable_cell: np.ndarray,
+              cfg: ShoulderConfig) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+    """
+    Pinned displacements d = h - DEM on the ring cells of the drop walls: (pin (H, W) bool, pin_d (H, W), records).
+    Per crossing link (hi, lo) with v = drop x tau (tau: 1, or the open-end taper min(s, L - s) / L_t, L_t = drop /
+    wall_tip_slope; links with v <= wall_min_step_m keep no pin): d_hi = +s v, d_lo = -(1 - s) v, s = wall_high_share.
+    Within one wall a cell keeps the value of largest |.| (the low side value wins on a cell that is both). Fixed cells
+    (roads, pads, aprons) never change: with one fixed end the free end gets d_fixed -/+ v (the mean of its links), with
+    both ends fixed the link is a conflict, not enforced. Unusable (missing DEM, excluded) cells are not pinned. Pins of
+    different walls add up (crossing walls). Walls crossing the same (hi, lo) links count once, the larger drop kept.
+    records: one dict per wall (input order) with id, drop_m, hi, lo, tau, v, both (conflict mask), links, conflicts,
+    pins, log, duplicate_of.
+    """
+    H, W = grid.height, grid.width
+    HW = H * W
+    pin = np.zeros(HW, bool)
+    pin_d = np.zeros(HW)
+    records: list[dict] = []
+    if not walls:
+        return pin.reshape(H, W), pin_d.reshape(H, W), records
+    fx = np.asarray(fixed, bool).ravel()
+    dfx = np.asarray(d_fixed, float).ravel()
+    use = np.asarray(usable_cell, bool).ravel()
+    share = cfg.wall_high_share
+    found = []
+    for w in walls:
+        p, q, p_hi, s, L = wall_links(grid, w.coords, w.low_side)
+        hi, lo = np.where(p_hi, p, q), np.where(p_hi, q, p)
+        found.append((hi, lo, s, L, np.unique(hi * HW + lo).tobytes()))
+    winner: dict[bytes, int] = {}
+    for i, (w, (hi, _, _, _, key)) in enumerate(zip(walls, found)):
+        if len(hi) == 0:
+            continue
+        j = winner.get(key)
+        if j is None or float(w.drop_m) > float(walls[j].drop_m):
+            winner[key] = i
+    empty_i, empty_f = np.zeros(0, np.int64), np.zeros(0)
+    for i, (w, (hi, lo, s, L, key)) in enumerate(zip(walls, found)):
+        delta = float(w.drop_m)
+        rec = dict(id=w.id, drop_m=delta, hi=empty_i, lo=empty_i, tau=empty_f, v=empty_f, both=np.zeros(0, bool), links=0,
+                   conflicts=0, pins=0, log=[], duplicate_of=None)
+        records.append(rec)
+        if len(hi) == 0:
+            rec["log"].append(f"breakline {w.id}: crosses no grid link -> no drop")
+            continue
+        j = winner[key]
+        if j != i:
+            rec["duplicate_of"] = walls[j].id
+            rec["log"].append(f"breakline {w.id}: crosses the same grid links as {walls[j].id} -> dropM {delta:g} m not used "
+                              f"(dropM {float(walls[j].drop_m):g} m kept)")
+            continue
+        Lt = delta / cfg.wall_tip_slope if cfg.wall_tip_slope > 0 else 0.0
+        if _is_closed(w.coords) or Lt <= 0:
+            tau = np.ones(len(s))
+        else:
+            tau = np.clip(np.minimum(s, L - s) / Lt, 0.0, 1.0)
+        v = delta * tau
+        keep = v > cfg.wall_min_step_m
+        hi, lo, tau, v = hi[keep], lo[keep], tau[keep], v[keep]
+        ok = use[hi] & use[lo]
+        hi, lo, tau, v = hi[ok], lo[ok], tau[ok], v[ok]
+        # free-free: the largest |value| per cell (max of the high side values, then the low side values over them)
+        val = np.zeros(HW)
+        m = ~fx[hi]
+        np.maximum.at(val, hi[m], share * v[m])
+        m = ~fx[lo]
+        lo_val = np.zeros(HW)
+        np.minimum.at(lo_val, lo[m], -(1.0 - share) * v[m])
+        val[lo[m]] = lo_val[lo[m]]
+        # one end fixed: the free end follows the fixed one exactly
+        fh, fl = fx[hi], fx[lo]
+        a1, a2 = fh & ~fl, fl & ~fh
+        tc = np.concatenate([lo[a1], hi[a2]])
+        tv = np.concatenate([dfx[hi[a1]] - v[a1], dfx[lo[a2]] + v[a2]])
+        if tc.size:
+            u, inv = np.unique(tc, return_inverse=True)
+            val[u] = np.bincount(inv, weights=tv) / np.bincount(inv)
+            mx, mn = np.full(len(u), -np.inf), np.full(len(u), np.inf)
+            np.maximum.at(mx, inv, tv)
+            np.minimum.at(mn, inv, tv)
+            spread = mx - mn
+            if (spread > 0.02).any():
+                rec["log"].append(f"breakline {w.id}: {int((spread > 0.02).sum())} cell(s) next to fixed cells take the mean of "
+                                  f"targets {float(spread.max()):.2f} m apart")
+        both = fh & fl
+        touched = np.zeros(HW, bool)
+        touched[hi] = True
+        touched[lo] = True
+        touched &= ~fx
+        pin_d[touched] += val[touched]
+        pin |= touched
+        rec.update(hi=hi, lo=lo, tau=tau, v=v, both=both, links=int(len(hi)), conflicts=int(both.sum()),
+                   pins=int(touched.sum()))
+        if both.any():
+            rec["log"].append(f"breakline {w.id}: {int(both.sum())} crossing link(s) with both cells fixed (road, pad, apron) "
+                              f"-> drop not enforced there")
+    return pin.reshape(H, W), pin_d.reshape(H, W), records
+
+
+def measure_walls(records: Sequence[dict], h: np.ndarray, dem: np.ndarray) -> list[dict]:
+    """
+    Measured drop of every wall: the excess ex = (h_hi - h_lo) - (DEM_hi - DEM_lo) over its full height links (tau >= 0.999,
+    conflicts left out): min / median / max, and max |ex - drop x tau| (None without such links).
+    """
+    hf, df = np.asarray(h, float).ravel(), np.asarray(dem, float).ravel()
+    out = []
+    for r in records:
+        e = dict(id=r["id"], drop_m=r["drop_m"], links=r["links"], conflicts=r["conflicts"], pins=r["pins"],
+                 duplicate_of=r["duplicate_of"], measured_min_m=None, measured_median_m=None, measured_max_m=None,
+                 max_error_m=None)
+        hi, lo = r["hi"], r["lo"]
+        full = ~r["both"] & (r["tau"] >= 0.999)
+        if full.any():
+            ex = ((hf[hi] - hf[lo]) - (df[hi] - df[lo]))[full]
+            e.update(measured_min_m=float(ex.min()), measured_median_m=float(np.median(ex)), measured_max_m=float(ex.max()),
+                     max_error_m=float(np.abs(ex - r["v"][full]).max()))
+        out.append(e)
+    return out
+
+
+def _wall_settings(cfg: ShoulderConfig) -> None:
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+    if not (num(cfg.wall_high_share) and 0.0 <= cfg.wall_high_share <= 1.0):
+        raise ValueError(f"shoulder.wall_high_share must be within [0, 1] (got {cfg.wall_high_share!r})")
+    if not (num(cfg.wall_tip_slope) and cfg.wall_tip_slope >= 0.0):
+        raise ValueError(f"shoulder.wall_tip_slope must be >= 0 (got {cfg.wall_tip_slope!r})")
+    if not (num(cfg.wall_min_step_m) and cfg.wall_min_step_m >= 0.0):
+        raise ValueError(f"shoulder.wall_min_step_m must be >= 0 (got {cfg.wall_min_step_m!r})")
+
+
 def _cg(A, b, M, rtol: float, maxiter: int):
     it = [0]
 
@@ -937,8 +1148,10 @@ def _max_slope(h: np.ndarray, mask: np.ndarray, res: float) -> float:
 
 def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: SolverConfig, *,
                breaklines: Optional[np.ndarray] = None, breakline_attenuation: float = 0.0,
-               soft_points: Sequence[SoftPoint] = (), exclude: Optional[np.ndarray] = None) -> GridResult:
+               soft_points: Sequence[SoftPoint] = (), exclude: Optional[np.ndarray] = None,
+               drop_walls: Sequence[DropWall] = ()) -> GridResult:
     T0 = time.perf_counter()
+    _wall_settings(cfg.shoulder)
     log: list[str] = []
     dem = np.asarray(grid.data, float)
     valid = np.isfinite(dem)
@@ -979,6 +1192,18 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
         log.append(f"terrace boundaries (retaining walls, not terrain steps) over {cfg.building.step_max_m:g} m: "
                    f"{n_wall} cell pair(s), max {max_wall:.2f} m")
     walls = wall_segments(grid, wall_e, wall_s) if cfg.building.terrace_breakline else np.zeros((0, 2, 2))
+    # drawn drop walls: their ring cells join the fixed cells (after the step counts, which stay about the terrain)
+    wall_recs: list[dict] = []
+    n_pins = 0
+    if drop_walls:
+        excl = exclude if exclude is not None else np.zeros_like(valid)
+        d_fix = np.where(fixed, h_fixed - np.where(valid, dem, 0.0), 0.0)
+        pin, pin_d, wall_recs = wall_pins(grid, drop_walls, fixed, d_fix, valid & ~excl, cfg.shoulder)
+        for r in wall_recs:
+            log += r["log"]
+        h_fixed = np.where(pin, dem + pin_d, h_fixed)
+        fixed = fixed | pin
+        n_pins = int(pin.sum())
     t_build = time.perf_counter() - t
 
     # 4. islands
@@ -1038,7 +1263,23 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
         "terraces": float(len(pr.terrace_h) - len(set(pr.terrace_pad.tolist()))),
         "terrace_wall_pairs": float(n_wall), "max_terrace_wall_m": float(max_wall),
     }
+    wall_report = measure_walls(wall_recs, h, dem) if drop_walls else []
+    for e in wall_report:
+        if e["duplicate_of"] is not None or e["links"] == 0:
+            continue
+        if e["measured_median_m"] is None:
+            log.append(f"breakline {e['id']}: dropM {e['drop_m']:.2f} m, no full height link to measure "
+                       f"({e['links']} link(s)), conflicts {e['conflicts']}")
+        else:
+            log.append(f"breakline {e['id']}: dropM {e['drop_m']:.2f} m, measured {e['measured_median_m']:.3f} m "
+                       f"({e['links']} link(s), min {e['measured_min_m']:.3f} .. max {e['measured_max_m']:.3f}), "
+                       f"conflicts {e['conflicts']}")
+    if drop_walls:  # only with drop walls, so the stats of a run without them stay as they were
+        used = [e for e in wall_report if e["duplicate_of"] is None and e["links"] > 0]
+        stats.update(drop_walls=float(len(used)), drop_wall_links=float(sum(e["links"] for e in used)),
+                     drop_wall_pins=float(n_pins),
+                     max_drop_wall_error_m=max([e["max_error_m"] for e in used if e["max_error_m"] is not None], default=0.0))
     timings = {"rasterize": t_raster, "buildings": t_build, "islands": t_island, "assemble": info["assemble"],
                "cg": info["cg"], "total": total}
     return GridResult(h, residual, road.road, pr.pad_id, apron & ~pad, island, mid, unknown, stats, timings, log,
-                      pr.terrace_of, pr.terrace_h, t_info, walls if len(walls) else None)
+                      pr.terrace_of, pr.terrace_h, t_info, walls if len(walls) else None, wall_report)

@@ -152,3 +152,19 @@ HALF_W 1.0 m / SOFT_RING 0.5 m / A_max 400 m² / R_max 5 m / A_big 3000 m² / κ
 - 대지 셀을 하나도 갖지 못한 테라스(대지 셀이 모두 다른 테라스로 배정된 경우, 예: 작은 탑의 위층 문 하나)는 `supported: false`, `cells: 0`, `reason: "1F terrace keeps no pad cell"`로 보고한다 — 그 평면에는 아무것도 그려지지 않는다.
 - `grid`: `terraces`(위 테라스 수), `terrace_wall_pairs`, `max_terrace_wall_m`.
 - 노드 WLS는 그대로다(포탈은 지금처럼 soft_flat). `building.terrace_enabled = false`면 테라스 이전과 같은 한 평면 대지.
+
+## 고도 단절선 단차(옹벽 dropM)
+
+> 구현 위치(2026-11-17): `grid_grading.py`의 `DropWall`·`wall_links`·`wall_pins`·`measure_walls`, `grade_grid(..., drop_walls=...)`, `campo_height_solver.py`의 `_run_v2`(변환)·`solve_report`(보고). 튜닝 값은 `ShoulderConfig`의 `wall_high_share`·`wall_tip_slope`·`wall_min_step_m`. 검증은 `test_drop_walls.py`. v1 엔진과 노드 WLS의 `breakline_drop_edges`는 그대로다.
+
+사람이 그린 고도 단절선에 `lowSide`('left'|'right')와 `dropM`(> 0)이 함께 있으면 격자에서도 실제 단차를 만든다. 예전에는 가로지르는 링크를 끊기만 해서(감쇠 0) 양쪽이 모두 d = 0으로 남았고, 도로·대지가 없는 곳에서는 어깨 미지수가 하나도 없어 단차가 생기지 않았다. 노드 WLS의 `breakline_drop` 행은 선을 가로지르는 보행 간선이 있을 때만 생긴다.
+
+- **옹벽 링 핀**: 선을 가로지르는 4-이웃 링크 (hi, lo)의 양끝 셀을 고정 셀로 바꾸고 변위를 d_hi = +s·δ·τ, d_lo = −(1−s)·δ·τ로 둔다(δ = dropM, s = `wall_high_share` 기본 0.5, 0이면 낮은 쪽만 내림). 두 끝이 모두 고정이라 그 링크는 행렬에서 빠지고(기존 경계 경로) 값은 RHS로 간다. 행렬은 기존 SPD 행렬의 주 부분행렬이고 새 선형계는 없다. 핀이 `fixed`에 들어가므로 어깨 띠와 적응형 ℓ(= clip(s·δ/s_side, 2, 8) m)이 그대로 따라온다. 가로지르는 링크는 지금처럼 끊는다.
+- **측정 단차는 초과분**: ex = (h_hi − h_lo) − (DEM_hi − DEM_lo) = δ·τ. DEM의 자연 경사는 그대로 남는다.
+- **변 판정**: 선분 a→b와 셀 중심 P에 대해 (b−a)×(P−a) ≥ 0이면 왼쪽(닫힌 반평면이라 방향을 뒤집어도 같은 셀이 같은 쪽). 링크 (P, Q)는 양끝이 서로 다른 쪽이고 직선 PQ와 선분의 교점 t가 [0, 1)이면 가로지른다. 낮은 쪽은 lowSide 쪽.
+- **끝점 테이퍼**: 열린 선은 호장 위치 s에서 τ = clip(min(s, L−s)/L_t, 0, 1), L_t = δ/`wall_tip_slope`(기본 0.5). `wall_tip_slope` = 0이거나 닫힌 선(첫 점 = 끝 점)이면 τ = 1. δ·τ ≤ `wall_min_step_m`(0.001 m)인 링크는 핀을 만들지 않는다.
+- **셀 값**: 한 벽 안에서 셀마다 |값|이 가장 큰 하나만 쓴다(여러 링크·선분이 같은 셀에 걸쳐도 더하지 않음). 서로 다른 벽의 핀은 더한다(교차 벽). (hi, lo) 링크 집합이 같은 벽 둘은 dropM이 큰 쪽만 쓰고 로그를 남긴다.
+- **우선순위**: 도로·대지·앞마당처럼 이미 고정된 셀은 바꾸지 않는다. 링크 한쪽만 고정이면 자유 쪽을 d_자유 = d_고정 ∓ δ·τ로 둔다(링크가 여럿이면 평균, 퍼짐 0.02 m 초과면 로그). 양쪽 모두 고정이면 강제하지 않고 충돌로 센다. DEM 결측·제외 셀은 핀하지 않는다.
+- **순서**: 핀은 `_vertical_steps` 다음, 아일랜드 탐지 앞에 넣는다. `vertical_steps_over_limit`은 지금처럼 지형(길·대지) 단차만 센다. 건물 테라스 경계(`terrace_walls`)는 목표면에 단차가 이미 들어 있어 링크만 끊고 핀을 얹지 않는다.
+- **보고**: 로그 `breakline <id>: dropM 3.00 m, measured 3.000 m (40 link(s), min 3.000 .. max 3.000), conflicts 0`(측정은 τ ≥ 0.999이고 충돌이 아닌 링크). 벽이 있을 때만 `grid`에 `drop_walls`·`drop_wall_links`·`drop_wall_pins`·`max_drop_wall_error_m`, 최상위 `dropWalls[{id, dropM, measuredMin, measuredMedian, measuredMax, links, conflicts}]`(벽이 없으면 빈 목록, 중복으로 빠진 벽은 links 0). 형식은 `campo-solve-report/1` 그대로. 벽이 없으면 `grade_grid`의 h·residual·stats·log가 이 기능 이전과 같다.
+- **한계**: DEM에 이미 단차(옹벽)가 찍혀 있으면 dropM이 그 위에 더해진다(초과분 기준이므로). 양쪽 셀이 모두 고정인 링크(도로가 선을 가로지르는 곳, 대지가 선에 걸친 곳)는 단차를 강제할 수 없다(충돌 수로 보고). 범위 검사(`wall_high_share` ∈ [0, 1], `wall_tip_slope` ≥ 0, `wall_min_step_m` ≥ 0)는 `grade_grid` 시작에서 하고(`ValueError`), `solver_config.validate`는 아직 이 셋을 보지 않는다.

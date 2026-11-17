@@ -24,6 +24,7 @@ def test_defaults_match_the_design():
     assert (s.decay_length_m, s.adaptive, s.decay_min_m, s.decay_max_m, s.side_slope) == (3.0, True, 2.0, 8.0, 0.5)
     assert s.band_factor * s.decay_length_m == 15.0
     assert (s.cg_rtol, s.cg_maxiter) == (1e-6, 500)
+    assert (s.wall_high_share, s.wall_tip_slope, s.wall_min_step_m) == (0.5, 0.5, 0.001)
     b = c.building
     assert (b.apron_m, b.cut_slope, b.fill_slope, b.smooth_k_m, b.alpha_b, b.step_max_m) == (1.0, 0.67, 0.5, 0.3, 4.0, 0.5)
     assert (b.sigma_meas_m, b.up_share_point_below, b.up_share_point_above) == (0.02, 0.95, 0.80)

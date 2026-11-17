@@ -183,3 +183,157 @@ def test_ngii_dir_raster_only_and_low_valid_warning(tmp_path, campus):
     r = run("ngii", "--ngii-dir", root, "--boundary", campus, "--res", 2.0, "--out", tmp_path / "o")
     assert r.returncode == 0, r.stderr
     assert "경고" in r.stdout and "95%" in r.stdout
+
+
+# ---- read_merged: nodata per sheet, coordinate systems (QA 2026-11) ----
+
+def _sheet(path: Path, left: float, top: float, vals: np.ndarray, nodata, crs="EPSG:5186", res=10.0):
+    kw = {} if nodata is None else {"nodata": nodata}
+    with rasterio.open(path, "w", driver="GTiff", width=vals.shape[1], height=vals.shape[0], count=1, dtype="float32",
+                       crs=crs, transform=from_origin(left, top, res, res), **kw) as ds:
+        ds.write(vals.astype("float32"), 1)
+
+
+@pytest.mark.parametrize("order", ["a_first", "b_first"])
+def test_read_merged_masks_every_sheets_own_nodata(tmp_path, order):
+    """Each sheet's nodata becomes NaN whatever the first sheet says (no 0 m or -32767 m cells in the merge).
+    rasterio.merge reads every source masked by its own nodata, so this held before the QA too; the test pins it."""
+    from dem_prep import read_merged
+    a = np.full((4, 4), 30.0)
+    a[:, 3] = -9999.0                       # sheet A: nodata -9999, its east column void
+    b = np.full((4, 4), 50.0)
+    b[0, 1] = 0.0                            # sheet B: nodata 0
+    c = np.full((4, 4), 40.0)
+    c[2, 2] = -32767.0                       # sheet C: nodata -32767
+    _sheet(tmp_path / "A.tif", 0, 1000, a, -9999.0)
+    _sheet(tmp_path / "B.tif", 30, 1000, b, 0.0)
+    _sheet(tmp_path / "C.tif", 0, 960, c, -32767.0)
+    srcs = [tmp_path / n for n in (["A.tif", "B.tif", "C.tif"] if order == "a_first" else ["B.tif", "C.tif", "A.tif"])]
+    arr, _, _, _ = read_merged([str(s) for s in srcs], None)
+    vals = arr[np.isfinite(arr)]
+    assert set(np.unique(vals)) <= {30.0, 40.0, 50.0}
+    # B's void cell, C's void cell, and the 4×3 south-east corner no sheet covers; A's void column is filled from B.
+    assert np.isnan(arr).sum() == 2 + 12
+
+
+def test_read_merged_forced_src_crs_with_differing_sheets_warns_and_merges(tmp_path, capsys):
+    """--src-crs over sheets that say other things: every sheet is read in the forced CRS (no rasterio traceback), and each
+    sheet whose own CRS was overridden is named."""
+    from dem_prep import read_merged
+    _sheet(tmp_path / "A.tif", 0, 1000, np.full((4, 4), 30.0), -9999.0, crs="EPSG:5186")
+    _sheet(tmp_path / "B.tif", 40, 1000, np.full((4, 4), 50.0), -9999.0, crs="EPSG:5174")
+    _sheet(tmp_path / "C.tif", 80, 1000, np.full((4, 4), 60.0), -9999.0, crs=None)
+    arr, tr, crs, _ = read_merged([str(tmp_path / n) for n in ("A.tif", "B.tif", "C.tif")], "EPSG:5186")
+    assert crs.to_epsg() == 5186
+    assert arr.shape == (4, 12) and np.isfinite(arr).all()
+    out = capsys.readouterr().out
+    assert "B.tif" in out and "EPSG:5174" in out and "A.tif" not in out
+
+
+def test_read_merged_sheets_with_different_crs_fail_clearly(tmp_path):
+    from dem_prep import read_merged
+    _sheet(tmp_path / "A.tif", 0, 1000, np.full((4, 4), 30.0), -9999.0, crs="EPSG:5186")
+    _sheet(tmp_path / "B.tif", 40, 1000, np.full((4, 4), 50.0), -9999.0, crs="EPSG:5174")
+    with pytest.raises(SystemExit, match="B.tif"):
+        read_merged([str(tmp_path / "A.tif"), str(tmp_path / "B.tif")], None)
+
+
+def test_dst_crs_must_be_projected_metres_and_non_5186_is_flagged(tmp_path, campus):
+    img = tmp_path / "s.img"
+    make_img(img)
+    r = run("raster", "--src", img, "--boundary", campus, "--res", "1", "--dst-crs", "EPSG:4326", "--out", tmp_path / "geo")
+    assert r.returncode != 0 and "미터" in r.stderr
+    r = run("raster", "--src", img, "--boundary", campus, "--res", "5", "--dst-crs", "EPSG:5179", "--out", tmp_path / "utmk")
+    assert r.returncode == 0, r.stderr
+    assert "EPSG:5186" in r.stdout and "지형 3D" in r.stdout
+    assert Grid.load(tmp_path / "utmk.json").crs == "EPSG:5179"
+    r = run("raster", "--src", img, "--boundary", campus, "--res", "5", "--out", tmp_path / "tm")
+    assert "지형 3D" not in r.stdout
+
+
+# ---- contours: height field, z = 0 (QA 2026-11) ----
+
+def _plane_contours(levels=np.arange(10, 45, 5.0)):
+    from shapely.geometry import LineString
+    lines, hs = [], []
+    for h in levels:
+        pts = [(X0 + (h - 25.0 - 0.01 * (y - Y0)) / 0.02, y) for y in np.linspace(Y0 - 500, Y0 + 500, 11)]
+        lines.append(LineString(pts)); hs.append(float(h))
+    return lines, hs
+
+
+def test_contours_without_a_named_height_field_fail_instead_of_guessing(tmp_path, campus):
+    """The only numeric column is a feature number 1…7 (in −50…2000): it used to become the height (a TIN of row numbers)."""
+    import geopandas as gpd
+    lines, _ = _plane_contours()
+    gpd.GeoDataFrame({"OBJECTID": list(range(1, len(lines) + 1)), "KIND": ["주곡선"] * len(lines)}, geometry=lines,
+                     crs="EPSG:5186").to_file(tmp_path / "c.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "c.shp", "--boundary", campus, "--res", 5.0, "--out", tmp_path / "o")
+    assert r.returncode != 0
+    assert "OBJECTID" in r.stderr and "--z-field" in r.stderr
+    assert not (tmp_path / "o.json").exists()
+    # Named on the command line it is used as asked.
+    hs = _plane_contours()[1]
+    gpd.GeoDataFrame({"ALT": hs}, geometry=lines, crs="EPSG:5186").to_file(tmp_path / "d.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "d.shp", "--z-field", "ALT", "--boundary", campus, "--res", 5.0,
+            "--out", tmp_path / "d")
+    assert r.returncode == 0, r.stderr
+
+
+def test_contours_with_zero_height_are_left_out(tmp_path, campus):
+    """등고수치 0 on an inland sheet is an unfilled attribute: as a 0 m contour it digs a 25 m trench across the campus."""
+    import geopandas as gpd
+    from shapely.geometry import LineString
+    lines, hs = _plane_contours()
+    lines.append(LineString([(X0 - 300, Y0 + 40), (X0 + 300, Y0 + 40)])); hs.append(0.0)
+    gpd.GeoDataFrame({"등고수치": hs}, geometry=lines, crs="EPSG:5186").to_file(tmp_path / "N3L_F0010000.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "N3L_F0010000.shp", "--boundary", campus, "--res", 2.0, "--out", tmp_path / "o")
+    assert r.returncode == 0, r.stderr
+    assert "0 m" in r.stdout and "--keep-zero" in r.stdout
+    g = Grid.load(tmp_path / "o.json")
+    for dx, dy in ((0, 40), (100, 40), (-100, 30)):
+        v = g.sample_bilinear(X0 + dx, Y0 + dy)[0]
+        assert abs(v - plane(X0 + dx, Y0 + dy)) < 0.1, (dx, dy, v)
+    # --keep-zero: a coastal campus whose 0 m contour is real.
+    r = run("contours", "--contours", tmp_path / "N3L_F0010000.shp", "--boundary", campus, "--res", 2.0, "--keep-zero",
+            "--out", tmp_path / "k")
+    assert r.returncode == 0, r.stderr
+    assert Grid.load(tmp_path / "k.json").sample_bilinear(X0, Y0 + 40)[0] < 1.0
+
+
+def test_contours_whose_geometry_z_is_all_zero_are_not_heights(tmp_path, campus):
+    """A PolylineZ file with Z = 0 everywhere and no height column: the grid used to come out 0 m everywhere."""
+    import geopandas as gpd
+    from shapely.geometry import LineString
+    lines, _ = _plane_contours()
+    lines_z = [LineString([(x, y, 0.0) for x, y in l.coords]) for l in lines]
+    gpd.GeoDataFrame({"NAME": ["c"] * len(lines_z)}, geometry=lines_z, crs="EPSG:5186").to_file(tmp_path / "z.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "z.shp", "--boundary", campus, "--res", 5.0, "--out", tmp_path / "o")
+    assert r.returncode != 0
+    assert "--z-field" in r.stderr
+    # A real geometry Z is still read.
+    lines_h = [LineString([(x, y, h) for x, y in l.coords]) for l, h in zip(lines, _plane_contours()[1])]
+    gpd.GeoDataFrame({"NAME": ["c"] * len(lines_h)}, geometry=lines_h, crs="EPSG:5186").to_file(tmp_path / "h.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "h.shp", "--boundary", campus, "--res", 5.0, "--out", tmp_path / "h")
+    assert r.returncode == 0, r.stderr
+    assert abs(Grid.load(tmp_path / "h.json").sample_bilinear(X0, Y0)[0] - plane(X0, Y0)) < 0.1
+
+
+def test_fallback_raster_fills_outside_the_tin_and_reports_what_is_left(tmp_path, campus):
+    """Contours only west of X0+50: the TIN ends there, the 90 m DEM fills the rest. Cells neither covers are counted."""
+    import geopandas as gpd
+    lines, hs = _plane_contours(levels=np.arange(10, 27, 5.0))  # x ≤ X0 + 50 (h = 26: none; h = 25 at x = X0)
+    gpd.GeoDataFrame({"등고수치": hs}, geometry=lines, crs="EPSG:5186").to_file(tmp_path / "N3L_F0010000.shp", encoding="cp949")
+    img = tmp_path / "fb.img"
+    make_img(img)
+    r = run("contours", "--contours", tmp_path / "N3L_F0010000.shp", "--fallback-raster", img, "--boundary", campus,
+            "--res", 2.0, "--out", tmp_path / "o")
+    assert r.returncode == 0, r.stderr
+    assert "fallback raster filled" in r.stdout and "남은 빈 칸" not in r.stdout
+    g = Grid.load(tmp_path / "o.json")
+    for dx in (-150, 150):  # TIN side, fallback side (the 90 m DEM of the same plane, bilinear)
+        assert abs(g.sample_bilinear(X0 + dx, Y0)[0] - plane(X0 + dx, Y0)) < 0.2, dx
+    # Without a fallback the east half stays empty, and the log says how much.
+    r = run("contours", "--contours", tmp_path / "N3L_F0010000.shp", "--boundary", campus, "--res", 2.0, "--out", tmp_path / "n")
+    assert r.returncode == 0, r.stderr
+    assert "남은 빈 칸" in r.stdout and "--fallback-raster" in r.stdout

@@ -28,7 +28,7 @@ import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong,
 import { propsOf, type Session } from '../model/session.ts';
 import { edgeMidpoint, planSplit } from '../model/split.ts';
 import { planUnsync, syncedIn, withSyncMirror } from '../model/sync.ts';
-import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, toBase64, withSurvey } from '../model/survey.ts';
+import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, withSurvey } from '../model/survey.ts';
 import type { PathVertex } from '../model/tools.ts';
 import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, planSetFloorHeight, planSetPlinthFloors, renameBlocked } from '../model/buildingEdit.ts';
 import { BreaklineForm, BreaklinePanel, breaklineTitle } from '../ui/BreaklineForm.tsx';
@@ -586,29 +586,36 @@ export function Workspace({ session }: { session: Session }) {
     };
   }, [session.campusId]);
 
-  /** Keep the survey's file and photos on this PC, then apply its changes as one history entry. A survey that cannot be kept changes nothing. */
+  /**
+   * Keep the survey's file and photos on this PC, then apply its changes as one history entry. A survey that cannot be
+   * kept changes nothing. Its elevation measurements (elevation_store.json) go into the campus's elevation store.
+   */
   const importSurvey = async (file: File) => {
-    const read = readSurveyFile(new Uint8Array(await file.arrayBuffer()));
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await file.arrayBuffer());
+    } catch (err) {
+      return fail(`파일을 읽지 못했습니다(${Math.round(file.size / 1024 / 1024)} MB). ${(err as Error).message}`);
+    }
+    const read = readSurveyFile(bytes);
     const refused = (r: { error: string; reasons: string[] }) => (r.reasons.length > 0 ? setDialog({ kind: 'survey-refused', ...r }) : fail(r.error));
     if ('error' in read) return refused(read);
     const planned = planSurveyImport(history.current(), session.campusId, read.survey, ctx);
     if ('error' in planned) return refused(planned);
     try {
-      await saveSurvey(read.survey.id, read.text, Object.fromEntries(Object.entries(read.photos).map(([name, bytes]) => [name, toBase64(bytes)])));
+      await saveSurvey(read.survey.id, read.text, { names: read.photoNames, read: read.readPhoto });
     } catch (err) {
       return fail(`현장 기록을 저장하지 못해 지도에도 반영하지 않았습니다. ${(err as Error).message}`);
     }
     setSurveys((list) => withSurvey(list, read.survey));
-    // The barometer measurements in the zip go into the elevation store; when they cannot, the notice says so.
+    // The barometer measurements in the zip go into the elevation store; when they cannot, or when the zip itself was
+    // missing something, the notice says so.
     const extra: string[] = [];
-    let warn = read.missingPhotos.length > 0 || read.phoneMissingPhotos.length > 0;
-    if (read.elevation) {
-      try {
-        extra.push(await elevation.importMeasurements(read.elevation.storeText, read.elevation.dirtyKeys));
-      } catch (err) {
-        warn = true;
-        extra.push(`zip 안의 기압 측정(${'elevation_store.json'})을 고도 저장소에 합치지 못했습니다. 파일을 버리지 말고 다시 불러와 주세요. ${(err as Error).message}`);
-      }
+    let warn = read.missingPhotos.length > 0 || read.phoneMissingPhotos.length > 0 || read.ignored.length > 0;
+    if (read.elevationStore !== null) {
+      const heights = await elevation.importPhoneStore(read.elevationStore, read.elevationDirtyKeys);
+      extra.push(heights.line);
+      if (heights.warn) warn = true;
     }
     if (planned.plan && perform(planned.plan) !== undefined) return;
     const lines = [...planned.lines, ...extra];

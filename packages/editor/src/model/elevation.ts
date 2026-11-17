@@ -22,6 +22,7 @@ import {
   serializeElevationStore,
   type BreakLine,
   type ElevationStore,
+  type HeightNodeKey,
   type RecomputeRequest,
 } from '@campo/core/elevation';
 import type { PlanResult } from './plan.ts';
@@ -122,46 +123,6 @@ export function parseStore(text: string | null): ElevationStore {
   const v = JSON.parse(text) as Partial<ElevationStore>;
   if (v.schemaVersion !== 1 || !Array.isArray(v.nodes) || !Array.isArray(v.edges)) throw new Error('고도 저장소 파일(schemaVersion 1)이 아닙니다.');
   return v as ElevationStore;
-}
-
-/**
- * The phone's measurements (an exported zip's elevation store) taken into the editor's store. Nothing of the editor's is
- * lost: measured points are matched by key (the phone's copy wins: it is the one re-measured), sessions, Δh edges and the
- * other records by id (a Δh edge the phone has since marked superseded takes that mark; one the editor has stays).
- * Break lines, the solver's estimates and its last run stay the editor's.
- */
-export function mergeMeasurements(base: ElevationStore, incoming: ElevationStore): { store: ElevationStore; nodes: number; edges: number; sessions: number } {
-  const union = <T>(mine: readonly T[] | undefined, theirs: readonly T[] | undefined, id: (x: T) => string): { list: T[] | undefined; added: number } => {
-    if (!theirs || theirs.length === 0) return { list: mine ? [...mine] : undefined, added: 0 };
-    const seen = new Set((mine ?? []).map(id));
-    const extra = theirs.filter((x) => !seen.has(id(x)));
-    return { list: [...(mine ?? []), ...extra], added: extra.length };
-  };
-  const byKey = new Map(incoming.nodes.map((n) => [n.key, n]));
-  const known = new Set(base.nodes.map((n) => n.key));
-  const nodes = [...base.nodes.map((n) => byKey.get(n.key) ?? n), ...incoming.nodes.filter((n) => !known.has(n.key))];
-  const theirEdges = new Map(incoming.edges.map((e) => [e.edgeId, e]));
-  const myEdges = new Set(base.edges.map((e) => e.edgeId));
-  const edges = [
-    ...base.edges.map((e) => (theirEdges.get(e.edgeId)?.qc === 'superseded' && e.qc !== 'superseded' ? { ...e, qc: 'superseded' as const } : e)),
-    ...incoming.edges.filter((e) => !myEdges.has(e.edgeId)),
-  ];
-  const sessions = union(base.sessions, incoming.sessions, (x) => x.sessionId);
-  const profiles = union(base.profiles, incoming.profiles, (x) => x.profileId);
-  const passes = union(base.anchorPasses, incoming.anchorPasses, (x) => `${x.sessionId}|${x.nodeKey}|${x.at}`);
-  const photos = union(base.photos, incoming.photos, (x) => x.photoId);
-  const assignments = union(base.photoAssignments, incoming.photoAssignments, (x) => x.photoId);
-  const store: ElevationStore = {
-    ...base,
-    nodes,
-    sessions: sessions.list ?? [],
-    edges,
-    ...(profiles.list ? { profiles: profiles.list } : {}),
-    ...(passes.list ? { anchorPasses: passes.list } : {}),
-    ...(photos.list ? { photos: photos.list } : {}),
-    ...(assignments.list ? { photoAssignments: assignments.list } : {}),
-  };
-  return { store, nodes: incoming.nodes.filter((n) => !known.has(n.key)).length, edges: edges.length - base.edges.length, sessions: sessions.added };
 }
 
 export function withBreakline(store: ElevationStore, coords: readonly Position[], id: string, now: number): ElevationStore | { error: string } {
@@ -272,5 +233,93 @@ export function slopeSummary(segments: readonly SlopeSegment[]): { caution: numb
     caution: segments.filter((s) => s.gradeClass === 'caution').length,
     steep: segments.filter((s) => s.gradeClass === 'steep').length,
     maxPct: Math.max(...segments.map((s) => Math.abs(s.gradePct))),
+  };
+}
+
+// ---- 현장 기록 불러오기: the survey app's elevation_store.json → the campus's elevation store ----
+
+export interface PhoneStoreMerge {
+  store: ElevationStore;
+  /** Height variables whose Δh edges came, went or changed: marked for the next 고도 다시 계산. */
+  heightNodes: ReadonlySet<HeightNodeKey>;
+  /** false: the store already held exactly this (the same export imported again). */
+  changed: boolean;
+  /** Edges of the phone that came in, and edges of earlier imports of that phone it no longer has. */
+  added: number;
+  removed: number;
+}
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Merge a phone's exported elevation store into the campus's store (derived/<campus>/store.json).
+ * A phone's export is its whole current store, so for the phones it names (MeasurementSession.installId) it replaces
+ * what earlier imports brought from them: a spot deleted on the phone, or a Δh a round trip superseded, stays gone. What
+ * other phones measured, the break lines drawn in the editor, and the solver's cached estimates are kept. A point is
+ * dropped only when the replaced edges were the last to use it. The phone's file must be a v1 store with the same height
+ * datum and no absolute pressure (those stay in the phone's memory).
+ */
+export function mergePhoneStore(base: ElevationStore, phone: ElevationStore | string): PhoneStoreMerge | { error: string } {
+  let p: ElevationStore;
+  if (typeof phone === 'string') {
+    if (/"(meanPressureHpa|pHpa|pressureHpa)"\s*:/.test(phone)) return { error: '현장 기록의 고도 측정 파일에 절대 기압 값이 들어 있어 넣지 않았습니다.' };
+    try {
+      p = JSON.parse(phone) as ElevationStore;
+    } catch {
+      return { error: '현장 기록의 고도 측정 파일(elevation_store.json)이 JSON이 아닙니다.' };
+    }
+  } else {
+    p = phone;
+  }
+  if (typeof p !== 'object' || p === null || p.schemaVersion !== 1 || !Array.isArray(p.nodes) || !Array.isArray(p.edges) || !Array.isArray(p.sessions ?? [])) {
+    return { error: '현장 기록의 고도 측정 파일이 고도 저장소(schemaVersion 1) 형식이 아닙니다.' };
+  }
+  if (p.verticalDatum !== base.verticalDatum) {
+    return { error: `현장 기록의 고도 측정 높이 기준(${String(p.verticalDatum)})이 캠퍼스 고도 저장소(${base.verticalDatum})와 달라 넣지 않았습니다.` };
+  }
+  const sessions = p.sessions ?? [];
+  const installs = new Set(sessions.map((s) => s.installId));
+  const phoneSessions = new Set(sessions.map((s) => s.sessionId));
+  const replaced = new Set(base.sessions.filter((s) => installs.has(s.installId) || phoneSessions.has(s.sessionId)).map((s) => s.sessionId));
+  const phoneEdges = new Set(p.edges.map((e) => e.edgeId));
+  const keptEdges = base.edges.filter((e) => !replaced.has(e.sessionId) && !phoneSessions.has(e.sessionId) && !phoneEdges.has(e.edgeId));
+  const edges = [...keptEdges, ...p.edges];
+  const used = new Set(edges.flatMap((e) => [e.from, e.to]));
+  const gone = base.edges.filter((e) => !keptEdges.includes(e));
+  const freed = new Set(gone.flatMap((e) => [e.from, e.to]));
+  const phoneKeys = new Set(p.nodes.map((n) => n.key));
+  const nodes = [...base.nodes.filter((n) => !phoneKeys.has(n.key) && !(freed.has(n.key) && !used.has(n.key))), ...p.nodes];
+  const extra = <T>(mine: readonly T[] | undefined, theirs: readonly T[] | undefined): T[] | undefined => {
+    if (!theirs?.length) return mine ? [...mine] : undefined;
+    const have = (mine ?? []).map((x) => JSON.stringify(x));
+    return [...(mine ?? []), ...theirs.filter((x) => !have.includes(JSON.stringify(x)))];
+  };
+  const lineIds = new Set((base.breaklines ?? []).map((b) => b.id));
+  const lines = (p.breaklines ?? []).filter((b) => !lineIds.has(b.id));
+  const store: ElevationStore = {
+    ...base,
+    nodes,
+    sessions: [...base.sessions.filter((s) => !replaced.has(s.sessionId)), ...sessions],
+    edges,
+    ...(base.breaklines || lines.length ? { breaklines: [...(base.breaklines ?? []), ...lines] } : {}),
+    ...(extra(base.profiles, p.profiles) ? { profiles: extra(base.profiles, p.profiles)! } : {}),
+    ...(extra(base.anchorPasses, p.anchorPasses) ? { anchorPasses: extra(base.anchorPasses, p.anchorPasses)! } : {}),
+    ...(extra(base.photos, p.photos) ? { photos: extra(base.photos, p.photos)! } : {}),
+    ...(extra(base.photoAssignments, p.photoAssignments) ? { photoAssignments: extra(base.photoAssignments, p.photoAssignments)! } : {}),
+  };
+  // Edges that are new or changed, and edges that left: their ends need a recompute.
+  const before = new Map(base.edges.map((e) => [e.edgeId, e]));
+  const after = new Map(edges.map((e) => [e.edgeId, e]));
+  const touched = [
+    ...edges.filter((e) => !sameJson(before.get(e.edgeId), e)),
+    ...base.edges.filter((e) => !after.has(e.edgeId)),
+  ];
+  const heightNodes = new Set<HeightNodeKey>(touched.flatMap((e) => [e.from, e.to]));
+  return {
+    store,
+    heightNodes,
+    changed: !sameJson(serializeElevationStore(store), serializeElevationStore(base)),
+    added: edges.filter((e) => !sameJson(before.get(e.edgeId), e)).length,
+    removed: base.edges.filter((e) => !after.has(e.edgeId)).length,
   };
 }

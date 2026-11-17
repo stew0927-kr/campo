@@ -13,12 +13,12 @@ const survey: Survey = {
   format: 'campo-survey', version: 1, id: 'sv-20261114-elev-1', campus: 'fixture-basic', surveyed_at: AT,
   attachments: { n_a: { recorded_at: AT, photos: ['photos/n_a-1.jpg'] } }, vertical: [],
 };
-const node = (key: string, lat = 37): HeightNode => ({ kind: 'outdoor_point', key, position: { lat, lng: 127 }, influenceRadiusM: 5, createdAt: 1 } as HeightNode);
+const node = (key: string, lat = 37): HeightNode => ({ kind: 'outdoor_point', key, position: { lat, lng: 127 }, influenceRadiusM: 5, createdAt: 1 } as unknown as HeightNode);
 const edge = (edgeId: string, from: string, to: string, qc: DhEdge['qc'] = 'ok'): DhEdge => ({
   edgeId, from, to, dhM: 1.2, sigmaM: 0.1, dtS: 30, offsetFromM: 0, offsetToM: 0, sessionId: 's1', method: 'barometer_relative', qc,
   model: { tempC: 15, sigmaInstFloorHpa: 0.01, driftHpaPerHour: 0.1 }, createdAt: 2,
-} as DhEdge);
-const sess = (sessionId: string): MeasurementSession => ({ sessionId, mode: 'walk', platform: 'android', installId: 'i', startedAt: 1 } as MeasurementSession);
+} as unknown as DhEdge);
+const sess = (sessionId: string): MeasurementSession => ({ sessionId, mode: 'walk', platform: 'android', installId: 'i', startedAt: 1 } as unknown as MeasurementSession);
 const store = (nodes: HeightNode[], edges: DhEdge[], sessions: MeasurementSession[] = [sess('s1')]): ElevationStore => ({ ...emptyElevationStore(), nodes, edges, sessions });
 
 describe('readSurveyFile keeps what the survey app put next to survey.json', () => {

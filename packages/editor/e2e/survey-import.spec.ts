@@ -11,7 +11,7 @@ import {
 } from '@campo/core';
 import { expect, test, type Page } from '@playwright/test';
 import { strToU8, zipSync } from 'fflate';
-import { REPORTS_CAMPUS, SURVEYS_DIR } from './seed.ts';
+import { ELEVATION_DIR, REPORTS_CAMPUS, SURVEYS_DIR } from './seed.ts';
 import { Editor, readSaved } from './support.ts';
 
 const SHOTS = join(fileURLToPath(new URL('../../../', import.meta.url)), 'docs', 'mobile', 'screens');
@@ -38,8 +38,24 @@ function surveyOf(base: EditState): Survey {
   });
 }
 
+/** The survey app's elevation store next to survey.json: two measured points and the Δh between them (no pressures). */
+const ELEVATION_STORE = `${JSON.stringify({
+  schemaVersion: 1, positionCrs: 'EPSG:4326', verticalDatum: 'KVD_INCHEON_MSL',
+  nodes: [
+    { kind: 'outdoor_point', key: 'op:e2e-a', position: { lat: 37.0005, lng: 126.9996 }, influenceRadiusM: 1, createdAt: 1 },
+    { kind: 'outdoor_point', key: 'op:e2e-b', position: { lat: 37.0006, lng: 126.9997 }, influenceRadiusM: 1, createdAt: 2 },
+  ],
+  sessions: [{ sessionId: 's-e2e', mode: 'static', platform: 'android', installId: 'install-e2e', startedAt: 1 }],
+  edges: [{
+    edgeId: 'dh-e2e', from: 'op:e2e-a', to: 'op:e2e-b', dhM: 1.67, sigmaM: 0.12, dtS: 40, offsetFromM: 0, offsetToM: 0, sessionId: 's-e2e',
+    method: 'static_pair', qc: 'pending', model: { tempC: 15, sigmaInstFloorHpa: 0.012, driftHpaPerHour: 0.3 },
+  }],
+}, null, 2)}\n`;
+
 const zip = (survey: Survey, name: string) => ({
-  name, mimeType: 'application/zip', buffer: Buffer.from(zipSync({ 'survey.json': strToU8(formatSurvey(survey)), [PHOTO]: new Uint8Array(PNG) })),
+  name, mimeType: 'application/zip', buffer: Buffer.from(zipSync({
+    'survey.json': strToU8(formatSurvey(survey)), [PHOTO]: new Uint8Array(PNG), 'elevation_store.json': strToU8(ELEVATION_STORE),
+  })),
 });
 
 async function choose(page: Page, file: { name: string; mimeType: string; buffer: Buffer }): Promise<void> {
@@ -56,7 +72,7 @@ test('현장 기록 zip을 불러오면 지점·구간이 한 번에 들어오�
   const ed = new Editor(page);
   await ed.open(REPORTS_CAMPUS);
   await ed.view(NEW_POINT, 19);
-  const undo = page.getByRole('group', { name: '편집 작업' }).getByRole('button', { name: /^되돌리기/ });
+  const undo = page.getByRole('group', { name: '편집 이력' }).getByRole('button', { name: /^되돌리기/ });
   const notes = page.getByRole('region', { name: '현장 기록' });
 
   // ---- import: the map changes, the file and the photo are kept ----
@@ -64,6 +80,10 @@ test('현장 기록 zip을 불러오면 지점·구간이 한 번에 들어오�
   await expect(page.getByText(/추가 2개, 변경 0개, 삭제 0개를 반영했습니다/)).toBeVisible();
   expect(readFileSync(join(SURVEYS_DIR, survey.id, 'survey.json'), 'utf8')).toBe(formatSurvey(survey));
   expect(readFileSync(join(SURVEYS_DIR, survey.id, PHOTO))).toEqual(PNG);
+  // The phone's height measurements went into the campus's elevation store (they used to be left in the zip).
+  await expect(page.getByText(/고도 측정 Δh 1개를 고도 저장소에 넣었습니다/)).toBeVisible();
+  const kept = JSON.parse(readFileSync(join(ELEVATION_DIR, REPORTS_CAMPUS, 'store.json'), 'utf8')) as { edges: { edgeId: string; dhM: number }[] };
+  expect(kept.edges.map((e) => [e.edgeId, e.dhM])).toEqual([['dh-e2e', 1.67]]);
 
   // ---- the new point: its photo, heading and pressure ----
   await ed.click(ed.tool('선택'));
@@ -79,6 +99,7 @@ test('현장 기록 zip을 불러오면 지점·구간이 한 번에 들어오�
   // ---- the same file again: nothing changes ----
   await choose(page, zip(survey, 'again.zip'));
   await expect(page.getByText(/이미 지도에 반영된 기록입니다/)).toBeVisible();
+  await expect(page.getByText(/고도 측정은 이미 들어 있습니다/)).toBeVisible();
 
   // ---- one 되돌리기 takes the whole survey back ----
   await undo.click();

@@ -18,13 +18,25 @@ export interface SurveyFile {
   survey: Survey;
   /** survey.json exactly as it was in the file (it is stored as is, so importing the same file again is a no-op). */
   text: string;
-  /** Photos found in the zip, by file name (without "photos/"). */
-  photos: Record<string, Uint8Array>;
+  /** Photos found in the zip that the survey lists, by file name (without "photos/"). */
+  photoNames: string[];
+  /**
+   * One photo's bytes, unpacked when asked: a walk can carry hundreds of MB of pictures, so they are not all held in
+   * memory at once (they are sent to the dev server one by one). Throws for a name not in photoNames.
+   */
+  readPhoto: (name: string) => Uint8Array;
   /** Photo paths the survey lists that the file does not hold. */
   missingPhotos: string[];
+  /**
+   * The survey app's elevation store (elevation_store.json next to survey.json: measured points and Δh, no pressures),
+   * or null when the file has none. It goes into the campus's elevation store (model/elevation.ts mergePhoneStore).
+   */
+  elevationStore: string | null;
 }
 
 const PHOTO_PREFIX = `${SURVEY_PHOTOS_DIR}/`;
+/** Written by the survey app next to survey.json (apps/mobile/src/storage/elevationRepo.ts ARCHIVE_ELEVATION_STORE). */
+export const SURVEY_ELEVATION_STORE = 'elevation_store.json';
 const isZip = (bytes: Uint8Array): boolean => bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
 
 /** Why a survey file cannot be imported: one sentence, and every single reason when there are several. */
@@ -47,16 +59,28 @@ function parseSurvey(text: string): Survey | SurveyRefusal {
   return check.ok ? (value as Survey) : refuse('현장 기록 형식이 맞지 않습니다.', check.errors);
 }
 
-/** Read an exported survey: the zip (survey.json + photos/), or a bare survey.json. Nothing outside those paths is unpacked. */
+/**
+ * Read an exported survey: the zip (survey.json, elevation_store.json, photos/), or a bare survey.json. Nothing outside
+ * those paths is unpacked, and the photos only when readPhoto asks for one.
+ */
 export function readSurveyFile(bytes: Uint8Array): SurveyFile | SurveyRefusal {
   let text: string;
-  let entries: Record<string, Uint8Array> = {};
+  let elevationStore: string | null = null;
+  const inZip = new Set<string>();
   try {
     if (isZip(bytes)) {
-      entries = unzipSync(bytes, { filter: (f) => f.name === SURVEY_FILE || f.name.startsWith(PHOTO_PREFIX) });
+      // The central directory is read for every name; only the two small JSON files are inflated here.
+      const entries = unzipSync(bytes, {
+        filter: (f) => {
+          if (f.name.startsWith(PHOTO_PREFIX)) inZip.add(f.name);
+          return f.name === SURVEY_FILE || f.name === SURVEY_ELEVATION_STORE;
+        },
+      });
       const inner = entries[SURVEY_FILE];
       if (!inner) return refuse(`zip 안에 ${SURVEY_FILE}이 없습니다. 현장 조사 앱에서 내보낸 파일인지 확인해 주세요.`);
       text = strFromU8(inner);
+      const elevation = entries[SURVEY_ELEVATION_STORE];
+      if (elevation) elevationStore = strFromU8(elevation);
     } else {
       text = strFromU8(bytes);
     }
@@ -66,14 +90,21 @@ export function readSurveyFile(bytes: Uint8Array): SurveyFile | SurveyRefusal {
   const survey = parseSurvey(text);
   if ('error' in survey) return survey;
 
-  const photos: Record<string, Uint8Array> = {};
+  const photoNames: string[] = [];
   const missingPhotos: string[] = [];
   for (const path of surveyPhotoPaths(survey)) {
-    const found = entries[path];
-    if (found) photos[path.slice(PHOTO_PREFIX.length)] = found;
+    if (inZip.has(path)) photoNames.push(path.slice(PHOTO_PREFIX.length));
     else missingPhotos.push(path);
   }
-  return { survey, text, photos, missingPhotos };
+  const listed = new Set(photoNames);
+  const readPhoto = (name: string): Uint8Array => {
+    const path = `${PHOTO_PREFIX}${name}`;
+    if (!listed.has(name)) throw new Error(`현장 기록에 없는 사진입니다: ${path}`);
+    const one = unzipSync(bytes, { filter: (f) => f.name === path })[path];
+    if (!one) throw new Error(`zip에서 사진을 꺼내지 못했습니다: ${path}`);
+    return one;
+  };
+  return { survey, text, photoNames, readPhoto, missingPhotos, elevationStore };
 }
 
 export interface SurveyImport {

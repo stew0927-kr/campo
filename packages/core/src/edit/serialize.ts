@@ -2,7 +2,7 @@
 //
 // Placement:
 //   buildings/{code}/building.geojson   the building
-//   outdoor.geojson                     outdoor nodes and rooms, edges with both ends outdoors
+//   outdoor.geojson                     outdoor nodes and rooms, edges with both ends outdoors, plazas (평지)
 //   buildings/{code}/L{level}.geojson   indoor nodes and rooms; edges with both ends in that building, in the lower end's level
 //   connections.geojson                 portal and bridge edges, and edges whose ends are not in one building
 //
@@ -33,6 +33,8 @@ export function fileOf(state: EditState, feature: CampoFeature): string {
     case 'node':
     case 'room':
       return p.building_id === null ? OUTDOOR_FILE : levelFile(state, p.building_id, p.level);
+    case 'plaza':
+      return OUTDOOR_FILE;
     case 'edge': {
       const from = state.nodes[p.from]!.props;
       const to = state.nodes[p.to]!.props;

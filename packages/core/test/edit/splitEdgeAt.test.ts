@@ -22,6 +22,7 @@ function outdoorLine(vertices: Position[] = []): EditState {
     edges: { e: { id: 'e', vertices, props: { kind: 'edge', highway: 'footway', edge_type: 'outdoor', from: 'a', to: 'b', bidirectional: true, step_free: null, source: 'x', rev: 1 } } },
     buildings: {},
     rooms: {},
+    plazas: {},
   });
 }
 

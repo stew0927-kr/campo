@@ -5,6 +5,7 @@ import type {
   EdgeFeature,
   LoadedCampus,
   NodeFeature,
+  PlazaFeature,
   RoomFeature,
 } from '../types.ts';
 import { isValidFeature } from '../validate.ts';
@@ -64,6 +65,11 @@ export function fromCampus(loaded: LoadedCampus): FromCampusResult {
         state.rooms[r.id] = { id: r.id, polygon: r.geometry.coordinates, props: r.properties };
         break;
       }
+      case 'plaza': {
+        const p = f as PlazaFeature;
+        state.plazas[p.id] = { id: p.id, polygon: p.geometry.coordinates, props: p.properties };
+        break;
+      }
       case 'edge':
         edges.push({ file, feature: f as EdgeFeature });
         break;
@@ -109,6 +115,10 @@ export function toFeatures(state: EditState): CampoFeature[] {
   }
   for (const r of sortedValues(state.rooms)) {
     out.push({ type: 'Feature', id: r.id, geometry: { type: 'Polygon', coordinates: clone(r.polygon) }, properties: clone(r.props) });
+  }
+  // Plazas go last, so data without them saves byte for byte as before.
+  for (const p of sortedValues(state.plazas)) {
+    out.push({ type: 'Feature', id: p.id, geometry: { type: 'Polygon', coordinates: clone(p.polygon) }, properties: clone(p.props) });
   }
   return out;
 }

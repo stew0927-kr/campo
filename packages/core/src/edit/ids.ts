@@ -65,6 +65,11 @@ export function edgeIdPrefix(state: StateLike, scope: EdgeFileScope): string {
   return `e_${codeOf(state, scope.buildingId)}_${String(scope.level)}_`;
 }
 
+/** Prefix of a new plaza (평지) id. */
+export function plazaIdPrefix(): string {
+  return 'plaza_';
+}
+
 export function roomIdPrefix(state: StateLike, buildingId: string, level: number): string {
   return `r_${codeOf(state, buildingId)}_${level}_`;
 }

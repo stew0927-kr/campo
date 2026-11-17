@@ -47,6 +47,34 @@ export {
 export type { RouteStep, RouteStepKind } from './route-text.ts';
 export { STEEP_NOTE } from './route-text.ts';
 export * from './edit/index.ts';
+export {
+  PLAZA_EPS_M,
+  PLAZA_MAX_POSITIONS,
+  PLAZA_MIN_GAP_M,
+  classifyPlazaRing,
+  closeRingPositions,
+  framePlaza,
+  localFrame,
+  locateInPlaza,
+  locateXY,
+  normalizePlazaRings,
+  plazaAreaM2,
+  plazaPerimeterM,
+  plazaHoleProblem,
+  plazaProblem,
+  plazaRingProblem,
+  plazaRegionsOverlap,
+  plazaTouchesNetwork,
+  pointInRingXY,
+  ringAreaXY,
+  segmentInPlazaDomain,
+  signedAreaM2,
+  type FramedPlaza,
+  type LocalFrame as PlazaLocalFrame,
+  type PlazaDraw,
+  type PlazaHit,
+  type XY,
+} from './plaza/geometry.ts';
 export * from './changeset/index.ts';
 export * from './reports/index.ts';
 export * from './survey/index.ts';

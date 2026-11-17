@@ -5,6 +5,7 @@ import type {
   BuildingProperties,
   EdgeProperties,
   NodeProperties,
+  PlazaProperties,
   Position,
   RoomProperties,
 } from '../types.ts';
@@ -36,19 +37,27 @@ export interface EditRoom {
   props: RoomProperties;
 }
 
+/** A flat ground area (평지). `polygon` is [outer, ...holes]. */
+export interface EditPlaza {
+  id: string;
+  polygon: Position[][];
+  props: PlazaProperties;
+}
+
 export interface EditState {
   nodes: Record<string, EditNode>;
   edges: Record<string, EditEdge>;
   /** Keyed by building code. */
   buildings: Record<string, EditBuilding>;
   rooms: Record<string, EditRoom>;
+  plazas: Record<string, EditPlaza>;
 }
 
 export type Collection = keyof EditState;
-export const COLLECTIONS: readonly Collection[] = ['nodes', 'edges', 'buildings', 'rooms'];
+export const COLLECTIONS: readonly Collection[] = ['nodes', 'edges', 'buildings', 'rooms', 'plazas'];
 
 export function emptyState(): EditState {
-  return { nodes: {}, edges: {}, buildings: {}, rooms: {} };
+  return { nodes: {}, edges: {}, buildings: {}, rooms: {}, plazas: {} };
 }
 
 /** Read-only view shared by states and Immer drafts. */
@@ -104,11 +113,12 @@ export function allIds(state: StateLike): string[] {
     ...Object.keys(state.edges),
     ...Object.values(state.buildings).map((b) => b.id),
     ...Object.keys(state.rooms),
+    ...Object.keys(state.plazas),
   ];
 }
 
 export function idTaken(state: StateLike, id: string): boolean {
-  return id in state.nodes || id in state.edges || id in state.rooms || buildingById(state, id) !== undefined;
+  return id in state.nodes || id in state.edges || id in state.rooms || id in state.plazas || buildingById(state, id) !== undefined;
 }
 
 /** Find a Feature by id in any collection. Returns the record key too (the code for buildings). */
@@ -116,6 +126,7 @@ export function findFeature(state: StateLike, id: string): { collection: Collect
   if (id in state.nodes) return { collection: 'nodes', key: id };
   if (id in state.edges) return { collection: 'edges', key: id };
   if (id in state.rooms) return { collection: 'rooms', key: id };
+  if (id in state.plazas) return { collection: 'plazas', key: id };
   const b = buildingById(state, id);
   if (b) return { collection: 'buildings', key: b.props.code };
   return undefined;

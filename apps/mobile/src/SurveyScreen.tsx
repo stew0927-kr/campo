@@ -12,7 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Alert, Pressable, StyleSheet, Text, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Campus } from './campus.ts';
-import { buildArchive } from './export/archive.ts';
+import { ArchiveCancelled, writeArchive } from './export/archive.ts';
 import { isBarometerUsable } from './features/elevation/useBarometerSample.ts';
 import { measuredPressureBuffer, useMeasureFlow, type ElevationRepo } from './features/elevation/useMeasureFlow.ts';
 import { expoTileStore } from './map/expoTileStore.ts';
@@ -135,6 +135,9 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   const [stripLast, setStripLast] = useState<Position | null>(null);
   const [stripAnswer, setStripAnswer] = useState<StripAnswer>({ count: 5, startRef: '', refStep: 1, doorsPerRoom: 1 });
   const [exporting, setExporting] = useState(false);
+  /** Photos put into the zip so far, while exporting. */
+  const [exportProgress, setExportProgress] = useState<{ done: number; total: number } | null>(null);
+  const exportSignal = useRef<{ cancelled: boolean } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(greeting ? { text: greeting, tone: 'info' } : null);
   const [prefetch, setPrefetch] = useState<PrefetchState>({ running: false, done: 0, total: 0, result: null });
   /** Walk points marked by the 에스컬레이터 button, until a belt is recorded from them (the schema has no escalator point). */
@@ -160,6 +163,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   useEffect(() => () => {
     alive.current = false;
     cancelPrefetch.current.cancelled = true;
+    if (exportSignal.current) exportSignal.current.cancelled = true;
   }, []);
 
   const notify = useCallback((text: string, tone: Notice['tone'] = 'info') => {
@@ -402,21 +406,45 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   };
 
   const exportData = async (): Promise<void> => {
+    // A second tap while the zip is being written would write the same file twice at once.
+    if (exportSignal.current) return;
+    const signal = { cancelled: false };
+    exportSignal.current = signal;
     setExporting(true);
+    let writer: Awaited<ReturnType<FileStore['openShared']>> | null = null;
     try {
       const at = isoLocal(new Date());
       const where = scope.kind === 'building' ? buildingById(state, scope.buildingId)?.props.code ?? 'indoor' : 'outdoor';
       // The time to the second keeps two exports (or two phones in one building) from sharing an id.
       const survey = session.toSurvey(`${where}-${at.slice(11, 19).replaceAll(':', '')}`, at);
-      const archive = await buildArchive(survey, (path) => store.readBytes(`${SURVEY_DIR}/${path}`), elevation?.archiveFiles() ?? {});
-      const uri = await store.writeShared(archive.name, archive.bytes);
-      if (archive.missing.length > 0) notify(`사진 ${archive.missing.length}장을 찾지 못해 빼고 묶었습니다.`, 'error');
+      writer = await store.openShared(`${survey.id}.zip`);
+      // Photos one at a time, streamed into the file: a walk of hundreds of photos is never all in memory.
+      const archive = await writeArchive(survey, (path) => store.readBytes(`${SURVEY_DIR}/${path}`), elevation?.archiveFiles() ?? {}, writer, {
+        signal,
+        onProgress: (done, total) => {
+          if (alive.current) setExportProgress({ done, total });
+        },
+      });
+      const uri = await writer.close();
+      writer = null;
+      if (!alive.current) return;
+      if (archive.missing.length > 0) {
+        Alert.alert(
+          `사진 ${archive.missing.length}장을 읽지 못했습니다`,
+          `이 사진은 빼고 묶었습니다. 편집기에서 불러올 때도 빠진 사진으로 알려 줍니다.\n${archive.missing.slice(0, 5).join('\n')}${archive.missing.length > 5 ? `\n외 ${archive.missing.length - 5}장` : ''}`,
+        );
+      }
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'application/zip', dialogTitle: '현장 기록 내보내기' });
       else notify('이 기기에서는 공유 창을 열 수 없습니다.', 'error');
     } catch (err) {
-      notify(`내보내지 못했습니다. ${(err as Error).message}`, 'error');
+      await writer?.abort().catch(() => {});
+      if (alive.current && !(err instanceof ArchiveCancelled)) notify(`내보내지 못했습니다. ${(err as Error).message}`, 'error');
     } finally {
-      if (alive.current) setExporting(false);
+      exportSignal.current = null;
+      if (alive.current) {
+        setExporting(false);
+        setExportProgress(null);
+      }
     }
   };
 
@@ -1268,7 +1296,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           />
         )}
         {sheet === 'export' && (
-          <ExportSheet counts={session.counts()} busy={exporting} onExport={() => void exportData()} onReset={confirmReset} onClose={closeSheet} />
+          <ExportSheet counts={session.counts()} busy={exporting} progress={exportProgress} onExport={() => void exportData()} onReset={confirmReset} onClose={closeSheet} />
         )}
       </View>
 

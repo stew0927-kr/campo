@@ -401,12 +401,14 @@ export function RestroomSheet({ photos, onPhoto, onRecord, onClose }: RestroomSh
 interface ExportSheetProps {
   counts: { nodes: number; edges: number; photos: number; measurements: number; timings: number };
   busy: boolean;
+  /** Photos put into the zip so far, while it is being written. */
+  progress?: { done: number; total: number } | null;
   onExport: () => void;
   onReset: () => void;
   onClose: () => void;
 }
 
-export function ExportSheet({ counts, busy, onExport, onReset, onClose }: ExportSheetProps) {
+export function ExportSheet({ counts, busy, progress = null, onExport, onReset, onClose }: ExportSheetProps) {
   const empty = counts.nodes + counts.edges + counts.photos + counts.measurements + counts.timings === 0;
   return (
     <BottomSheet title="데이터 내보내기" onClose={onClose}>
@@ -416,7 +418,7 @@ export function ExportSheet({ counts, busy, onExport, onReset, onClose }: Export
       <Text style={styles.note}>
         기록은 이 기기에 저장되어 있습니다. 내보낸 zip 파일을 PC로 옮긴 뒤 편집기의 “현장 기록 불러오기”에서 열어 주세요. 사진에 사람 얼굴이 찍혔는지 확인해 주세요.
       </Text>
-      <BigButton label={busy ? '묶는 중입니다' : '데이터 내보내기'} disabled={busy || empty} onPress={onExport} style={styles.gapTop} />
+      <BigButton label={busy ? (progress && progress.total > 0 ? `묶는 중입니다 (사진 ${progress.done}/${progress.total})` : '묶는 중입니다') : '데이터 내보내기'} disabled={busy || empty} onPress={onExport} style={styles.gapTop} />
       <BigButton tone="danger" label="기록 지우고 새 조사 시작" disabled={busy} onPress={onReset} style={styles.gapTopWide} />
     </BottomSheet>
   );

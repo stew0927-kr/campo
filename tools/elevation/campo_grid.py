@@ -21,10 +21,12 @@ CAMPO 경량 격자 포맷 (dem_prep.py 출력 ↔ campo_height_solver.py 입력
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
@@ -80,7 +82,30 @@ class Grid:
         return out
 
     # ---- 입출력 ----
-    def save(self, path_no_ext: str | Path, dtype: str = "float32", source: str = "") -> tuple[Path, Path]:
+    def fingerprint(self) -> str:
+        """sha256 of the grid geometry and values (NaN as nodata): two grids with the same fingerprint are the same DEM."""
+        h = hashlib.sha256()
+        h.update(json.dumps([self.crs, float(self.origin_x), float(self.origin_y), float(self.res),
+                             int(self.width), int(self.height)]).encode("utf-8"))
+        h.update(np.where(np.isfinite(self.data), self.data, -9999.0).astype("<f8").tobytes())
+        return h.hexdigest()
+
+    def same_geometry(self, other: "Grid") -> Optional[str]:
+        """None when `other` has this grid's crs, cell size, shape and origin; otherwise what differs (English, for logs)."""
+        if other.crs != self.crs:
+            return f"crs {other.crs} != {self.crs}"
+        if abs(other.res - self.res) > 1e-9 * max(1.0, abs(self.res)):
+            return f"cell size {other.res} m != {self.res} m"
+        if other.data.shape != self.data.shape:
+            return f"shape {other.height}x{other.width} != {self.height}x{self.width}"
+        tol = 1e-6 * self.res
+        if abs(other.origin_x - self.origin_x) > tol or abs(other.origin_y - self.origin_y) > tol:
+            return f"origin ({other.origin_x}, {other.origin_y}) != ({self.origin_x}, {self.origin_y})"
+        return None
+
+    def save(self, path_no_ext: str | Path, dtype: str = "float32", source: str = "",
+             extra: Optional[dict] = None) -> tuple[Path, Path]:
+        """`extra`: more meta keys (e.g. dem_sha256 of the DEM a solver output was made from); readers ignore unknown keys."""
         p = Path(path_no_ext)
         p.parent.mkdir(parents=True, exist_ok=True)
         meta = {
@@ -96,6 +121,7 @@ class Grid:
             "source": source or self.meta.get("source", ""),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
+        meta.update(extra or {})
         valid = np.isfinite(self.data)
         if dtype == "float32":
             arr = np.where(valid, self.data, -9999.0).astype("<f4")

@@ -249,3 +249,91 @@ def test_dst_crs_must_be_projected_metres_and_non_5186_is_flagged(tmp_path, camp
     assert Grid.load(tmp_path / "utmk.json").crs == "EPSG:5179"
     r = run("raster", "--src", img, "--boundary", campus, "--res", "5", "--out", tmp_path / "tm")
     assert "지형 3D" not in r.stdout
+
+
+# ---- contours: height field, z = 0 (QA 2026-11) ----
+
+def _plane_contours(levels=np.arange(10, 45, 5.0)):
+    from shapely.geometry import LineString
+    lines, hs = [], []
+    for h in levels:
+        pts = [(X0 + (h - 25.0 - 0.01 * (y - Y0)) / 0.02, y) for y in np.linspace(Y0 - 500, Y0 + 500, 11)]
+        lines.append(LineString(pts)); hs.append(float(h))
+    return lines, hs
+
+
+def test_contours_without_a_named_height_field_fail_instead_of_guessing(tmp_path, campus):
+    """The only numeric column is a feature number 1…7 (in −50…2000): it used to become the height (a TIN of row numbers)."""
+    import geopandas as gpd
+    lines, _ = _plane_contours()
+    gpd.GeoDataFrame({"OBJECTID": list(range(1, len(lines) + 1)), "KIND": ["주곡선"] * len(lines)}, geometry=lines,
+                     crs="EPSG:5186").to_file(tmp_path / "c.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "c.shp", "--boundary", campus, "--res", 5.0, "--out", tmp_path / "o")
+    assert r.returncode != 0
+    assert "OBJECTID" in r.stderr and "--z-field" in r.stderr
+    assert not (tmp_path / "o.json").exists()
+    # Named on the command line it is used as asked.
+    hs = _plane_contours()[1]
+    gpd.GeoDataFrame({"ALT": hs}, geometry=lines, crs="EPSG:5186").to_file(tmp_path / "d.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "d.shp", "--z-field", "ALT", "--boundary", campus, "--res", 5.0,
+            "--out", tmp_path / "d")
+    assert r.returncode == 0, r.stderr
+
+
+def test_contours_with_zero_height_are_left_out(tmp_path, campus):
+    """등고수치 0 on an inland sheet is an unfilled attribute: as a 0 m contour it digs a 25 m trench across the campus."""
+    import geopandas as gpd
+    from shapely.geometry import LineString
+    lines, hs = _plane_contours()
+    lines.append(LineString([(X0 - 300, Y0 + 40), (X0 + 300, Y0 + 40)])); hs.append(0.0)
+    gpd.GeoDataFrame({"등고수치": hs}, geometry=lines, crs="EPSG:5186").to_file(tmp_path / "N3L_F0010000.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "N3L_F0010000.shp", "--boundary", campus, "--res", 2.0, "--out", tmp_path / "o")
+    assert r.returncode == 0, r.stderr
+    assert "0 m" in r.stdout and "--keep-zero" in r.stdout
+    g = Grid.load(tmp_path / "o.json")
+    for dx, dy in ((0, 40), (100, 40), (-100, 30)):
+        v = g.sample_bilinear(X0 + dx, Y0 + dy)[0]
+        assert abs(v - plane(X0 + dx, Y0 + dy)) < 0.1, (dx, dy, v)
+    # --keep-zero: a coastal campus whose 0 m contour is real.
+    r = run("contours", "--contours", tmp_path / "N3L_F0010000.shp", "--boundary", campus, "--res", 2.0, "--keep-zero",
+            "--out", tmp_path / "k")
+    assert r.returncode == 0, r.stderr
+    assert Grid.load(tmp_path / "k.json").sample_bilinear(X0, Y0 + 40)[0] < 1.0
+
+
+def test_contours_whose_geometry_z_is_all_zero_are_not_heights(tmp_path, campus):
+    """A PolylineZ file with Z = 0 everywhere and no height column: the grid used to come out 0 m everywhere."""
+    import geopandas as gpd
+    from shapely.geometry import LineString
+    lines, _ = _plane_contours()
+    lines_z = [LineString([(x, y, 0.0) for x, y in l.coords]) for l in lines]
+    gpd.GeoDataFrame({"NAME": ["c"] * len(lines_z)}, geometry=lines_z, crs="EPSG:5186").to_file(tmp_path / "z.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "z.shp", "--boundary", campus, "--res", 5.0, "--out", tmp_path / "o")
+    assert r.returncode != 0
+    assert "--z-field" in r.stderr
+    # A real geometry Z is still read.
+    lines_h = [LineString([(x, y, h) for x, y in l.coords]) for l, h in zip(lines, _plane_contours()[1])]
+    gpd.GeoDataFrame({"NAME": ["c"] * len(lines_h)}, geometry=lines_h, crs="EPSG:5186").to_file(tmp_path / "h.shp", encoding="cp949")
+    r = run("contours", "--contours", tmp_path / "h.shp", "--boundary", campus, "--res", 5.0, "--out", tmp_path / "h")
+    assert r.returncode == 0, r.stderr
+    assert abs(Grid.load(tmp_path / "h.json").sample_bilinear(X0, Y0)[0] - plane(X0, Y0)) < 0.1
+
+
+def test_fallback_raster_fills_outside_the_tin_and_reports_what_is_left(tmp_path, campus):
+    """Contours only west of X0+50: the TIN ends there, the 90 m DEM fills the rest. Cells neither covers are counted."""
+    import geopandas as gpd
+    lines, hs = _plane_contours(levels=np.arange(10, 27, 5.0))  # x ≤ X0 + 50 (h = 26: none; h = 25 at x = X0)
+    gpd.GeoDataFrame({"등고수치": hs}, geometry=lines, crs="EPSG:5186").to_file(tmp_path / "N3L_F0010000.shp", encoding="cp949")
+    img = tmp_path / "fb.img"
+    make_img(img)
+    r = run("contours", "--contours", tmp_path / "N3L_F0010000.shp", "--fallback-raster", img, "--boundary", campus,
+            "--res", 2.0, "--out", tmp_path / "o")
+    assert r.returncode == 0, r.stderr
+    assert "fallback raster filled" in r.stdout and "남은 빈 칸" not in r.stdout
+    g = Grid.load(tmp_path / "o.json")
+    for dx in (-150, 150):  # TIN side, fallback side (the 90 m DEM of the same plane, bilinear)
+        assert abs(g.sample_bilinear(X0 + dx, Y0)[0] - plane(X0 + dx, Y0)) < 0.2, dx
+    # Without a fallback the east half stays empty, and the log says how much.
+    r = run("contours", "--contours", tmp_path / "N3L_F0010000.shp", "--boundary", campus, "--res", 2.0, "--out", tmp_path / "n")
+    assert r.returncode == 0, r.stderr
+    assert "남은 빈 칸" in r.stdout and "--fallback-raster" in r.stdout

@@ -5,7 +5,8 @@ CAMPO DEM 전처리 — 국토지리정보원 자료 → 캠퍼스 클립 → CO
   A) raster   : 국토정보플랫폼 '공개DEM'(.img, 90 m) 또는 보안심사로 받은 5 m/1 m DEM(.img/.tif)
   B) contours : 1:5,000 수치지형도 v2.0(SHP)의 등고선(N3L_F0010000, 5 m 간격) + 표고점(N3P_F0020000)
                 → 선형 TIN 보간으로 1 m 격자 생성 (공개 90 m DEM보다 국소 지형을 훨씬 잘 담음)
-                --fallback-raster로 등고선이 없는 구역(도심 건물 밀집지)을 90 m DEM으로 채울 수 있음
+                --fallback-raster는 TIN이 닿지 않는 칸(등고선·표고점 점들의 볼록 껍질 바깥)만 90 m DEM으로 채운다.
+                껍질 안의 등고선 빈 구역(도심 건물 밀집지)은 TIN이 선형 보간한 값을 그대로 둔다
 
 높이 기준: NGII DEM·수치지형도 높이는 국가 수직기준(인천만 평균해수면) 정표고.
            GNSS/스마트폰 GPS 고도(타원체고)와 섞지 말 것. 필요하면 H = h − N (KNGeoid24 등).
@@ -222,7 +223,22 @@ def pd_is_numeric(series) -> bool:
     return bool(is_numeric_dtype(series))
 
 
+def _geometry_z_is_height(gdf) -> bool:
+    """Geometry Z counts as a height only when some vertex has a non-zero, finite Z (2D data saved as PolylineZ is all 0)."""
+    from shapely import get_coordinates
+    if not gdf.geometry.has_z.any():
+        return False
+    z = get_coordinates(gdf.geometry.values, include_z=True)[:, 2]
+    z = z[np.isfinite(z)]
+    return bool(z.size) and bool((z != 0).any())
+
+
 def pick_z_field(gdf, forced: str | None) -> str | None:
+    """
+    The height column (None = the geometry's Z). By name only: --z-field, else a known NGII / common name, else a geometry
+    Z that is not all 0. A numeric column with some other name is never taken on a guess: OBJECTID, lengths or codes fall
+    in any plausible height range and would make a TIN of row numbers. The error names such columns for --z-field.
+    """
     if forced:
         if forced not in gdf.columns:
             raise SystemExit(f"--z-field {forced} 없음. 열 목록: {list(gdf.columns)}")
@@ -230,20 +246,28 @@ def pick_z_field(gdf, forced: str | None) -> str | None:
     for c in Z_FIELD_CANDIDATES:
         if c in gdf.columns:
             return c
-    num = [c for c in gdf.columns if c != "geometry" and pd_is_numeric(gdf[c])]
-    plausible = [c for c in num if gdf[c].notna().any() and -50 <= gdf[c].min() and gdf[c].max() <= 2000 and gdf[c].nunique() > 1]
-    if len(plausible) == 1:
-        return plausible[0]
-    if gdf.geometry.has_z.any():
+    if _geometry_z_is_height(gdf):
         return None  # geometry Z 사용
-    raise SystemExit(f"높이 필드를 찾지 못했습니다. --z-field 로 지정하세요. 열 목록: {list(gdf.columns)}")
+    num = [c for c in gdf.columns if c != "geometry" and pd_is_numeric(gdf[c])]
+    plausible = [c for c in num if gdf[c].notna().any() and -50 <= gdf[c].min() and gdf[c].max() <= 9000 and gdf[c].nunique() > 1]
+    hint = (f" 높이일 수 있는 숫자 열: {plausible} — 맞는 열을 --z-field <열 이름>으로 지정하세요." if plausible
+            else " 숫자 열이 없습니다(도형 Z도 없거나 모두 0).")
+    raise SystemExit(f"높이 필드를 이름으로 찾지 못했습니다(찾는 이름: {Z_FIELD_CANDIDATES}).{hint} "
+                     f"--z-field 로 지정하세요. 열 목록: {[c for c in gdf.columns if c != 'geometry']}")
 
 
-def read_xyz(paths: list[str], dst_crs: str, encoding: str, z_field: str | None, densify_m: float) -> np.ndarray:
+def read_xyz(paths: list[str], dst_crs: str, encoding: str, z_field: str | None, densify_m: float,
+             keep_zero: bool = False) -> np.ndarray:
+    """
+    Contour / spot vertices as (x, y, z) in dst_crs. z = 0 is left out unless keep_zero: on NGII sheets an unfilled
+    등고수치/표고수치 reads 0, and inland a 0 m contour digs a trench through the TIN. A coastal campus whose 0 m contour
+    is real passes --keep-zero.
+    """
     import geopandas as gpd
     from shapely import get_coordinates, segmentize
 
     pts = []
+    zero = 0
     for p in paths:
         g = gpd.read_file(p, encoding=encoding)
         if g.crs is None:
@@ -257,9 +281,19 @@ def read_xyz(paths: list[str], dst_crs: str, encoding: str, z_field: str | None,
                 geom = segmentize(geom, densify_m)
             xyz = get_coordinates(geom, include_z=zf is None)
             if zf is None:
-                pts.append(xyz)
+                ok = np.isfinite(xyz[:, 2])
+                if not keep_zero:
+                    zero += int((ok & (xyz[:, 2] == 0)).sum())
+                    ok &= xyz[:, 2] != 0
+                pts.append(xyz[ok])
             elif z is not None and np.isfinite(z):
+                if float(z) == 0 and not keep_zero:
+                    zero += len(xyz)
+                    continue
                 pts.append(np.column_stack([xyz[:, :2], np.full(len(xyz), float(z))]))
+    if zero:
+        print(f"note: 높이 0 m 정점 {zero:,}개를 뺐습니다(빈 등고수치/표고수치로 봄). 실제 0 m 등고선이면 --keep-zero")
+    pts = [q for q in pts if len(q)]
     if not pts:
         raise SystemExit("등고선/표고점에서 좌표를 하나도 읽지 못했습니다")
     xyz = np.vstack(pts)
@@ -277,7 +311,7 @@ def cmd_contours_core(a, label: str = "NGII 1:5000 contours/spots TIN"):
 
     geom = load_boundary(a.boundary, a.bbox, a.dst_crs)
     tr, w, h = target_grid(geom, a.res, a.buffer)
-    xyz = read_xyz(a.contours + (a.spots or []), a.dst_crs, a.encoding, a.z_field, a.densify)
+    xyz = read_xyz(a.contours + (a.spots or []), a.dst_crs, a.encoding, a.z_field, a.densify, getattr(a, "keep_zero", False))
     # 경계 + 넉넉한 여유(보간 안정용)만 사용
     x0, y1 = tr.c, tr.f
     x1, y0 = x0 + w * a.res, y1 - h * a.res
@@ -296,7 +330,15 @@ def cmd_contours_core(a, label: str = "NGII 1:5000 contours/spots TIN"):
         src, src_tr, src_crs, _ = read_merged(a.fallback_raster, a.src_crs)
         fb = resample_to(src, src_tr, src_crs, tr, a.dst_crs, w, h, "bilinear")
         dst = np.where(holes, fb, dst)
-        print(f"fallback raster filled {int(holes.sum()):,} cells")
+        print(f"fallback raster filled {int(holes.sum() - (~np.isfinite(dst)).sum()):,} cells")
+    # The fallback fills only cells the TIN leaves empty (outside the hull of the contour/spot points). Inside the hull the
+    # TIN interpolates across gaps between contours, which on a gentle slope can be 200 m wide and still right, so a gap
+    # is not replaced by the coarse DEM. Cells that stay empty inside the boundary are counted here, even below the 5 %
+    # of warn_low_coverage, because the solver and the 3D view get no ground there.
+    left = ~np.isfinite(dst) & ~boundary_mask(geom, tr, w, h, 0.0, a.res)
+    if left.any():
+        fix = "fallback DEM도 덮지 않는 곳입니다" if a.fallback_raster else "--fallback-raster로 DEM을 주면 채웁니다"
+        print(f"note: 경계 안 남은 빈 칸 {int(left.sum()):,}개(등고선·표고점 TIN 바깥) — {fix}")
     finish(a, dst, tr, w, h, geom, source=f"{label} ({len(xyz)} pts)")
 
 
@@ -514,7 +556,8 @@ def build_parser():
     c.add_argument("--z-field", help="높이 속성명(자동 탐지 실패 시)")
     c.add_argument("--encoding", default="cp949", help="DBF 인코딩(.cpg 없으면 cp949)")
     c.add_argument("--densify", type=float, default=2.0, help="등고선 정점 보강 간격(m)")
-    c.add_argument("--fallback-raster", nargs="*", help="TIN 빈 곳을 채울 DEM")
+    c.add_argument("--keep-zero", action="store_true", help="높이 0 m 등고선·표고점도 쓰기(기본: 빈 값으로 보고 뺌)")
+    c.add_argument("--fallback-raster", nargs="*", help="TIN 바깥(값이 없는 칸)을 채울 DEM")
     common(c)
     c.set_defaults(fn=cmd_contours)
 
@@ -523,6 +566,7 @@ def build_parser():
     n.add_argument("--z-field", help="높이 속성명(자동 탐지 실패 시)")
     n.add_argument("--encoding", default="cp949", help="DBF 인코딩(.cpg 없으면 cp949)")
     n.add_argument("--densify", type=float, default=2.0, help="등고선 정점 보강 간격(m)")
+    n.add_argument("--keep-zero", action="store_true", help="높이 0 m 등고선·표고점도 쓰기(기본: 빈 값으로 보고 뺌)")
     n.add_argument("--resampling", default="bilinear", choices=["bilinear", "cubic", "nearest"])
     common(n)
     n.set_defaults(fn=cmd_ngii)

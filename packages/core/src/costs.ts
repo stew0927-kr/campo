@@ -7,11 +7,14 @@
 // (AGENTS.md; a test checks this file).
 import { CONVEYING_VALUES, type Conveying, type EdgeProperties, type NodeType } from './types.ts';
 
-export const PROFILES = ['shortest', 'step_free', 'fewest_steps'] as const;
+export const PROFILES = ['shortest', 'step_free', 'fewest_steps', 'elevator_first', 'wheelchair'] as const;
 /**
  * shortest: stairs allowed, plain travel time.
  * step_free: no steps, nothing marked step_free: false; unknown (null) costs a penalty.
  * fewest_steps: the step_free fallback, stairs allowed but each flight costs a big penalty.
+ * elevator_first: nothing closed, but stairs and escalators cost as much as in fewest_steps and each ramp costs
+ *   RAMP_PENALTY_SEC, so the lift is taken wherever there is one.
+ * wheelchair: closed like step_free (no fallback to stairs), unknown step_free and ramps cost a penalty.
  */
 export type Profile = (typeof PROFILES)[number];
 
@@ -21,7 +24,7 @@ export function isProfile(value: unknown): value is Profile {
 
 /** One value per profile. Written out so that adding a profile is a type error here. */
 export function perProfile<T>(f: (profile: Profile) => T): Record<Profile, T> {
-  return { shortest: f('shortest'), step_free: f('step_free'), fewest_steps: f('fewest_steps') };
+  return { shortest: f('shortest'), step_free: f('step_free'), fewest_steps: f('fewest_steps'), elevator_first: f('elevator_first'), wheelchair: f('wheelchair') };
 }
 
 // ---- Time (seconds) ----
@@ -70,6 +73,44 @@ export const FEWEST_STEPS_STAIRS_PENALTY_SEC = 600;
 /** fewest_steps: an escalator (highway=steps + conveying) costs a tenth of a flight of stairs. */
 export const FEWEST_STEPS_ESCALATOR_PENALTY_SEC = FEWEST_STEPS_STAIRS_PENALTY_SEC / 10;
 
+/**
+ * elevator_first and wheelchair: each ramp edge whose grade is not known, so a level way round or a lift is taken
+ * when it is not much longer. A ramp with a known grade pays the grade penalty below instead.
+ */
+export const RAMP_PENALTY_SEC = 30;
+
+// ---- Grade (elevation integration, docs/ELEVATION_INTEGRATION.md) ----
+//
+// The grade of an edge comes from its own properties only: flat_exact, elev_diff_m (+ elev_sigma_m) or grade_pct,
+// written by the elevation recompute (packages/core/src/elevation). An edge without them is timed and priced exactly as
+// before. Steps and elevator edges never use a grade (stairsTimeSec and the elevator links have their own rules).
+
+/** |grade| up to this many percent is gentle: no grade penalty for anyone. */
+export const GRADE_GENTLE_MAX_PCT = 5;
+/** Up to this is "caution" (8 % is just under the usual 1:12 ramp limit); above it is steep. */
+export const GRADE_CAUTION_MAX_PCT = 8;
+/** A grade whose standard deviation (elev_sigma_m / plan length) is above this many points is not trusted: no grade. */
+export const GRADE_MAX_SIGMA_PCT = 3;
+/**
+ * Tobler's hiking function, speed ∝ exp(−K·|S + OFFSET|) with S = rise / run, normalised to flat ground:
+ * time factor = exp(K·(|S + OFFSET| − OFFSET)). 1 on the flat, about 1.19 at +5 %, 1.32 at +8 %, 0.84 at −5 %.
+ */
+export const TOBLER_K = 3.5;
+export const TOBLER_OFFSET = 0.05;
+/**
+ * Grade penalty in seconds per metre of plan length, going up. Per metre so that splitting an edge does not change
+ * the total. Steep slopes are priced, never closed: the grade is an estimate with an error.
+ */
+export const GRADE_PENALTY_SEC_PER_M: Readonly<Record<Profile, Readonly<Record<'caution' | 'steep', number>>>> = {
+  shortest: { caution: 0, steep: 0 },
+  step_free: { caution: 0, steep: 2 },
+  fewest_steps: { caution: 0, steep: 2 },
+  elevator_first: { caution: 1, steep: 4 },
+  wheelchair: { caution: 3, steep: 15 },
+};
+/** Going down a slope costs this share of the uphill grade penalty (braking a wheelchair is easier than pushing it). */
+export const DOWNHILL_GRADE_PENALTY_FACTOR = 0.5;
+
 // ---- Calibration (SPEC-v0.2 3.9) ----
 
 /** Blend weight of the prior: estimate = (K × prior + n × median) / (K + n). */
@@ -79,6 +120,59 @@ export const OUTLIER_RATIO = 3;
 
 type StepFreeFacts = Pick<EdgeProperties, 'highway' | 'step_free'>;
 type PenaltyFacts = Pick<EdgeProperties, 'highway' | 'step_free' | 'conveying'>;
+type GradeFacts = Pick<EdgeProperties, 'highway' | 'flat_exact' | 'grade_pct' | 'elev_diff_m' | 'elev_sigma_m'>;
+
+/** A walk link's grade for penaltySec: signed percent in the direction of travel, and the plan length it applies to. */
+export interface LinkGrade {
+  gradePct: number;
+  lengthM: number;
+}
+
+export type GradeClass = 'gentle' | 'caution' | 'steep';
+
+/** gentle (|g| ≤ GRADE_GENTLE_MAX_PCT), caution (≤ GRADE_CAUTION_MAX_PCT) or steep, by the size of the grade. */
+export function gradeClass(gradePct: number): GradeClass {
+  const g = Math.abs(gradePct);
+  if (g <= GRADE_GENTLE_MAX_PCT) return 'gentle';
+  return g <= GRADE_CAUTION_MAX_PCT ? 'caution' : 'steep';
+}
+
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/**
+ * The edge's grade in percent in the direction of travel (positive = uphill), or null when it has none.
+ * - steps and elevator edges: null (they are timed by their own rules).
+ * - flat_exact: true → 0.
+ * - elev_diff_m (height of `to` minus `from`) over the plan length, when the plan length is positive;
+ *   null when elev_sigma_m makes the grade's σ larger than GRADE_MAX_SIGMA_PCT.
+ * - else grade_pct (same σ check when elev_sigma_m is there).
+ * Against the drawn direction the sign flips.
+ */
+export function edgeGradePct(edge: GradeFacts, planLengthM: number, traversal: 'along' | 'against'): number | null {
+  if (edge.highway === 'steps' || edge.highway === 'elevator') return null;
+  if (edge.flat_exact === true) return 0;
+  const length = planLengthM > 0 ? planLengthM : 0;
+  if (length > 0 && finite(edge.elev_sigma_m) && (edge.elev_sigma_m / length) * 100 > GRADE_MAX_SIGMA_PCT) return null;
+  let grade: number | null = null;
+  if (length > 0 && finite(edge.elev_diff_m)) grade = (edge.elev_diff_m / length) * 100;
+  else if (finite(edge.grade_pct)) grade = edge.grade_pct;
+  if (grade === null || grade === 0) return grade;
+  return traversal === 'along' ? grade : -grade;
+}
+
+/** Tobler time factor for a grade in percent (1 on the flat). */
+export function slopeTimeFactor(gradePct: number): number {
+  const s = gradePct / 100;
+  return Math.exp(TOBLER_K * (Math.abs(s + TOBLER_OFFSET) - TOBLER_OFFSET));
+}
+
+/** Grade penalty in seconds for `profile` on a walk link (0 on gentle slopes and for shortest). */
+export function gradePenaltySec(grade: LinkGrade, profile: Profile): number {
+  const cls = gradeClass(grade.gradePct);
+  if (cls === 'gentle') return 0;
+  const perM = GRADE_PENALTY_SEC_PER_M[profile][cls];
+  return perM * grade.lengthM * (grade.gradePct < 0 ? DOWNHILL_GRADE_PENALTY_FACTOR : 1);
+}
 
 /**
  * The edge's moving-belt direction (SPEC-v0.2 2.7), or null when it has none.
@@ -113,13 +207,15 @@ export function isStepFreeUnknown(edge: StepFreeFacts): boolean {
 
 /**
  * Expected time to walk a footway / corridor / ramp edge of `lengthM` metres
- * (plus PORTAL_SEC on a portal). Steps edges use stairsTimeSec, elevators the
- * ELEVATOR_* constants.
+ * (plus PORTAL_SEC on a portal). With a grade (edgeGradePct, direction of travel)
+ * the walking time is scaled by slopeTimeFactor; without one a ramp takes
+ * RAMP_FACTOR. Steps edges use stairsTimeSec, elevators the ELEVATOR_* constants.
  */
-export function walkTimeSec(edge: Pick<EdgeProperties, 'highway' | 'edge_type'>, lengthM: number): number {
+export function walkTimeSec(edge: Pick<EdgeProperties, 'highway' | 'edge_type'>, lengthM: number, gradePct: number | null = null): number {
   if (edge.highway === 'steps') throw new Error('steps edges are timed by stairsTimeSec');
   let t = lengthM / WALK_SPEED_MPS;
-  if (edge.highway === 'ramp') t *= RAMP_FACTOR;
+  if (gradePct !== null) t *= slopeTimeFactor(gradePct);
+  else if (edge.highway === 'ramp') t *= RAMP_FACTOR;
   return t + portalSec(edge);
 }
 
@@ -189,23 +285,32 @@ export function portalSec(edge: Pick<EdgeProperties, 'edge_type'>): number {
  */
 export function isClosedFor(edge: StepFreeFacts | null, profile: Profile): boolean {
   if (edge === null) return false;
-  return profile === 'step_free' && !isStepFreePassable(edge);
+  return (profile === 'step_free' || profile === 'wheelchair') && !isStepFreePassable(edge);
 }
 
 /**
  * Preference penalty in seconds for a link over `edge`, added to the cost only.
  * fewest_steps: FEWEST_STEPS_ESCALATOR_PENALTY_SEC on an escalator,
  * FEWEST_STEPS_STAIRS_PENALTY_SEC on any other steps edge.
+ * `grade` (a walk link with a known grade) adds gradePenaltySec, and a ramp with a
+ * known grade no longer pays the flat RAMP_PENALTY_SEC.
  */
-export function penaltySec(edge: PenaltyFacts | null, profile: Profile): number {
+export function penaltySec(edge: PenaltyFacts | null, profile: Profile, grade: LinkGrade | null = null): number {
   if (edge === null) return 0;
+  const ramp = edge.highway === 'ramp' && grade === null ? RAMP_PENALTY_SEC : 0;
+  const slope = grade === null ? 0 : gradePenaltySec(grade, profile);
   switch (profile) {
     case 'shortest':
       return 0;
     case 'step_free':
-      return isStepFreeUnknown(edge) ? UNKNOWN_STEP_FREE_PENALTY_SEC : 0;
+      return (isStepFreeUnknown(edge) ? UNKNOWN_STEP_FREE_PENALTY_SEC : 0) + slope;
     case 'fewest_steps':
-      if (edge.highway !== 'steps') return 0;
+      if (edge.highway !== 'steps') return slope;
       return isEscalator(edge) ? FEWEST_STEPS_ESCALATOR_PENALTY_SEC : FEWEST_STEPS_STAIRS_PENALTY_SEC;
+    case 'elevator_first':
+      if (edge.highway === 'steps') return FEWEST_STEPS_STAIRS_PENALTY_SEC;
+      return ramp + slope;
+    case 'wheelchair':
+      return (isStepFreeUnknown(edge) ? UNKNOWN_STEP_FREE_PENALTY_SEC : 0) + ramp + slope;
   }
 }

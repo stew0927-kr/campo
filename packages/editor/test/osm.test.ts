@@ -1,0 +1,211 @@
+// OSM 건물 가져오기 (osm.ts): the Overpass query, reading its answer, and the building it becomes.
+import { describe, expect, it } from 'vitest';
+import { plinthFloors, setBuildingLevels, type Position } from '@campo/core';
+import hanyang from '../src/data/osm-campus/hanyang-seoul.json';
+import { FLOOR_OVERRIDES } from '../src/data/building-floors.ts';
+import type { OsmCampusData } from '../src/model/osmCampus.ts';
+import { OSM_SOURCE, OVERPASS_URL, OVERPASS_URLS, fetchOsmBuilding, floorOverride, osmCode, osmLevels, overpassQuery, parseOverpass, pickBuilding, planOsmBuilding, type OsmBuilding } from '../src/model/osm.ts';
+import { isError, runPlan } from '../src/model/plan.ts';
+import { fixtureSession } from './fixture.ts';
+
+/** A spot of the fixture campus with no building: 200m south-west of everything. */
+const HERE: Position = [126.998, 36.998];
+const square = (cx: number, cy: number, half: number) => [[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]].map(([x, y]) => ({ lon: cx + x! * half, lat: cy + y! * half }));
+const hall = { type: 'way', id: 101, tags: { building: 'university', name: '제2공학관', 'building:levels': '5', 'building:levels:underground': '2' }, geometry: square(HERE[0], HERE[1], 0.0002) };
+const shed = { type: 'way', id: 102, tags: { building: 'yes' }, geometry: square(HERE[0] + 0.001, HERE[1], 0.0001) };
+const block = {
+  type: 'relation', id: 7, tags: { building: 'yes', 'name:ko': '본관' },
+  members: [
+    { type: 'way', role: 'outer', geometry: square(HERE[0], HERE[1], 0.0005) },
+    { type: 'way', role: 'inner', geometry: square(HERE[0], HERE[1], 0.0004) },
+    { type: 'node', role: 'entrance' },
+  ],
+};
+const answer = (elements: unknown[], status = 200) => (async () => new Response(JSON.stringify({ elements }), { status })) as unknown as typeof fetch;
+
+describe('Overpass', () => {
+  it('asks for building ways and relations around the click, with geometry', () => {
+    const q = overpassQuery([127.0451, 37.5559], 120);
+    expect(q).toBe('[out:json][timeout:15];(way["building"](around:120,37.5559,127.0451);relation["building"](around:120,37.5559,127.0451););out tags geom;');
+    expect(OVERPASS_URL).toBe('https://overpass-api.de/api/interpreter');
+    expect(OVERPASS_URL).not.toMatch(/google|naver|kakao|daum/);
+  });
+
+  it('reads floors: above ground from 1, underground as negative levels, never 0', () => {
+    expect(osmLevels({ 'building:levels': '3' })).toEqual({ levels: [1, 2, 3], known: true });
+    expect(osmLevels({ 'building:levels': '2', 'building:levels:underground': '2' })).toEqual({ levels: [-2, -1, 1, 2], known: true });
+    for (const bad of [{}, { 'building:levels': '2.5' }, { 'building:levels': '0' }, { 'building:levels': 'many' }]) expect(osmLevels(bad)).toEqual({ levels: [1], known: false });
+  });
+
+  it('reads ways and relations (largest outer ring), closes open rings, and skips what is not an outline', () => {
+    const open = { type: 'way', id: 5, tags: { building: 'yes' }, geometry: square(0, 0, 1).slice(0, 4) };
+    const list = parseOverpass({ elements: [hall, block, open, { type: 'way', id: 6, geometry: square(0, 0, 1).slice(0, 2) }, { type: 'node', id: 9 }, null] });
+    expect(list.map((b) => b.osmId)).toEqual(['w101', 'r7', 'w5']);
+    expect(list[0]).toMatchObject({ name: '제2공학관', levels: [-2, -1, 1, 2, 3, 4, 5], levelsKnown: true });
+    expect(list[1]).toMatchObject({ name: '본관', levels: [1], levelsKnown: false });
+    expect(list[1]!.ring).toHaveLength(5);
+    expect(list[1]!.ring[0]![0]).toBeCloseTo(HERE[0] - 0.0005, 9); // the outer ring, not the courtyard
+    expect(list[2]!.ring).toHaveLength(5);
+    expect(list[2]!.ring[4]).toEqual(list[2]!.ring[0]);
+    expect(parseOverpass('nope')).toEqual([]);
+    expect(parseOverpass({ remark: 'runtime error' })).toEqual([]);
+  });
+
+  it('takes the building that holds the click, the smallest when outlines are nested', () => {
+    const list = parseOverpass({ elements: [block, hall, shed] });
+    expect(pickBuilding(list, HERE)!.osmId).toBe('w101');
+    expect(pickBuilding(list, [HERE[0] + 0.00045, HERE[1]])!.osmId).toBe('r7');
+    expect(pickBuilding(list, [HERE[0] + 0.002, HERE[1]])).toBeUndefined();
+  });
+});
+
+describe('planOsmBuilding', () => {
+  it('makes a campo building with the name and floors, marked for checking; one undo; refuses the same building twice', () => {
+    const s = fixtureSession(41);
+    const before = s.history.current();
+    const [b] = parseOverpass({ elements: [hall] });
+    const plan = planOsmBuilding(before, b!);
+    if (isError(plan)) throw new Error(plan.error);
+    expect(plan.annotation).toBe('OSM 건물 "제2공학관" 가져오기');
+    expect(runPlan(s.history, plan)).toMatchObject({ ok: true });
+    const after = s.history.current();
+    const made = after.buildings['OSMw101']!;
+    expect(made.id).toBe('bldg_OSMw101');
+    expect(made.props).toMatchObject({ kind: 'building', name: '제2공학관', code: 'OSMw101', levels: [-2, -1, 1, 2, 3, 4, 5], ground_levels: [1], source: OSM_SOURCE, needs_check: true });
+    expect(made.polygon[0]).toEqual(b!.ring);
+    expect(s.history.size()).toBe(1);
+    expect(planOsmBuilding(after, b!)).toEqual({ error: '이 건물은 이미 가져왔습니다(제2공학관).' });
+    expect(s.history.undo()).toEqual(before);
+  });
+
+  it('names a building OpenStreetMap has no name for', () => {
+    const plan = planOsmBuilding(fixtureSession().history.current(), parseOverpass({ elements: [shed] })[0]!);
+    if (isError(plan)) throw new Error(plan.error);
+    expect(plan.annotation).toBe('OSM 건물 "이름 없는 건물 w102" 가져오기');
+    expect(plan.notices![0]).toBe('OSM에 층수가 없어 1층만 넣었습니다.');
+  });
+});
+
+describe('한양대 건물 층수 기본값 (FLOOR_OVERRIDES)', () => {
+  const planned = (s: ReturnType<typeof fixtureSession>, b: OsmBuilding) => {
+    const plan = planOsmBuilding(s.history.current(), b);
+    if (isError(plan)) throw new Error(plan.error);
+    return plan;
+  };
+
+  it('table is consistent: ids are way/relation ids, levels never contain 0 and match basement/above', () => {
+    for (const [id, spec] of Object.entries(FLOOR_OVERRIDES)) {
+      expect(id, id).toMatch(/^[wr]\d+$/);
+      const expected = [
+        ...Array.from({ length: spec.basement }, (_, i) => i - spec.basement),
+        ...Array.from({ length: spec.above }, (_, i) => i + 1),
+      ];
+      expect(spec.levels, id).toEqual(expected);
+      expect(spec.levels, id).not.toContain(0);
+    }
+  });
+
+  it('real floors of the main buildings', () => {
+    expect(FLOOR_OVERRIDES['w187185123']!.levels).toEqual([-1, 1, 2, 3, 4]);
+    expect(FLOOR_OVERRIDES['w187185124']!.levels).toEqual([-1, 1, 2, 3, 4, 5, 6]);
+    expect(FLOOR_OVERRIDES['w187181263']!.levels).toEqual([-2, -1, 1, 2, 3, 4, 5, 6, 7]);
+    expect(FLOOR_OVERRIDES['w187178757']!.levels).toEqual([-1, 1, 2, 3, 4, 5, 6, 7]);
+    expect(FLOOR_OVERRIDES['w187178760']!.levels).toEqual([-1, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it('the import writes the table levels and leaves the plinth at 0', () => {
+    const s = fixtureSession(41);
+    const el = { type: 'way', id: 187185124, tags: { building: 'university' }, geometry: square(HERE[0], HERE[1], 0.0002) };
+    expect(runPlan(s.history, planned(s, parseOverpass({ elements: [el] })[0]!))).toMatchObject({ ok: true });
+    const b = s.history.current().buildings['OSMw187185124']!;
+    expect(b.props.levels).toEqual([-1, 1, 2, 3, 4, 5, 6]);
+    expect(b.props.ext?.plinth_floors).toBeUndefined();
+    expect(plinthFloors(b)).toBe(0);
+    // The plinth does not follow the floor list.
+    s.history.perform(setBuildingLevels('OSMw187185124', [-1, 1, 2, 3, 4, 5]));
+    expect(plinthFloors(s.history.current().buildings['OSMw187185124']!)).toBe(0);
+  });
+
+  it('Overpass path: a listed building takes the table floors instead of building:levels', () => {
+    const s = fixtureSession(41);
+    const el = { type: 'way', id: 187181264, tags: { building: 'university', name: '제2공학관', 'building:levels': '3' }, geometry: square(HERE[0], HERE[1], 0.0002) };
+    const [b] = parseOverpass({ elements: [el] });
+    expect(b!.levels).toEqual([1, 2, 3]); // what OpenStreetMap says
+    const plan = planned(s, b!);
+    expect(plan.notices![0]).toBe('한양대 건물 층수 표의 층수(8개 층)를 넣었습니다.');
+    expect(runPlan(s.history, plan)).toMatchObject({ ok: true });
+    expect(s.history.current().buildings['OSMw187181264']!.props.levels).toEqual([-2, -1, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it('embedded campus path: the same table is applied to a building read from hanyang-seoul.json', () => {
+    const s = fixtureSession(41);
+    const listed = (hanyang as unknown as OsmCampusData).buildings.find((x) => x.osmId in FLOOR_OVERRIDES);
+    expect(listed, 'the embedded campus file holds at least one listed building').toBeDefined();
+    expect(runPlan(s.history, planned(s, listed!))).toMatchObject({ ok: true });
+    expect(s.history.current().buildings[osmCode(listed!.osmId)]!.props.levels).toEqual(FLOOR_OVERRIDES[listed!.osmId]!.levels);
+  });
+
+  it('a building that is not in the table keeps the OpenStreetMap floors', () => {
+    const [b] = parseOverpass({ elements: [hall] }); // w101
+    expect(floorOverride(b!.osmId)).toBeNull();
+    expect(floorOverride('constructor')).toBeNull();
+    const s = fixtureSession(41);
+    expect(runPlan(s.history, planned(s, b!))).toMatchObject({ ok: true });
+    expect(s.history.current().buildings['OSMw101']!.props.levels).toEqual([-2, -1, 1, 2, 3, 4, 5]);
+  });
+
+  it('the table is only a starting value: the floors can be changed after the import, and the table is not touched', () => {
+    const s = fixtureSession(41);
+    const el = { type: 'way', id: 187181264, tags: { building: 'university' }, geometry: square(HERE[0], HERE[1], 0.0002) };
+    expect(runPlan(s.history, planned(s, parseOverpass({ elements: [el] })[0]!))).toMatchObject({ ok: true });
+    s.history.perform(setBuildingLevels('OSMw187181264', [-1, 1, 2, 3, 4, 5, 6, 7]));
+    expect(s.history.current().buildings['OSMw187181264']!.props.levels).toEqual([-1, 1, 2, 3, 4, 5, 6, 7]);
+    expect(FLOOR_OVERRIDES['w187181264']!.levels).toEqual([-2, -1, 1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe('fetchOsmBuilding', () => {
+  const state = fixtureSession().history.current();
+
+  it('posts the query to Overpass and returns the building under the click', async () => {
+    const calls: { url: string; body: string }[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      calls.push({ url, body: String(init.body) });
+      return new Response(JSON.stringify({ elements: [hall, shed] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const found = await fetchOsmBuilding(state, HERE, fetchFn);
+    expect(found).toMatchObject({ building: { osmId: 'w101' } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(OVERPASS_URL);
+    expect(decodeURIComponent(calls[0]!.body)).toBe(`data=${overpassQuery(HERE)}`);
+  });
+
+  it('falls back to the next mirror when a server fails', async () => {
+    const urls: string[] = [];
+    const fetchFn = (async (url: string) => {
+      urls.push(url);
+      if (urls.length < 3) throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify({ elements: [hall] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    expect(await fetchOsmBuilding(state, HERE, fetchFn)).toMatchObject({ building: { osmId: 'w101' } });
+    expect(urls).toEqual([...OVERPASS_URLS]);
+  });
+
+  it('explains every failure in Korean and never throws', async () => {
+    const down = (async () => { throw new TypeError('Failed to fetch'); }) as unknown as typeof fetch;
+    const notJson = (async () => new Response('<html>busy</html>', { status: 200 })) as unknown as typeof fetch;
+    expect(await fetchOsmBuilding(state, HERE, down)).toEqual({ error: expect.stringContaining('닿지 못했습니다') });
+    expect(await fetchOsmBuilding(state, HERE, notJson)).toEqual({ error: expect.stringContaining('닿지 못했습니다') });
+    expect(await fetchOsmBuilding(state, HERE, answer([], 429))).toEqual({ error: expect.stringContaining('바쁩니다') });
+    expect(await fetchOsmBuilding(state, HERE, answer([], 500))).toEqual({ error: expect.stringContaining('HTTP 500') });
+    expect(await fetchOsmBuilding(state, HERE, answer([shed]))).toEqual({ error: expect.stringContaining('누른 자리에 OSM 건물이 없습니다') });
+  });
+
+  it('does not ask at all where a campo building already stands', async () => {
+    let asked = false;
+    const fetchFn = (async () => { asked = true; return new Response('{}'); }) as unknown as typeof fetch;
+    const inside = state.nodes['n_A_3_hall']!.coord;
+    expect(await fetchOsmBuilding(state, inside, fetchFn)).toEqual({ error: expect.stringContaining('이미 건물(') });
+    expect(asked).toBe(false);
+  });
+});

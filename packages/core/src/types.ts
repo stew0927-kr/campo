@@ -45,9 +45,20 @@ export interface BuildingProperties extends CommonProperties {
   ground_levels: Level[];
   /** A footbridge registered as a one-level building (SPEC-v0.2 §2.6). */
   building_type?: 'bridge';
+  /**
+   * The outline of single floors where it differs from the building's own (the Feature geometry): a podium, a setback,
+   * a basement wider than the tower. Key String(level), e.g. "-1", "3"; value Polygon coordinates (closed rings of 4+
+   * positions). A floor without one uses the building geometry (getBuildingOutlineForLevel). Display only: routing never reads it.
+   */
+  floor_outlines?: Record<string, Position[][]>;
   ext?: {
     moct_bldg_id?: string;
     floor_height_m?: number;
+    /**
+     * 기반층: the height of the plinth under the listed floors, in floors (default 0; 0.5, 1, 2 … allowed), typed in by
+     * hand. Drawn as one block under the stack when the 3D terrain is on (plinthFloors). Display only: routing never reads it.
+     */
+    plinth_floors?: number;
   };
 }
 
@@ -82,6 +93,14 @@ export interface NodeProperties extends CommonProperties {
   restroom_gender?: RestroomGender;
   wheelchair?: Wheelchair;
   changing_table?: boolean | null;
+  /** When the point can be passed, e.g. "07:00-22:00", "24/7" (SPEC 4.2). Free text: shown to people, not read by routing. */
+  hours?: string;
+  /** A period it is closed, e.g. "2026-11-15~2026-11-30". */
+  closed_period?: string;
+  /** What it takes to get through, e.g. "상시개방", "학생증 태깅", "관리실 문의". */
+  access_condition?: string;
+  /** Points copied to other floors of one building share this id; the editor keeps the flat edges between them alike (SPEC 4.2). */
+  sync_group?: string;
 }
 
 export const DOOR_ROLES = ['front', 'back', 'other'] as const;
@@ -122,7 +141,25 @@ export interface EdgeProperties extends CommonProperties {
   hours?: string;
   building_from?: string;
   building_to?: string;
+  // ---- Elevation (docs/ELEVATION_INTEGRATION.md). All optional: data without them routes as before. ----
+  /** footway / corridor only: checked on site to be level. The height solver holds Δh = 0 hard; routing reads grade 0. */
+  flat_exact?: boolean;
+  /**
+   * The edge is a terrain break (a kerb, a retaining wall, a flight of outdoor steps): residual interpolation does not
+   * smooth heights across it. Missing: outdoor steps count as one (edge_type 'outdoor' + highway 'steps'); false opts out.
+   */
+  is_breakline?: boolean;
+  /** Derived by the elevation recompute: height of `to` minus height of `from`, metres. */
+  elev_diff_m?: number;
+  /** Derived: standard deviation of elev_diff_m, metres. */
+  elev_sigma_m?: number;
+  /** Derived: elev_diff_m over the plan length, percent, from → to (positive = uphill). */
+  grade_pct?: number;
 }
+
+/** Edge properties written by the elevation recompute (setEdgeElevation), never by hand. */
+export const DERIVED_ELEVATION_PROPS = ['elev_diff_m', 'elev_sigma_m', 'grade_pct'] as const;
+export type DerivedElevationProp = (typeof DERIVED_ELEVATION_PROPS)[number];
 
 export interface BuildingFeature {
   type: 'Feature';
@@ -263,6 +300,8 @@ export const ERROR_CODES = {
   elevatorEdgeNotStops: 'elevator-edge-not-stops',
   /** E14: campus.json map_limits is not a usable area (bounds out of order, centre outside, min_zoom above max_zoom). */
   mapLimitsInvalid: 'map-limits-invalid',
+  /** E15: a floor outline of a building is for a level it does not have, or a ring is not closed (4+ positions, first = last). */
+  floorOutlineInvalid: 'floor-outline-invalid',
 } as const;
 
 export const WARNING_CODES = {
@@ -288,6 +327,10 @@ export const WARNING_CODES = {
   observationUnknownTarget: 'observation-unknown-target',
   /** W14 */
   danglingOverride: 'dangling-override',
+  /** W15 */
+  flatExactNotFlat: 'flat-exact-not-flat',
+  /** W16 */
+  steepRamp: 'steep-ramp',
 } as const;
 
 // ---- Overrides (SPEC-v0.2 §2.5) ----

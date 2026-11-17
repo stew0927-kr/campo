@@ -4,5 +4,5 @@
     "lib": ["ES2023"],
     "types": ["node"]
   },
-  "include": ["server", "test", "vite.config.ts", "playwright.config.ts", "e2e", "src/vite-env.d.ts"]
+  "include": ["scripts", "server", "test", "vite.config.ts", "playwright.config.ts", "e2e", "src/vite-env.d.ts"]
 }

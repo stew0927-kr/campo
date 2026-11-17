@@ -57,6 +57,16 @@ const TOOL_SPECS = [
     hint: '건물 외곽선을 클릭하며 그리고, 첫 점을 다시 누르면 끝납니다.',
   },
   {
+    id: 'outline', label: '외곽선 수정', group: 'draw',
+    description: '고른 건물의 지금 보는 층 외곽선을 고칩니다. 층마다 모양이 다르면 그 층만의 외곽선이 됩니다.',
+    hint: '꼭짓점을 끌어 옮기고, 선 위를 우클릭하면 그 자리에 꼭짓점이 생깁니다. 꼭짓점을 우클릭하면 지웁니다(3개 이상 유지). [완료] 또는 Enter로 반영, Esc는 취소입니다.',
+  },
+  {
+    id: 'osm-building', label: '건물 외곽선 가져오기', group: 'draw', scope: 'outdoor',
+    description: '지도에서 건물을 누르면 OpenStreetMap의 외곽선·이름·층수로 건물을 등록합니다.',
+    hint: '가져올 건물의 안쪽을 누르세요. OpenStreetMap(Overpass)에서 외곽선을 받아 건물로 등록합니다. 되돌리기로 취소할 수 있고, 이름·코드·층은 상세 정보에서 고칩니다.',
+  },
+  {
     id: 'add-node', label: '지점 추가', group: 'draw', placing: true,
     description: '출입구·문·복도·계단 같은 지점을 하나씩 찍습니다.',
     hint: '지도를 누르면 고른 종류의 지점이 생깁니다.',
@@ -90,6 +100,11 @@ const TOOL_SPECS = [
     id: 'escalator', label: '에스컬레이터', group: 'draw', key: 'E', cross: true,
     description: '아래쪽 지점과 위쪽 지점을 에스컬레이터로 잇습니다.',
     hint: '아래쪽 지점을 누르면 작은 창이 열립니다. 방향과 위쪽 층을 고른 다음, 위쪽 지점이나 빈자리를 누릅니다. 바깥에서는 층 선택 없이 방향만 고릅니다.',
+  },
+  {
+    id: 'breakline', label: '고도 단절선(옹벽·단차)', group: 'draw', key: 'B', scope: 'outdoor',
+    description: '옹벽이나 급격한 단차처럼 양쪽 땅 높이가 끊어지는 경계선을 그려요(이 선 너머로는 고도가 섞이지 않음)',
+    hint: '시작점을 클릭하고, 꺾이는 곳마다 클릭한 뒤, 마지막 점을 더블클릭하거나 Enter를 누르면 완료됩니다. Esc는 취소입니다. 지도 데이터가 아니라 고도 저장소에 저장됩니다.',
   },
   {
     id: 'door', label: '호실 연속 입력', group: 'macro', key: 'D', placing: true, attachPreview: true,
@@ -153,6 +168,14 @@ const OPERATION_SPECS = [
   { id: 'undo', label: '되돌리기', group: 'edit', key: 'Ctrl+Z', description: '방금 한 편집을 취소합니다.' },
   { id: 'redo', label: '다시 하기', group: 'edit', key: 'Ctrl+Shift+Z', description: '되돌린 편집을 다시 적용합니다.' },
   {
+    id: 'import-survey', label: '현장 기록 불러오기', group: 'edit',
+    description: '현장 조사 앱에서 내보낸 zip 파일을 열어, 현장에서 기록한 지점·구간을 한 번에 반영합니다. 되돌리기 한 번으로 취소됩니다.',
+  },
+  {
+    id: 'find-broken', label: '끊긴 지점 찾기', group: 'macro',
+    description: '어떤 구간에도 이어지지 않은 지점, 다른 길과 끊긴 묶음, 길 바로 옆(1.5m 안)에 있는데 이어지지 않은 지점을 차례로 보여 줍니다.',
+  },
+  {
     id: 'attach-unattached', label: '연결 안 된 지점 잇기', group: 'macro',
     description: '이 층에서 복도와 떨어져 있는 문·화장실·엘리베이터를 가까운 복도에 한꺼번에 잇습니다.',
   },
@@ -201,7 +224,7 @@ const OTHER_KEYS: ShortcutRow[] = [
   { keys: 'Esc', label: '도구 끝내기, 선택 풀기' },
   { keys: '[ / ]', label: '층 내리기 / 올리기' },
   { keys: 'Ctrl+S', label: '저장' },
-  { keys: '지도에서 우클릭', label: '선택한 것의 메뉴 (속성, 다른 층에 복사, 삭제)' },
+  { keys: '지도에서 우클릭', label: '선택한 것의 메뉴 (속성, 다른 층에 복사, 층 연동 취소, 삭제)' },
   { keys: '?', label: '이 목록 열기' },
 ];
 

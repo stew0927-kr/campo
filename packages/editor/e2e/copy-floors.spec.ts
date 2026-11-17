@@ -56,7 +56,7 @@ test('복도 지점 5개와 구간 4개를 2~4층에 복사하고 되돌리기 �
   const panel = page.getByRole('region', { name: '다른 층에 복사' });
   await expect(panel).toBeVisible();
   await expect(menu).toBeHidden();
-  await expect(panel.getByRole('checkbox')).toHaveCount(4); // 전체 선택, and 2, 3, 4층 (not the floor copied from)
+  await expect(panel.getByRole('group', { name: '복사할 층' }).getByRole('checkbox')).toHaveCount(4); // 전체 선택, and 2, 3, 4층 (not the floor copied from)
   await ed.click(panel.getByRole('checkbox', { name: '전체 선택' }));
   for (const f of ['2층', '3층', '4층']) await expect(panel.getByRole('checkbox', { name: f })).toBeChecked();
   await shot(page, 'copy-panel.png');
@@ -116,12 +116,14 @@ test('두 번째 복사는 같은 자리의 지점을 재사용하고, 바깥 �
   const menu = page.getByRole('menu', { name: '선택한 것의 메뉴' });
   await ed.click(menu.getByRole('menuitem', { name: '다른 층에 복사…' }));
   const panel = page.getByRole('region', { name: '다른 층에 복사' });
-  await expect(panel.getByRole('checkbox')).toHaveCount(4); // 전체 선택, 2, 3, 4층
+  await expect(panel.getByRole('group', { name: '복사할 층' }).getByRole('checkbox')).toHaveCount(4); // 전체 선택, 2, 3, 4층
   await ed.click(panel.getByRole('checkbox', { name: '2층' }));
   await ed.click(panel.getByRole('button', { name: /^복사하기/ }));
   const result = panel.getByRole('list', { name: '복사 결과' });
-  await expect(result).toContainText('지점 2개 만듦, 1개 재사용, 구간 2개 만듦'); // 2층 has a corridor point at the same place as 1층's east end
-  await expect(result).toContainText('엘리베이터 정차 지점');
+  // 2층 has a corridor point at the same place as 1층's east end and a stop of the same elevator: both reused, and so is the
+  // corridor edge between them. The west corridor point and the door are new; the entrance is never copied.
+  await expect(result).toContainText('지점 2개 만듦, 2개 재사용, 구간 2개 만듦');
+  await expect(result).toContainText('이미 있는 구간 1개는 새로 만들지 않았습니다');
   await expect(result).toContainText('출입구');
   await expect(result).toContainText('엘리베이터·계단·에스컬레이터·연결통로 도구로 만들어 주세요');
   await shot(page, 'copy-skipped.png');

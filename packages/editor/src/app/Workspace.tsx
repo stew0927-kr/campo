@@ -6,10 +6,11 @@
 //   app/toolClicks.ts   what a map click does in each tool          (one entry per tool)
 //   operations below    whether each operation can run now, and how (one entry per operation)
 //   panels below        what each side-panel tab shows              (one entry per tab)
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { buildingById, type EditEdge, type EditNode, type EditState, type Override, type Position } from '@campo/core';
-import { saveCampus } from '../api.ts';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { buildingById, type EditBuilding, type EditEdge, type EditNode, type EditState, type Override, type Position, type Survey } from '@campo/core';
+import { fetchSurveyFiles, saveCampus, saveSurvey } from '../api.ts';
 import { MapView, type FocusRequest } from '../map/MapView.tsx';
+import { brokenByLevel, brokenIds, findBroken, nextBroken, planConnectNear, type BrokenItem } from '../model/broken.ts';
 import { NOT_CONNECTED_NOTICE, planAttachUnattached, planDrawnPath, unattachedNodes } from '../model/connect.ts';
 import { copyBlocked, copySource, copyTargets, planCopyToFloors } from '../model/copy.ts';
 import { doorPreview, planStrip, stripPreview, type StripInput } from '../model/doors.ts';
@@ -17,19 +18,35 @@ import { HandleDrag, NodeDrag, type DragResult } from '../model/drag.ts';
 import { featureCenter, featureScope } from '../model/locate.ts';
 import { makeObservation, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 import { menuFields, planMenuEdit, selectionSummary, type MenuEdits } from '../model/menu.ts';
+import { buildingAt } from '../model/building.ts';
+import { breaklinePositions, insertBreaklinePoint, moveBreaklinePoint, planElevationFlag, removeBreaklinePoint, sideLabel } from '../model/elevation.ts';
+import { fetchOsmBuilding, osmCode, planOsmBuilding } from '../model/osm.ts';
+import { embeddedOsmBuilding } from '../model/osmCampusData.ts';
 import { buildingsToDelete, planDelete, planFlip, planMerge, planSetProps, propsPatch, type CommonEdits } from '../model/ops.ts';
 import { isError, planReason, runPlan, type PlanResult } from '../model/plan.ts';
 import { OUTDOOR, defaultLevel, edgeInScope, levelStep, nodeInScope, nodeStrong, sameScope, scopeLabel, type Scope } from '../model/scope.ts';
 import { propsOf, type Session } from '../model/session.ts';
 import { edgeMidpoint, planSplit } from '../model/split.ts';
+import { planUnsync, syncedIn, withSyncMirror } from '../model/sync.ts';
+import { loadSurveys, planSurveyImport, readSurveyFile, surveyNotes, withSurvey } from '../model/survey.ts';
 import type { PathVertex } from '../model/tools.ts';
-import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, renameBlocked } from '../model/buildingEdit.ts';
+import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetBuildingName, planSetFloorHeight, planSetPlinthFloors, renameBlocked } from '../model/buildingEdit.ts';
+import { BreaklineForm, BreaklinePanel, breaklineTitle } from '../ui/BreaklineForm.tsx';
 import { BuildingPanel } from '../ui/BuildingPanel.tsx';
 import { ChecksPanel } from '../ui/ChecksPanel.tsx';
-import { ContextMenu } from '../ui/ContextMenu.tsx';
+import { BreaklineContextMenu, BuildingContextMenu, ContextMenu } from '../ui/ContextMenu.tsx';
 import { CopyPanel } from '../ui/CopyPanel.tsx';
 import { CrossPicker } from '../ui/CrossPicker.tsx';
 import { FloorPicker } from '../ui/FloorPicker.tsx';
+import { HistoryButtons } from '../ui/HistoryButtons.tsx';
+import { OutlineForm } from '../ui/OutlineForm.tsx';
+import { View3DButton } from '../ui/View3DButton.tsx';
+import { TerrainButton } from '../ui/TerrainButton.tsx';
+import { measuredFloorLevels, plinthFloors } from '@campo/core';
+import { deckLayers } from '../map/deck3d.ts';
+import { fetchTerrain } from '../api.ts';
+import { groundOf, sampleTerrainGrid, terrainBase, terrainTop, type TerrainGrid } from '../model/terrain3d.ts';
+import { ExaggerationControl } from '../ui/ExaggerationControl.tsx';
 import { HelpDialog } from '../ui/HelpDialog.tsx';
 import { MeasurePanel } from '../ui/MeasurePanel.tsx';
 import { PropertiesPanel } from '../ui/PropertiesPanel.tsx';
@@ -39,15 +56,22 @@ import { RoutePanel } from '../ui/RoutePanel.tsx';
 import { SidePanel } from '../ui/SidePanel.tsx';
 import { StatusBar } from '../ui/StatusBar.tsx';
 import { StripForm } from '../ui/StripForm.tsx';
+import { SurveyNotes } from '../ui/SurveyNotes.tsx';
 import { Toolbar, type OperationState } from '../ui/Toolbar.tsx';
 import { TOOL_OPTIONS } from '../ui/ToolOptions.tsx';
 import { followBuildingRename, initialStrip, initialUi, reconcileUi, stripStage, type StripState, type UiState } from '../ui/ui-state.ts';
 import { AppDialogs, type Dialog } from './AppDialogs.tsx';
 import { commitSave, prepareSave } from './persist.ts';
 import { toolClicks } from './toolClicks.ts';
+import { useElevation } from './useElevation.ts';
 import { useInspection } from './useInspection.ts';
 import { useReports } from './useReports.ts';
 import { useShortcuts, type KeyBinding } from './useShortcuts.ts';
+import {
+  insertDraftCorner, moveDraftCorner, planOutline, planResetOutline, redoDraft, removeDraftCorner, startOutline, undoDraft, type OutlineDraft,
+} from '../model/outlineEdit.ts';
+import type { BreaklineEditView, BreaklineHit, OutlineEditView } from '../map/MapView.tsx';
+import type { BreakLineSide } from '@campo/core/elevation';
 
 type Notice = { text: string; tone: 'info' | 'warn' | 'error' } | null;
 
@@ -57,6 +81,14 @@ const DRAG_DONE: Record<Extract<DragResult, { ok: true }>['kind'], string> = {
   split: '구간 위에 지점을 이었습니다.',
   handle: '구간 가운데에 새 지점을 만들었습니다.',
 };
+
+/** Lowest and highest height of a grid (metres), for the 지형 3D legend. */
+function terrainRange(grid: TerrainGrid): [number, number] {
+  const base = terrainBase(grid);
+  let top = base;
+  for (const h of grid.z) if (h !== null && h > top) top = h;
+  return [base, top];
+}
 
 const stripInput = (s: StripState): StripInput | null => (s.first && s.last ? {
   corridorEdgeIds: s.edgeIds, first: s.first, last: s.last, count: Math.floor(Number(s.count)), startRef: s.startRef, refStep: s.refStep, doorsPerRoom: s.doorsPerRoom,
@@ -78,10 +110,56 @@ export function Workspace({ session }: { session: Session }) {
   const [saving, setSaving] = useState(false);
   /** Right-click menu (page coordinates), the 다른 층에 복사 window (the ids it was opened for, and its result), the shortcut list. */
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  /** 고도 단절선: the drawn line selected for editing (not part of ui.selection: it lives in the elevation store), and its right-click menu. */
+  const [lineSel, setLineSel] = useState<string | null>(null);
+  const [lineMenu, setLineMenu] = useState<(BreaklineHit & { x: number; y: number }) | null>(null);
   const [copyPanel, setCopyPanel] = useState<{ ids: string[]; result: string[] | null } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  /** 외곽선 수정: the outline being edited (one history entry on 완료). */
+  const [outline, setOutline] = useState<OutlineDraft | null>(null);
+  /** 3D 보기: the map tilted with every building's floors stacked by height. */
+  const [view3d, setView3d] = useState(false);
+  /** 지형 3D: on or off (independent of 건물 3D), and the grid once it has been asked for (null: none; undefined: not yet). */
+  const [terrain3d, setTerrain3d] = useState(false);
+  const [terrainGrid, setTerrainGrid] = useState<TerrainGrid | null | undefined>(undefined);
+  /** 높이 과장 of both 3D views: kept while they are turned off and on again, back to 1 only when the page is reloaded (never saved). */
+  const [exaggeration, setExaggeration] = useState(1);
+  const toggleTerrain = () => {
+    if (terrain3d) {
+      setTerrain3d(false);
+      return info(view3d ? '지형 3D를 껐습니다. 건물 3D는 그대로입니다.' : '지형 3D를 껐습니다.');
+    }
+    setTerrain3d(true);
+    if (terrainGrid !== undefined) return;
+    fetchTerrain(session.campusId).then(
+      (grid) => {
+        setTerrainGrid(grid ?? sampleTerrainGrid(session.meta.center));
+        info(grid
+          ? `${grid.source === 'corrected' ? '보정한 고도 그리드' : 'DEM(보정 전)'}로 지형을 그렸습니다. 바깥 길과 건물 1층 외곽선이 지형 높이에 올라갑니다.`
+          : '보정 고도 그리드도 DEM도 없어 샘플 지형(실제 고도가 아님)을 보여 줍니다. derived/<캠퍼스>/에 DEM을 두고 고도 다시 계산을 돌리면 실제 지형이 나옵니다.');
+      },
+      // Without the dev server's elevation API: the sample, so the view can still be tried.
+      () => {
+        setTerrainGrid(sampleTerrainGrid(session.meta.center));
+        info('고도 그리드를 불러오지 못해 샘플 지형(실제 고도가 아님)을 보여 줍니다.');
+      },
+    );
+  };
+  /** After 고도 다시 계산 wrote new files: the grid is read again (if it was ever asked for), so 지형 3D shows the corrected relief. */
+  const reloadTerrain = () => {
+    if (terrainGrid === undefined) return;
+    fetchTerrain(session.campusId).then(
+      (grid) => {
+        if (grid) setTerrainGrid(grid);
+      },
+      () => info('다시 계산한 지형을 불러오지 못했습니다. 지형 3D를 껐다 켜 보세요.'),
+    );
+  };
   /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
   const [obsRev, setObsRev] = useState(0);
+  /** Field surveys imported so far (data/surveys): their photos and readings are shown under 상세 정보. */
+  const [surveys, setSurveys] = useState<Survey[]>([]);
+  const surveyInput = useRef<HTMLInputElement>(null);
   /** Key of the last property edit, so a slider drag becomes one history entry. */
   const lastProp = useRef<string | null>(null);
 
@@ -104,7 +182,7 @@ export function Workspace({ session }: { session: Session }) {
     setUi((u) => reconcileUi(u, state));
   }, [state]);
 
-  const { checks, graph, places, routeResults, nearest, routeLines, measureTarget, measure } = useInspection(session, state, ui, obsRev);
+  const { checks, graph, places, routeResults, routeShown, nearest, routeLines, measureTarget, measure } = useInspection(session, state, ui, obsRev);
 
   // ---- Edits: every one is a Plan of core actions run as one history entry ----
 
@@ -131,7 +209,71 @@ export function Workspace({ session }: { session: Session }) {
     return undefined;
   };
 
+  // ---- 고도: dirty marks, 고도 다시 계산, 불연속선, the slope parts of the routes (useElevation.ts) ----
+  const elevation = useElevation({ session, state, perform, info, fail, routes: routeResults, shown: routeShown, nearest: nearest?.result ?? null, onSolved: reloadTerrain });
+
+  // ---- 고도 단절선 selected for editing: its side, drop and points go to the elevation store (not the edit history) ----
+  const selectedLine = lineSel ? elevation.breaklines.find((b) => b.id === lineSel) : undefined;
+  const selectLine = (id: string | null) => {
+    setLineSel(id);
+    setLineMenu(null);
+    if (id === null) return;
+    patchUi({ selection: [], pickFrom: null, panelTab: 'properties' });
+    const line = elevation.breaklines.find((b) => b.id === id);
+    info(line?.lowSide
+      ? `${breaklineTitle(elevation.breaklines, id)}을(를) 골랐습니다. 낮은 쪽은 ${sideLabel(line.lowSide)}입니다. 점을 끌어 옮기거나 선분을 눌러 점을 더합니다.`
+      : `${breaklineTitle(elevation.breaklines, id)}을(를) 골랐습니다. 선 옆을 가리키면 흐린 톱니가 보이고, 낮은 쪽 면을 누르면 정해집니다.`);
+  };
+  // The line is gone (removed, another campus): nothing selected. A feature selected on the map lets the line go.
+  useEffect(() => {
+    if (lineSel && !selectedLine) setLineSel(null);
+  }, [lineSel, selectedLine]);
+  useEffect(() => {
+    if (ui.selection.length > 0) setLineSel(null);
+  }, [ui.selection]);
+  const setLineSide = (id: string, side: BreakLineSide | null) =>
+    elevation.updateBreakline(id, { lowSide: side }, side ? `낮은 쪽 면을 ${sideLabel(side)}으로 정했습니다.` : '낮은 쪽 면을 지웠습니다.');
+  const setLineDrop = (id: string, dropM: number | null) =>
+    elevation.updateBreakline(id, { dropM }, dropM === null ? '높이차를 지웠습니다.' : `높이차를 ${dropM} m로 넣었습니다.`);
+  const linePoints = (id: string) => {
+    const line = elevation.breaklines.find((b) => b.id === id);
+    return line ? breaklinePositions(line) : null;
+  };
+  const deleteLine = (id: string) => {
+    elevation.removeBreakline(id);
+    setLineSel(null);
+    setLineMenu(null);
+  };
+  const breaklineEdit = useMemo<BreaklineEditView>(() => ({
+    selected: lineSel,
+    onSelect: selectLine,
+    onSide: (id, side) => {
+      const line = elevation.breaklines.find((b) => b.id === id);
+      if (line?.lowSide !== side) setLineSide(id, side);
+    },
+    onMovePoint: (id, index, to) => {
+      const pts = linePoints(id);
+      if (pts) elevation.updateBreakline(id, { coordinates: moveBreaklinePoint(pts, index, to) }, '꺾은점을 옮겼습니다.');
+    },
+    onInsertPoint: (id, segment, at) => {
+      const pts = linePoints(id);
+      if (pts) elevation.updateBreakline(id, { coordinates: insertBreaklinePoint(pts, segment, at) }, '꺾은점을 더했습니다.');
+    },
+  }), [lineSel, elevation.breaklines]); // eslint-disable-line react-hooks/exhaustive-deps
+  const drawnLine = (coords: Position[]) => {
+    void elevation.addBreakline(coords).then((id) => {
+      if (id) {
+        setLineSel(id);
+        patchUi({ selection: [], panelTab: 'properties' });
+      }
+    });
+  };
+
   const stepHistory = (dir: 'undo' | 'redo') => {
+    if (outline) {
+      setOutline((d) => d && (dir === 'undo' ? undoDraft(d) : redoDraft(d)));
+      return;
+    }
     history[dir]();
     lastProp.current = null;
     sync();
@@ -140,11 +282,96 @@ export function Workspace({ session }: { session: Session }) {
 
   // ---- What is shown: the tool, the floor, the place ----
 
+  /**
+   * The building 건물 외곽선 가져오기 just added stays selected (yellow outline) only until the next tool or tab:
+   * switching away puts it back to the plain outline.
+   */
+  const imported = useRef<string | null>(null);
+  const dropImported = (): Partial<UiState> => {
+    const id = imported.current;
+    imported.current = null;
+    return id !== null && ui.selection.includes(id) ? { selection: ui.selection.filter((x) => x !== id) } : {};
+  };
+  /** Another tool: nothing stays selected (highlighted) from the one before, and the right-click menus close. */
   const setTool = (tool: Tool) => {
-    patchUi({ tool, pickFrom: null });
+    if (tool === 'outline') return beginOutline();
+    patchUi((u) => ({ tool, pickFrom: null, ...(tool !== u.tool ? { selection: [] } : dropImported()) }));
+    if (tool !== ui.tool) {
+      imported.current = null;
+      setLineSel(null);
+      setCtxMenu(null);
+      setLineMenu(null);
+    }
     setStrip(initialStrip);
     setNotice(null);
   };
+
+  // ---- 외곽선 수정: the floor shown (or, outdoors, the building picked) is edited in a draft; 완료 is one history entry ----
+
+  /** Start on a building and floor (null: the building outline); without a target, on the floor shown or the building selected. */
+  const beginOutline = (target?: { buildingId: string; level: number | null }) => {
+    const picked = ui.selection.length === 1 ? buildingById(state, ui.selection[0]!) : undefined;
+    const at = target
+      ?? (ui.scope.kind === 'building' ? { buildingId: ui.scope.buildingId, level: ui.scope.level }
+        : picked ? { buildingId: picked.id, level: null }
+        : ui.selectedBuildingId ? { buildingId: ui.selectedBuildingId, level: null } : null);
+    if (!at) return info(`외곽선을 고칠 건물을 먼저 골라 주세요. [${toolLabel('select-building')}]으로 건물과 층을 고르면 그 층의 외곽선을 고칩니다.`);
+    const draft = startOutline(state, at.buildingId, at.level);
+    if ('error' in draft) return fail(draft.error);
+    setOutline(draft);
+    // The building was read from the selection above; now nothing stays selected while the outline is edited.
+    imported.current = null;
+    setLineSel(null);
+    setCtxMenu(null);
+    setLineMenu(null);
+    patchUi({ tool: 'outline', pickFrom: null, selection: [], ...(at.level !== null ? { scope: { kind: 'building', buildingId: at.buildingId, level: at.level }, selectedBuildingId: at.buildingId } : {}) });
+    setStrip(initialStrip);
+    setNotice(null);
+  };
+  // Another floor picked while editing: that floor's outline (what was not finished is dropped). Another tool: the draft goes.
+  useEffect(() => {
+    if (ui.tool !== 'outline') {
+      setOutline(null);
+      return;
+    }
+    if (ui.scope.kind !== 'building') return;
+    const { buildingId, level } = ui.scope;
+    setOutline((d) => {
+      if (d && d.buildingId === buildingId && d.level === level) return d;
+      const next = startOutline(state, buildingId, level);
+      return 'error' in next ? d : next;
+    });
+  }, [ui.tool, ui.scope]); // eslint-disable-line react-hooks/exhaustive-deps
+  const endOutline = () => patchUi({ tool: 'select', pickFrom: null });
+  const finishOutline = () => {
+    if (!outline) return;
+    if (outline.past.length === 0) {
+      endOutline();
+      return info('바뀐 것이 없어 외곽선 수정을 마쳤습니다.');
+    }
+    if (perform(planOutline(outline)) === undefined) endOutline();
+  };
+  const cancelOutline = () => {
+    endOutline();
+    info('외곽선 수정을 취소했습니다. 고친 것은 반영하지 않았습니다.');
+  };
+  const resetOutline = () => {
+    if (!outline || outline.level === null) return;
+    if (perform(planResetOutline(state, outline.buildingId, outline.level)) !== undefined) return;
+    const next = startOutline(history.current(), outline.buildingId, outline.level);
+    if (!('error' in next)) setOutline(next);
+  };
+  const outlineView = useMemo<OutlineEditView | null>(() => (outline ? {
+    corners: outline.corners,
+    holes: outline.holes,
+    onMove: (index, to) => setOutline((d) => d && moveDraftCorner(d, index, to)),
+    onInsert: (side, at) => setOutline((d) => d && insertDraftCorner(d, side, at)),
+    onRemove: (index) => {
+      const next = removeDraftCorner(outline, index);
+      if ('error' in next) fail(next.error);
+      else setOutline(next);
+    },
+  } : null), [outline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Jump to `scope` (from a list, not the floor picker). A tool that cannot be used there gives way to 선택. */
   const showScope = (scope: Scope, patch: Partial<UiState>) => setUi((u) => ({
@@ -198,8 +425,23 @@ export function Workspace({ session }: { session: Session }) {
   };
 
   // ---- Map clicks: one handler per tool (toolClicks.ts). 길 그리기 and 건물 외곽선 그리기 draw with Terra Draw instead. ----
+  /** OSM 건물 가져오기: the outline under the click comes from OpenStreetMap; the building it becomes is one history entry. */
+  const importOsm = async (position: Position) => {
+    // The embedded campus files answer at once; only a click outside every file asks the Overpass servers.
+    // (A click on a campo building goes to fetchOsmBuilding too: it refuses that without any network.)
+    const here = buildingAt(history.current(), position);
+    const local = here ? null : await embeddedOsmBuilding(position);
+    if (!local || 'outside' in local) info('OpenStreetMap에서 건물 외곽선을 찾는 중입니다…');
+    const found = local && !('outside' in local) ? local : await fetchOsmBuilding(history.current(), position);
+    if ('error' in found) return fail(found.error);
+    if (perform(planOsmBuilding(history.current(), found.building)) !== undefined) return;
+    const id = `bldg_${osmCode(found.building.osmId)}`;
+    patchUi({ selection: [id], selectedBuildingId: id, panelTab: 'properties' });
+    imported.current = id;
+  };
   const onToolClick = toolClicks({
     state, ctx, ui, strip, perform, patchUi, setStrip, followScope, showFloor, info, fail,
+    importOsm: (position) => void importOsm(position),
     currentState: () => history.current(),
     openDialog: setDialog,
     clearNotice: () => setNotice(null),
@@ -211,8 +453,9 @@ export function Workspace({ session }: { session: Session }) {
   };
 
   const onPathDrawn = useCallback((vertices: PathVertex[], scope: Scope) => {
-    const plan = planDrawnPath(state, ctx, vertices, ui.outdoorKind, scope);
-    if (!plan) return setNotice(null);
+    const drawn = planDrawnPath(state, ctx, vertices, ui.outdoorKind, scope);
+    if (!drawn) return setNotice(null);
+    const plan = withSyncMirror(state, ctx, drawn);
     if (perform(plan) === undefined) followScope(scope);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, state, ui.outdoorKind, ui.scope]);
@@ -257,7 +500,8 @@ export function Workspace({ session }: { session: Session }) {
   }, [state, ui.scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doDelete = (heal: boolean) => {
-    const plan = planDelete(state, ctx, ui.selection, heal);
+    // An edge deleted between two points linked to other floors goes on those floors too (sync.ts).
+    const plan = withSyncMirror(state, ctx, planDelete(state, ctx, ui.selection, heal), ui.selection.filter((id) => id in state.edges));
     if (isError(plan)) return fail(plan.error);
     const reason = planReason(state, plan);
     if (reason !== false) return fail(reason);
@@ -274,6 +518,29 @@ export function Workspace({ session }: { session: Session }) {
     else if (!plan) info('이 층에는 연결 안 된 지점이 없습니다.');
   };
 
+  // ---- 끊긴 지점 찾기: found on the state a moment behind (like the checks), ringed on the map, walked through one by one ----
+  const checkedState = useDeferredValue(state);
+  const broken = useMemo(() => findBroken(checkedState), [checkedState]);
+  const brokenSet = useMemo(() => brokenIds(broken), [broken]);
+  const brokenFloors = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const id of brokenSet) {
+      if (!(id in checkedState.nodes)) continue;
+      const label = scopeLabel(featureScope(checkedState, id), checkedState);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts].map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count || (a.label < b.label ? -1 : 1));
+  }, [brokenSet, checkedState]);
+  const showBroken = (item: BrokenItem) => {
+    locateFeature(item.nodeId);
+    patchUi({ panelTab: 'checks' });
+    info(`${scopeLabel(featureScope(state, item.nodeId), state)}: ${item.message}`);
+  };
+  const showNextBroken = () => {
+    const next = nextBroken(broken, ui.selection.length === 1 ? ui.selection[0]! : null);
+    if (next) showBroken(next);
+  };
+
   const { plans, blocked } = selectionOps;
   /** `soft`: being unable to run is not a mistake of the user's (nothing to undo), so the reason is shown as plain information. */
   const operations: Record<OperationId, OperationState & { run: () => void; soft?: true }> = {
@@ -285,8 +552,10 @@ export function Workspace({ session }: { session: Session }) {
     merge: { blocked: blocked.merge, run: () => perform(plans.merge) },
     flip: { blocked: blocked.flip, run: () => perform(plans.flip) },
     split: { blocked: blocked.split, run: () => perform(plans.split) },
-    undo: { blocked: history.canUndo() ? false : '되돌릴 변경이 없습니다.', soft: true, run: () => stepHistory('undo') },
-    redo: { blocked: history.canRedo() ? false : '다시 할 변경이 없습니다.', soft: true, run: () => stepHistory('redo') },
+    undo: { blocked: (outline ? outline.past.length > 0 : history.canUndo()) ? false : '되돌릴 변경이 없습니다.', soft: true, run: () => stepHistory('undo') },
+    redo: { blocked: (outline ? outline.future.length > 0 : history.canRedo()) ? false : '다시 할 변경이 없습니다.', soft: true, run: () => stepHistory('redo') },
+    'import-survey': { blocked: false, run: () => surveyInput.current?.click() },
+    'find-broken': { blocked: broken.length === 0 ? '끊긴 지점이 없습니다.' : false, count: broken.length, soft: true, run: showNextBroken },
     'attach-unattached': {
       blocked: ui.scope.kind !== 'building'
         ? `층을 먼저 보여 주세요(${toolLabel('select-building')}). 이 층의 연결 안 된 지점을 한 번에 잇습니다.`
@@ -301,6 +570,59 @@ export function Workspace({ session }: { session: Session }) {
     const op = operations[id];
     if (op.blocked === false) op.run();
     else setNotice({ text: op.blocked, tone: op.soft ? 'info' : 'error' });
+  };
+
+  // ---- 현장 기록 불러오기 (docs/mobile/SPEC-mobile.md 5) ----
+  useEffect(() => {
+    let alive = true;
+    fetchSurveyFiles().then(
+      (files) => {
+        if (alive) setSurveys(loadSurveys(files, session.campusId));
+      },
+      () => {}, // without the dev server's surveys API the editor works as before
+    );
+    return () => {
+      alive = false;
+    };
+  }, [session.campusId]);
+
+  /**
+   * Keep the survey's file and photos on this PC, then apply its changes as one history entry. A survey that cannot be
+   * kept changes nothing. Its elevation measurements (elevation_store.json) go into the campus's elevation store.
+   */
+  const importSurvey = async (file: File) => {
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await file.arrayBuffer());
+    } catch (err) {
+      return fail(`파일을 읽지 못했습니다(${Math.round(file.size / 1024 / 1024)} MB). ${(err as Error).message}`);
+    }
+    const read = readSurveyFile(bytes);
+    const refused = (r: { error: string; reasons: string[] }) => (r.reasons.length > 0 ? setDialog({ kind: 'survey-refused', ...r }) : fail(r.error));
+    if ('error' in read) return refused(read);
+    const planned = planSurveyImport(history.current(), session.campusId, read.survey, ctx);
+    if ('error' in planned) return refused(planned);
+    try {
+      await saveSurvey(read.survey.id, read.text, { names: read.photoNames, read: read.readPhoto });
+    } catch (err) {
+      return fail(`현장 기록을 저장하지 못해 지도에도 반영하지 않았습니다. ${(err as Error).message}`);
+    }
+    setSurveys((list) => withSurvey(list, read.survey));
+    // The barometer measurements in the zip go into the elevation store; when they cannot, or when the zip itself was
+    // missing something, the notice says so.
+    const extra: string[] = [];
+    let warn = read.missingPhotos.length > 0 || read.phoneMissingPhotos.length > 0 || read.ignored.length > 0;
+    if (read.elevationStore !== null) {
+      const heights = await elevation.importPhoneStore(read.elevationStore, read.elevationDirtyKeys);
+      extra.push(heights.line);
+      if (heights.warn) warn = true;
+    }
+    if (planned.plan && perform(planned.plan) !== undefined) return;
+    const lines = [...planned.lines, ...extra];
+    if (read.missingPhotos.length > 0) lines.push(`파일에 없는 사진이 ${read.missingPhotos.length}장 있습니다.`);
+    if (read.phoneMissingPhotos.length > 0) lines.push(`조사 앱이 내보낼 때 읽지 못한 사진 ${read.phoneMissingPhotos.length}장은 빠졌습니다: ${read.phoneMissingPhotos.slice(0, 3).join(', ')}${read.phoneMissingPhotos.length > 3 ? ' 외' : ''}`);
+    if (read.ignored.length > 0) lines.push(`읽지 않은 파일 ${read.ignored.length}개: ${read.ignored.slice(0, 3).join(', ')}${read.ignored.length > 3 ? ' 외' : ''}`);
+    setNotice({ text: lines.join(' '), tone: warn ? 'warn' : 'info' });
   };
 
   /** V on a selected elevator stop: edit its floors; otherwise the 엘리베이터 tool. */
@@ -328,19 +650,33 @@ export function Workspace({ session }: { session: Session }) {
 
   // ---- 우클릭 메뉴, 다른 층에 복사 (SPEC-v0.2 5.1 작업) ----
   /** The target joins the selection when it was not in it (only it is selected then); the menu opens at the pointer. */
-  const onContextMenu = ({ node, edge, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; x: number; y: number }) => {
-    const hit = node?.id ?? edge?.id;
+  const onContextMenu = ({ node, edge, building, breakline, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; building?: EditBuilding; breakline?: BreaklineHit; x: number; y: number }) => {
+    if (breakline) {
+      setCtxMenu(null);
+      if (lineSel !== breakline.id) selectLine(breakline.id);
+      return setLineMenu({ ...breakline, x, y });
+    }
+    setLineMenu(null);
+    const hit = node?.id ?? edge?.id ?? building?.id;
     if (!hit) return setCtxMenu(null);
     if (!ui.selection.includes(hit)) patchUi({ selection: [hit], panelTab: 'properties' });
     setCtxMenu({ x, y });
+  };
+  /** The one building selected while the right-click menu is open: it gets the building menu. */
+  const contextBuilding = ui.selection.length === 1 ? buildingById(state, ui.selection[0]!) : undefined;
+  /** A plan from the building menu: its error stays in the menu, success closes it. */
+  const runMenuPlan = (plan: PlanResult): string | undefined => {
+    const err = perform(plan);
+    if (err === undefined) setCtxMenu(null);
+    return err;
   };
   const menuEdit = (edits: MenuEdits) => {
     perform(planMenuEdit(state, ui.selection, edits));
     setCtxMenu(null);
   };
-  const runCopy = (levels: number[]): string | undefined => {
+  const runCopy = (levels: number[], joinSync: boolean): string | undefined => {
     if (!copyPanel) return undefined;
-    const plan = planCopyToFloors(state, ctx, copyPanel.ids, levels);
+    const plan = planCopyToFloors(state, ctx, copyPanel.ids, levels, { joinSync });
     const err = perform(plan);
     if (err === undefined && !isError(plan)) setCopyPanel({ ...copyPanel, result: [`${plan.annotation}: 완료했습니다.`, ...(plan.notices ?? [])] });
     return err;
@@ -384,7 +720,9 @@ export function Workspace({ session }: { session: Session }) {
 
   // ---- Keys (SPEC-v0.2 5.3). Tool and operation keys come from the registry; the rest belong to one tool or to the screen. ----
   const onEscape = () => {
-    if (copyPanel) setCopyPanel(null);
+    if (outline) cancelOutline();
+    else if (copyPanel) setCopyPanel(null);
+    else if (lineSel) selectLine(null);
     else if (ui.tool === 'strip' && strip.edgeIds.length > 0) setStrip(initialStrip);
     else if (ui.pickFrom) {
       patchUi({ pickFrom: null });
@@ -397,6 +735,11 @@ export function Workspace({ session }: { session: Session }) {
   const inStrip = ui.tool === 'strip';
   useShortcuts([
     { key: 's', mod: true, run: () => void onSave() },
+    // A selected 고도 단절선 is deleted with Delete / Backspace in any tool.
+    { key: 'delete', shift: false, when: lineSel !== null, run: () => lineSel && deleteLine(lineSel) },
+    { key: 'backspace', shift: false, when: lineSel !== null, run: () => lineSel && deleteLine(lineSel) },
+    { key: 'enter', mod: 'any', when: outline !== null, run: finishOutline },
+    { key: 'y', mod: true, when: outline !== null, run: () => stepHistory('redo') },
     ...OPERATIONS.flatMap((o) => [o.key, o.aliasKey].flatMap((k): KeyBinding[] => (
       k ? [{ ...parseKey(k), when: !o.onSelection || selecting, run: () => runOperation(o.id) }] : []
     ))),
@@ -419,6 +762,20 @@ export function Workspace({ session }: { session: Session }) {
   ]);
 
   // ---- What the map shows ----
+  /** 건물 3D (floors stacked by height: measured floor planes, then the building's floor height, then 3.9 m) and 지형 3D. */
+  const deck = useMemo(
+    () => (view3d || terrain3d ? deckLayers({
+      state, scope: ui.scope, grid: terrainGrid ?? null, terrain: terrain3d, buildings: view3d,
+      measured: (id) => measuredFloorLevels(elevation.estimates, id),
+      exaggeration, routes: routeLines, slopes: elevation.slopes,
+    }) : []),
+    [view3d, terrain3d, terrainGrid, state, ui.scope, elevation.estimates, exaggeration, routeLines, elevation.slopes],
+  );
+  /** 지형 3D: the relief as drawn, so clicks and drawing land where the cursor is seen on it. */
+  const surface = useMemo(
+    () => (terrain3d && terrainGrid ? { ground: groundOf(terrainGrid, exaggeration), top: terrainTop(terrainGrid) * exaggeration } : null),
+    [terrain3d, terrainGrid, exaggeration],
+  );
   const reportsOpen = ui.panelTab === 'reports';
   const highlight = useMemo(
     () => new Set([ui.pickFrom, ...ui.selection, ...(inStrip ? strip.edgeIds : []), ...(reportsOpen ? reports.highlight : [])].filter((id): id is string => !!id)),
@@ -473,7 +830,16 @@ export function Workspace({ session }: { session: Session }) {
 
   /** What each tab of the side panel shows. */
   const panels: Record<PanelTab, () => ReactNode> = {
-    properties: () => (
+    properties: () => (selectedLine ? (
+      <BreaklinePanel
+        line={selectedLine}
+        title={breaklineTitle(elevation.breaklines, selectedLine.id)}
+        onSide={(side) => setLineSide(selectedLine.id, side)}
+        onDrop={(dropM) => setLineDrop(selectedLine.id, dropM)}
+        onDelete={() => deleteLine(selectedLine.id)}
+        onClose={() => selectLine(null)}
+      />
+    ) : (
       <>
         {selectedBuilding && (
           <BuildingPanel
@@ -481,11 +847,15 @@ export function Workspace({ session }: { session: Session }) {
             onName={(name) => perform(planSetBuildingName(state, selectedBuilding.props.code, name))}
             onRename={renameSelected}
             onLevels={(levels) => perform(planSetBuildingLevels(selectedBuilding.props.code, levels))}
+            onPlinthFloors={(text) => perform(planSetPlinthFloors(state, selectedBuilding.props.code, text))}
             renameBlocked={(newCode) => renameBlocked(state, ctx, selectedBuilding.props.code, newCode)}
             removeBlocked={(level) => levelRemoveBlocked(state, selectedBuilding.props.code, level)}
+            onEditOutline={(level) => beginOutline({ buildingId: selectedBuilding.id, level })}
+            onResetOutline={(level) => perform(planResetOutline(state, selectedBuilding.id, level))}
           />
         )}
-        <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} />
+        <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))} />
+        {one && <SurveyNotes notes={surveyNotes(surveys, one.id, state)} />}
         {measure && measureTarget && (
           <MeasurePanel
             summary={measure}
@@ -495,18 +865,39 @@ export function Workspace({ session }: { session: Session }) {
           />
         )}
       </>
+    )),
+    checks: () => (
+      <ChecksPanel
+        result={checks}
+        onLocate={locateFeature}
+        broken={broken}
+        brokenFloors={brokenFloors}
+        onBroken={showBroken}
+        onNextBroken={showNextBroken}
+        onConnectNear={(item) => perform(planConnectNear(state, ctx, item))}
+      />
     ),
-    checks: () => <ChecksPanel result={checks} onLocate={locateFeature} />,
     routes: () => (
       <RoutePanel
         places={places}
         fromId={ui.routeFrom}
         toId={ui.routeTo}
+        fromPoint={ui.routeFromPoint !== null}
+        toPoint={ui.routeToPoint !== null}
+        picking={ui.routePick}
         results={routeResults}
+        shown={routeShown}
         nearest={nearest}
         warnings={graph?.warnings ?? []}
-        onPick={(end, id) => patchUi(end === 'from' ? { routeFrom: id } : { routeTo: id, nearest: null })}
-        onNearest={(kind) => patchUi({ nearest: kind })}
+        onPick={(end, id) => patchUi(end === 'from'
+          ? { routeFrom: id, routeFromPoint: null, routePick: null, routeShown: null }
+          : { routeTo: id, routeToPoint: null, routePick: null, routeShown: null, nearest: null })}
+        onDirect={(end) => {
+          patchUi({ routePick: ui.routePick === end ? null : end });
+          info(`지도에서 ${end === 'from' ? '출발' : '도착'} 위치를 눌러 주세요.`);
+        }}
+        onNearest={(kind) => patchUi({ nearest: kind, routeTo: null, routeToPoint: null, routePick: ui.routePick === 'to' ? null : ui.routePick })}
+        onToggle={(kind) => patchUi({ routeShown: routeShown.includes(kind) ? routeShown.filter((k) => k !== kind) : [...routeShown, kind] })}
       />
     ),
     reports: () => <ReportsPanel state={state} {...reports.panel} />,
@@ -514,10 +905,34 @@ export function Workspace({ session }: { session: Session }) {
 
   return (
     <div className="app">
+      <input
+        ref={surveyInput}
+        type="file"
+        accept=".zip,.json,application/zip,application/json"
+        className="visually-hidden-input"
+        aria-label="현장 기록 파일"
+        tabIndex={-1}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = ''; // the same file can be chosen again
+          if (file) void importSurvey(file);
+        }}
+      />
       <Toolbar
         ui={ui}
         operations={operations}
-        toolForm={inStrip ? (
+        toolForm={ui.tool === 'outline' && outline ? (
+          <OutlineForm
+            draft={outline}
+            buildingName={buildingById(state, outline.buildingId)?.props.name ?? outline.code}
+            ownOutline={outline.level !== null && buildingById(state, outline.buildingId)?.props.floor_outlines?.[String(outline.level)] !== undefined}
+            onUndo={() => stepHistory('undo')}
+            onRedo={() => stepHistory('redo')}
+            onReset={resetOutline}
+            onCancel={cancelOutline}
+            onDone={finishOutline}
+          />
+        ) : inStrip ? (
           <StripForm
             strip={strip}
             status={stripShown.status}
@@ -525,7 +940,7 @@ export function Workspace({ session }: { session: Session }) {
             onRun={runStrip}
             onReset={() => setStrip(initialStrip)}
           />
-        ) : undefined}
+        ) : ui.tool === 'breakline' ? <BreaklineForm lines={elevation.breaklines} selected={lineSel} onSelect={selectLine} onRemove={deleteLine} /> : undefined}
         campusName={session.meta.name}
         canSave={dirty || pendingMeasures > 0}
         saving={saving}
@@ -545,15 +960,34 @@ export function Workspace({ session }: { session: Session }) {
           basemap={ui.basemap}
           scope={ui.scope}
           highlight={highlight}
+          broken={brokenSet}
           canPick={canPick}
           routes={routeLines}
           focus={focus}
           hover={toolDef(ui.tool).attachPreview ? (pos, sc) => doorPreview(state, pos, sc) : null}
           previewShapes={stripShown.shapes}
           onPathDrawn={onPathDrawn}
+          onBreaklineDrawn={drawnLine}
+          breaklineEdit={breaklineEdit}
+          breaklines={elevation.breaklineShapes}
+          slopes={elevation.slopes}
           onPolygonDrawn={(ring) => setDialog({ kind: 'building', ring })}
-          onMapClick={(click) => onToolClick[ui.tool]?.(click)}
+          onMapClick={(click) => {
+            // 경로 테스트 → 직접 선택: the click is the route's end, snapped to the nearest edge there.
+            if (ui.panelTab === 'routes' && ui.routePick) {
+              const point = { at: click.position, scope: click.scope };
+              setNotice(null);
+              return patchUi(ui.routePick === 'from'
+                ? { routeFromPoint: point, routeFrom: null, routePick: null, routeShown: null }
+                : { routeToPoint: point, routeTo: null, routePick: null, routeShown: null, nearest: null });
+            }
+            onToolClick[ui.tool]?.(click);
+          }}
           onContextMenu={onContextMenu}
+          outline={outlineView}
+          tilt={view3d || terrain3d}
+          deck={deck}
+          surface={surface}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
           beginHandleDrag={beginHandleDrag}
@@ -587,16 +1021,30 @@ export function Workspace({ session }: { session: Session }) {
               onClose={() => setCopyPanel(null)}
             />
           ))}
+        <HistoryButtons blocked={{ undo: operations.undo.blocked, redo: operations.redo.blocked }} onRun={runOperation} />
+        <View3DButton on={view3d} onToggle={() => {
+          setView3d((v) => !v);
+          info(view3d ? '건물 3D를 껐습니다.' : '건물 3D입니다. 층을 층고대로 쌓았고, 지금 보는 층은 노란색입니다. 건물과 층을 고르면 그 층의 지점과 길, 다른 층과 잇는 엘리베이터·계단이 높이대로 보입니다.');
+        }} />
+        {(view3d || terrain3d) && <ExaggerationControl value={exaggeration} onChange={setExaggeration} />}
+        <TerrainButton
+          on={terrain3d}
+          source={terrain3d && terrainGrid ? terrainGrid.source : null}
+          range={terrain3d && terrainGrid ? terrainRange(terrainGrid) : null}
+          onToggle={toggleTerrain}
+        />
         {floorBuilding && !crossFrom && (
           <FloorPicker
             building={floorBuilding}
             scope={ui.scope}
             onPick={(level) => showFloor({ kind: 'building', buildingId: floorBuilding.id, level }, toolDef(ui.tool).cross)}
             onOutdoor={() => showFloor(OUTDOOR)}
+            broken={brokenByLevel(checkedState, brokenSet, floorBuilding.id)}
+            onOutline={ui.tool === 'outline' ? null : (level) => beginOutline({ buildingId: floorBuilding.id, level })}
           />
         )}
       </div>
-      <SidePanel tab={ui.panelTab} onTab={(panelTab) => patchUi({ panelTab })} badges={{ checks: checks.errors.length, reports: reports.badge }}>
+      <SidePanel tab={ui.panelTab} onTab={(panelTab) => patchUi({ panelTab, ...dropImported(), ...(panelTab !== 'routes' ? { routePick: null } : {}) })} badges={{ checks: checks.errors.length, reports: reports.badge }}>
         {panels[ui.panelTab]()}
       </SidePanel>
       <StatusBar
@@ -606,9 +1054,36 @@ export function Workspace({ session }: { session: Session }) {
         dirty={dirty}
         notice={notice}
         hint={ui.tool in TOOL_OPTIONS ? toolDef(ui.tool).hint : null}
+        elevation={{ count: elevation.count, busy: elevation.busy, onRecompute: elevation.recompute }}
       />
 
-      {ctxMenu && ui.selection.length > 0 && (
+      {ctxMenu && contextBuilding && (
+        <BuildingContextMenu
+          key={contextBuilding.id}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          summary={selectionSummary(state, ui.selection)}
+          name={contextBuilding.props.name}
+          levels={contextBuilding.props.levels}
+          floorHeight={contextBuilding.props.ext?.floor_height_m}
+          plinthFloors={plinthFloors(contextBuilding)}
+          onPlinthFloors={(text) => runMenuPlan(planSetPlinthFloors(state, contextBuilding.props.code, text))}
+          onName={(name) => runMenuPlan(planSetBuildingName(state, contextBuilding.props.code, name))}
+          onLevels={(levels) => runMenuPlan(planSetBuildingLevels(contextBuilding.props.code, levels))}
+          onFloorHeight={(text) => runMenuPlan(planSetFloorHeight(state, contextBuilding.props.code, text))}
+          onEditOutline={() => {
+            setCtxMenu(null);
+            beginOutline({ buildingId: contextBuilding.id, level: null });
+          }}
+          deleteBlocked={blocked.delete}
+          onDelete={() => {
+            setCtxMenu(null);
+            doDelete(false);
+          }}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {ctxMenu && ui.selection.length > 0 && !contextBuilding && (
         <ContextMenu
           x={ctxMenu.x}
           y={ctxMenu.y}
@@ -616,6 +1091,11 @@ export function Workspace({ session }: { session: Session }) {
           fields={menuFields(state, ui.selection)}
           copyBlocked={copyBlocked(state, ui.selection)}
           deleteBlocked={blocked.delete}
+          synced={syncedIn(state, ui.selection).length}
+          onUnsync={() => {
+            setCtxMenu(null);
+            perform(planUnsync(state, ui.selection));
+          }}
           onEdit={menuEdit}
           onCopy={() => {
             setCtxMenu(null);
@@ -628,6 +1108,45 @@ export function Workspace({ session }: { session: Session }) {
           onClose={() => setCtxMenu(null)}
         />
       )}
+      {lineMenu && (() => {
+        const line = elevation.breaklines.find((b) => b.id === lineMenu.id);
+        if (!line) return null;
+        const close = () => setLineMenu(null);
+        return (
+          <BreaklineContextMenu
+            key={`${lineMenu.id}:${lineMenu.x}:${lineMenu.y}`}
+            x={lineMenu.x}
+            y={lineMenu.y}
+            title={breaklineTitle(elevation.breaklines, line.id)}
+            lowSide={line.lowSide}
+            dropM={line.dropM}
+            points={line.coordinates.length}
+            point={lineMenu.point}
+            onSegment={lineMenu.segment !== undefined}
+            onDrop={(dropM) => {
+              close();
+              setLineDrop(line.id, dropM);
+            }}
+            onSide={(side) => {
+              close();
+              setLineSide(line.id, side);
+            }}
+            onAddPoint={() => {
+              close();
+              const seg = lineMenu.segment;
+              if (seg) breaklineEdit.onInsertPoint(line.id, seg.index, seg.at);
+            }}
+            onRemovePoint={() => {
+              close();
+              const left = lineMenu.point === undefined ? null : removeBreaklinePoint(breaklinePositions(line), lineMenu.point);
+              if (left && 'error' in left) fail(left.error);
+              else if (left) elevation.updateBreakline(line.id, { coordinates: left }, '꺾은점을 지웠습니다.');
+            }}
+            onDelete={() => deleteLine(line.id)}
+            onClose={close}
+          />
+        );
+      })()}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
       {dialog && (
         <AppDialogs

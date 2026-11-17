@@ -1,7 +1,7 @@
 // Route search (SPEC-v0.2 3.3-3.5). Follows graph links only: no floor numbers here.
 import { aStar, type PathFinder } from 'ngraph.path';
 import type { Graph, Link, Node, NodeId } from 'ngraph.graph';
-import { isEscalator, isProfile, isStepFreePassable, isStepFreeUnknown, perProfile, type Profile } from './costs.ts';
+import { gradeClass, isEscalator, isProfile, isStepFreePassable, isStepFreeUnknown, perProfile, type GradeClass, type Profile } from './costs.ts';
 import { straight, type CampusGraph, type GraphLinkData, type GraphNodeData } from './graph.ts';
 import { buildSteps, type Leg, type RouteStep } from './route-text.ts';
 import type { NodeFeature } from './types.ts';
@@ -12,6 +12,17 @@ export interface UncertainSegment {
   /** Campus node ids in travel direction. */
   from: string;
   to: string;
+}
+
+/** A walked edge on the route whose known grade is not gentle (costs.ts gradeClass), every profile. */
+export interface SlopeSegment {
+  edgeId: string;
+  /** Campus node ids in travel direction. */
+  from: string;
+  to: string;
+  /** Percent in travel direction (positive = uphill), one decimal. */
+  gradePct: number;
+  gradeClass: Exclude<GradeClass, 'gentle'>;
 }
 
 /** step_free found nothing, so this is the fewest_steps route (SPEC-v0.2 3.4). */
@@ -47,6 +58,8 @@ export interface Route {
   escalatorCount: number;
   steps: RouteStep[];
   uncertainSegments: UncertainSegment[];
+  /** Caution and steep slopes on the route, in order. Empty when no edge on it has a grade. */
+  slopeSegments: SlopeSegment[];
   fallback: RouteFallback | null;
 }
 
@@ -160,6 +173,7 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
   const edgeIds: string[] = [];
   const legs: Leg[] = [];
   const uncertainSegments: UncertainSegment[] = [];
+  const slopeSegments: SlopeSegment[] = [];
   let cost = 0;
   let timeSec = 0;
   let distanceM = 0;
@@ -181,11 +195,18 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
     if (data.kind !== 'walk' && data.kind !== 'hop') continue;
     const edge = data.edge.properties;
     edgeIds.push(data.edge.id);
-    if (data.kind === 'walk') distanceM += data.lengthM;
+    if (data.kind === 'walk') {
+      distanceM += data.lengthM;
+      const grade = data.gradePct;
+      const cls = grade === null ? 'gentle' : gradeClass(grade);
+      if (grade !== null && cls !== 'gentle') {
+        slopeSegments.push({ edgeId: data.edge.id, from: leg.from, to: leg.to, gradePct: round1(grade), gradeClass: cls });
+      }
+    }
     if (isEscalator(edge)) escalatorCount++;
     else if (edge.highway === 'steps') stairsCount++;
     else if (!isStepFreePassable(edge)) barrierCount++;
-    if (requested === 'step_free' && isStepFreeUnknown(edge)) {
+    if ((requested === 'step_free' || requested === 'wheelchair') && isStepFreeUnknown(edge)) {
       uncertainSegments.push({ edgeId: data.edge.id, from: leg.from, to: leg.to });
     }
   }
@@ -202,6 +223,7 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
     escalatorCount,
     steps: buildSteps(g, legs),
     uncertainSegments,
+    slopeSegments,
     fallback: used === requested ? null : fallbackInfo(stairsCount, escalatorCount, barrierCount),
   };
 }
@@ -278,7 +300,10 @@ function label(g: CampusGraph, id: string): string {
 }
 
 function kindWord(profile: Profile): string {
-  return profile === 'step_free' ? '계단 없는 경로' : '경로';
+  if (profile === 'step_free') return '계단 없는 경로';
+  if (profile === 'wheelchair') return '휠체어 경로';
+  if (profile === 'elevator_first') return '엘리베이터 우선 경로';
+  return '경로';
 }
 
 function round1(value: number): number {

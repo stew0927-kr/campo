@@ -21,18 +21,17 @@ const added = (before: EditState, after: EditState) => ({
 });
 
 describe('다른 층에 복사 (planCopyToFloors)', () => {
-  it('copies the flat part to another floor: reuses the point at the same place, skips stairs / elevator / their edges, one history entry', () => {
+  it('copies a floor to another: reuses the points at the same place (corridor, landing, elevator stop), skips the links between floors, one history entry', () => {
     const s = fixtureSession(3);
     const before = s.history.current();
     const plan = planCopyToFloors(before, s.ctx, whole, [4]);
     if (isError(plan)) throw new Error(plan.error);
-    // 4층 already has a corridor point where 3층's hall is (same coordinate): reused. bridge and north are new.
-    expect(plan.summary).toMatchObject({ nodesCreated: 2, nodesReused: 1, edgesCreated: 2, edgesExisting: 0, floors: 1 });
-    expect(plan.notices![0]).toBe('지점 2개 만듦, 1개 재사용, 구간 2개 만듦.');
+    // 4층 already has the hall point, the stair landing (1.1m away) and the stop of the same elevator: reused, and the
+    // corridor edges from the hall to them are there already. bridge and north are new.
+    expect(plan.summary).toMatchObject({ nodesCreated: 2, nodesReused: 3, edgesCreated: 2, edgesExisting: 2, stopsCreated: 0, landingsCreated: 0, floors: 1 });
+    expect(plan.notices![0]).toBe('지점 2개 만듦, 3개 재사용, 구간 2개 만듦.');
     const skipped = Object.fromEntries(plan.summary.skipped.map((k) => [k.label, k.count]));
-    expect(skipped).toEqual({
-      '계단 구간': 1, '엘리베이터 구간': 1, '계단참': 1, '엘리베이터 정차 지점': 1, '양 끝 지점이 함께 복사되지 않는 구간': 2,
-    });
+    expect(skipped).toEqual({ '계단 구간': 1, '엘리베이터 구간': 1 });
     expect(plan.notices!.join(' ')).toContain('엘리베이터·계단·에스컬레이터·연결통로 도구로 만들어 주세요');
 
     expect(runPlan(s.history, plan)).toMatchObject({ ok: true });
@@ -46,11 +45,19 @@ describe('다른 층에 복사 (planCopyToFloors)', () => {
       expect(n.props.rev).toBe(1);
       expect(/^n_A_4_corridor_[0-9a-z]{6}$/.test(n.id)).toBe(true);
     }
-    // same coordinate and same properties as the source, only the floor differs
+    // same coordinate and same properties as the source, only the floor differs; source and copy share a new sync group
     const bridge = made.nodes.find((n) => n.coord[0] === before.nodes['n_A_3_bridge']!.coord[0])!;
-    const { level: _l, rev: _r, ...rest } = bridge.props;
+    const { level: _l, rev: _r, sync_group: group, ...rest } = bridge.props;
     const { level: _l2, rev: _r2, ...src } = before.nodes['n_A_3_bridge']!.props;
     expect(rest).toEqual(src);
+    expect(group).toMatch(/^sg_[0-9a-z]{6}$/);
+    expect(after.nodes['n_A_3_bridge']!.props.sync_group).toBe(group);
+    // the reused points joined the groups of the points copied onto them (five groups, one per copied point)
+    for (const [from, to] of [['n_A_3_hall', 'n_A_4_hall'], ['n_A_3_stair', 'n_A_4_stair'], ['n_A_elevA_L3', 'n_A_elevA_L4']]) {
+      expect(after.nodes[to!]!.props.sync_group).toBe(after.nodes[from!]!.props.sync_group);
+      expect(after.nodes[to!]!.props.sync_group).toBeDefined();
+    }
+    expect(new Set(L3_NODES.map((id) => after.nodes[id]!.props.sync_group)).size).toBe(5);
     expect(bridge.coord).toEqual(before.nodes['n_A_3_bridge']!.coord);
     // an edge reaches the reused 4층 hall; nothing touches a 3층 point
     const hall4 = 'n_A_4_hall';
@@ -61,8 +68,13 @@ describe('다른 층에 복사 (planCopyToFloors)', () => {
       expect(e.props.rev).toBe(1);
     }
     expect(checkInvariants(after)).toEqual([]);
-    // the source floor is untouched
-    for (const id of [...L3_NODES, ...L3_EDGES]) expect(after.nodes[id] ?? after.edges[id]).toEqual(before.nodes[id] ?? before.edges[id]);
+    // the source floor is untouched but for the sync group of its points
+    for (const id of L3_EDGES) expect(after.edges[id]).toEqual(before.edges[id]);
+    for (const id of L3_NODES) {
+      const { sync_group: _g, rev, ...now } = after.nodes[id]!.props;
+      expect({ ...now, rev: rev - 1 }).toEqual(before.nodes[id]!.props);
+      expect(after.nodes[id]!.coord).toEqual(before.nodes[id]!.coord);
+    }
     // one Ctrl+Z
     expect(s.history.size()).toBe(1);
     s.history.undo();
@@ -103,7 +115,8 @@ describe('다른 층에 복사 (planCopyToFloors)', () => {
     expect(made[0]!.props.level).toBe(3);
     expect('room_ref' in made[0]!.props).toBe(false);
     expect(made[0]!.props.door_role).toBe(src.props.door_role);
-    expect(after.nodes['n_A_4_408door']).toEqual(src);
+    expect(after.nodes['n_A_4_408door']!.props.room_ref).toBe('408');
+    expect(after.nodes['n_A_4_408door']!.props.sync_group).toBe(made[0]!.props.sync_group);
   });
 
   it('copying twice: the points are reused and the edges that exist are not made again', () => {
@@ -144,7 +157,8 @@ describe('다른 층에 복사: what is blocked', () => {
   it('only edges, only elevator / stairs, points of two floors', () => {
     const s = st();
     expect(copyBlocked(s, ['e_A_3_hall__A_3_bridge'])).toMatch(/구간만/);
-    expect(copyBlocked(s, ['n_A_elevA_L3', 'n_A_3_stair'])).toMatch(/복사할 수 있는 지점이 없습니다/);
+    expect(copyBlocked(s, ['n_A_elevA_L3', 'n_A_3_stair'])).toBe(false); // landings and elevator stops are copied
+    expect(copyBlocked(s, ['n_A_4_north'])).toMatch(/복사할 수 있는 지점이 없습니다/); // an entrance is not
     expect(copyBlocked(s, ['n_A_3_hall', 'n_A_4_hall'])).toMatch(/한 층의 지점과 구간만/);
   });
 
@@ -156,7 +170,7 @@ describe('다른 층에 복사: what is blocked', () => {
     const src = copySource(s, whole);
     if ('error' in src) throw new Error(src.error);
     expect(src).toMatchObject({ buildingId: 'bldg_A', level: 3 });
-    expect(src.nodes.map((n) => n.id).sort()).toEqual(['n_A_3_bridge', 'n_A_3_hall', 'n_A_3_north']);
+    expect(src.nodes.map((n) => n.id).sort()).toEqual(['n_A_3_bridge', 'n_A_3_hall', 'n_A_3_north', 'n_A_3_stair', 'n_A_elevA_L3']);
   });
 });
 

@@ -52,21 +52,29 @@ button, select, input { font: inherit; color: inherit; }
 .toolbar { grid-area: toolbar; background: var(--surface); border-bottom: 1px solid var(--rule); }
 .toolbar-main {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px 14px;
+  flex-direction: column;
+  gap: 8px;
   padding: var(--gap) calc(var(--gap) * 2);
 }
+/* Two fixed rows: (1) the brand and the drawing tools, (2) the edit operations, the macros and the end controls.
+   A row never wraps its groups (a button label never drops to a line of its own): when the window is too narrow
+   the drawing tools scroll sideways inside their box, and only the second row may wrap, as whole groups. */
+.toolbar-row { display: flex; align-items: flex-end; gap: 10px 14px; min-width: 0; }
+.toolbar-row-draw { flex-wrap: nowrap; }
+.toolbar-row-draw .toolbar-section { flex: 1 1 0; min-width: 0; }
+.toolbar-row-ops { flex-wrap: wrap; }
 /* One section per toolbar group (registry.ts TOOLBAR_GROUPS): a caption, then its buttons. Each group has its own accent. */
 .toolbar-section { display: flex; flex-direction: column; gap: 3px; min-width: 0; --group: var(--ink); }
 .toolbar-section[data-group="draw"] { --group: var(--footway); }
 .toolbar-section[data-group="macro"] { --group: var(--elevator); }
 .toolbar-caption { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; }
 .toolbar-caption::before { content: ""; width: 6px; height: 6px; border-radius: 2px; background: var(--group); }
-.toolbar-section .toolbar-group { flex-wrap: wrap; border-color: color-mix(in srgb, var(--group) 40%, var(--rule)); }
+.toolbar-section .toolbar-group { flex-wrap: nowrap; border-color: color-mix(in srgb, var(--group) 40%, var(--rule)); }
 .toolbar-section[data-group="macro"] .toolbar-group { background: color-mix(in srgb, var(--group) 7%, var(--surface)); }
 .toolbar-section .tool[aria-pressed="true"] { background: var(--group); }
-.toolbar-end { display: flex; align-items: center; gap: var(--gap); margin-left: auto; }
+.toolbar-end { display: flex; flex: none; align-items: center; gap: var(--gap); margin-left: auto; white-space: nowrap; }
+.toolbar-end .basemap { display: flex; align-items: center; gap: 6px; }
+.toolbar-end .basemap select { max-width: 190px; }
 .toolbar-active { padding-right: calc(var(--gap) * 2); border-right: 1px solid var(--rule); font-weight: 600; }
 .toolbar-options {
   display: flex;
@@ -77,14 +85,20 @@ button, select, input { font: inherit; color: inherit; }
   border-top: 1px solid var(--rule);
   background: var(--chrome);
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
   white-space: nowrap;
+  box-sizing: border-box;
+  flex: none;
 }
 .tool-hint { margin: 0; color: var(--muted); }
-.brand { align-self: center; margin: 0 var(--gap) 0 0; font-size: var(--text-l); font-weight: 700; letter-spacing: -0.01em; }
+.brand { flex: none; align-self: center; margin: 0 var(--gap) 0 0; white-space: nowrap; font-size: var(--text-l); font-weight: 700; letter-spacing: -0.01em; }
 .brand-campus { margin-left: 6px; font-weight: 400; color: var(--muted); }
 
 .toolbar-group { display: flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
-.tool { padding: 5px 12px; border: 0; background: transparent; cursor: pointer; }
+.toolbar-row-draw .toolbar-group { overflow-x: auto; scrollbar-width: thin; }
+.toolbar-row-draw .tool { padding: 5px 7px; }
+.tool { flex: none; padding: 5px 10px; border: 0; background: transparent; cursor: pointer; white-space: nowrap; }
 .tool + .tool { border-left: 1px solid var(--rule); }
 .tool[aria-pressed="true"] { background: var(--ink); color: #fff; }
 .tool:disabled { color: var(--muted); opacity: 0.5; cursor: not-allowed; }
@@ -274,6 +288,7 @@ button.check-item:hover { background: var(--chrome); }
   .floors { top: auto; bottom: 36px; }
   .panel { border-left: 0; border-top: 1px solid var(--rule); max-height: 40vh; }
   .toolbar-end { margin-left: 0; }
+  .toolbar-row-draw { flex-wrap: wrap; }
 }
 
 /* ---- Scope next to the cursor, tool forms, 연결 안 된 지점 ---- */
@@ -379,6 +394,17 @@ button.check-item:hover { background: var(--chrome); }
 .copy-result { margin: 0; padding-left: 16px; }
 .copy-panel .field-help { margin: 0; }
 
+/* ---- 현장 기록 ---- */
+.survey-notes { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.survey-notes-title { margin: 0; font-size: var(--text-l); }
+.survey-note { display: flex; flex-direction: column; gap: 4px; }
+.survey-note-head { margin: 0; color: var(--muted); font-size: var(--text-s); word-break: break-all; }
+.survey-note-line { margin: 0; }
+.survey-photo { display: block; }
+.survey-photo img { display: block; width: 100%; max-height: 220px; object-fit: cover; border: 1px solid var(--rule); border-radius: 6px; }
+.survey-notes .field-help { margin: 0; }
+.visually-hidden-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
 /* ---- 제보 ---- */
 .reports-panel { display: flex; flex-direction: column; gap: 10px; }
 .reports-panel .field-help { margin: 0; }
@@ -426,3 +452,256 @@ button.check-item:hover { background: var(--chrome); }
 .level-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 6px; padding: 0; list-style: none; }
 .level-chip { display: flex; align-items: center; gap: 2px; padding: 2px 4px 2px 8px; border: 1px solid var(--rule); border-radius: 12px; background: var(--chrome); color: var(--ink); }
 .level-chip button { padding: 0 6px; border: 0; background: transparent; font-size: var(--text-l); line-height: 1.2; }
+
+/* ---- 출입 정보 (개방시간 / 폐쇄기간 / 개방조건), 층 연동, 끊긴 지점 찾기 ---- */
+:root { --sync: #0b7285; --broken: #d6336c; }
+.access { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--rule); }
+.access legend { padding: 0; font-weight: 600; }
+.access-field { display: flex; flex-direction: column; gap: 5px; }
+.access-field label { display: flex; flex-direction: column; gap: 3px; }
+.access-field input { padding: 5px 7px; border: 1px solid var(--rule); border-radius: 5px; font: inherit; color: var(--ink); background: var(--surface); }
+.presets { display: flex; flex-wrap: wrap; gap: 4px; }
+.preset { padding: 2px 9px; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; font-size: var(--text-s); cursor: pointer; }
+.preset:hover { background: var(--chrome); }
+.preset[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: #fff; }
+.preset-clear { border-style: dashed; color: var(--muted); }
+.sync-note { padding-left: 8px; border-left: 3px solid var(--sync); }
+.copy-option { display: flex; align-items: center; gap: 6px; }
+.survey-note-moved { color: var(--muted); }
+
+.check-broken .check-item { border-left-color: var(--broken); }
+.broken-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.broken-head h3 { margin: 0; }
+.broken-next { padding: 4px 10px; border: 1px solid var(--broken); border-radius: 6px; background: var(--surface); color: var(--broken); font: inherit; font-weight: 600; cursor: pointer; }
+.broken-next:hover:not(:disabled) { background: var(--broken); color: #fff; }
+.broken-next:disabled { border-color: var(--rule); color: var(--muted); cursor: not-allowed; }
+.broken-ring { display: inline-block; width: 11px; height: 11px; margin-right: 6px; border: 2.5px solid var(--broken); border-radius: 50%; vertical-align: -1px; }
+.check-section ul.broken-floors { flex-direction: row; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.broken-floors li { padding: 1px 8px; border-radius: 999px; background: var(--chrome); font-size: var(--text-s); }
+.broken-floors b { margin-left: 2px; color: var(--broken); }
+.broken-row { display: flex; flex-direction: column; }
+.broken-row .check-item { width: 100%; }
+.broken-fix { align-self: flex-start; margin: 3px 0 4px 11px; padding: 3px 10px; border: 1px solid var(--footway); border-radius: 6px; background: var(--footway); color: #fff; font: inherit; font-size: var(--text-s); font-weight: 600; cursor: pointer; }
+.broken-fix:hover { filter: brightness(1.1); }
+.floor-broken {
+  position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: var(--broken); color: #fff; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+}
+
+/* 되돌리기 / 다시 하기: two floating round buttons at the map's upper left, right of the zoom control. */
+.history { position: absolute; top: 10px; left: 52px; z-index: 2; display: flex; gap: 8px; }
+.history-btn {
+  width: 36px; height: 36px; padding: 0; border-radius: 50%; display: grid; place-items: center;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--rule); cursor: pointer;
+  box-shadow: 0 2px 8px rgb(30 41 51 / 0.18); transition: box-shadow 0.12s, opacity 0.12s, transform 0.12s;
+}
+.history-btn:hover { box-shadow: 0 3px 12px rgb(30 41 51 / 0.26); }
+.history-btn:active { transform: scale(0.95); }
+.history-btn:focus-visible { outline: 2px solid #0b5fff; outline-offset: 2px; }
+.history-btn[aria-disabled="true"] { opacity: 0.38; box-shadow: none; cursor: default; }
+
+/* 경로 테스트: the third route, the wheelchair route, 직접 선택 and the 지도에 표시 toggles. */
+:root { --route-elevator: #e67700; --route-wheelchair: #5f3dc4; }
+.route-elevator { --route: var(--route-elevator); }
+.route-wheelchair { --route: var(--route-wheelchair); }
+.route-end { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 6px; }
+.route-end .field { margin: 0; }
+.route-direct {
+  height: 30px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 15px; background: var(--surface);
+  font-size: var(--text-s); white-space: nowrap; cursor: pointer;
+}
+.route-direct[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.route-hint { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: var(--text-s); }
+.route-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.route-head h3 { margin: 0; }
+.route-badge { margin-left: 4px; padding: 1px 6px; border-radius: 9px; background: var(--route); color: #fff; font-size: 11px; font-weight: 600; }
+/* A route card is its own switch: raised and lit while its route is on the map, flat and dimmed while off. */
+.route-switch {
+  cursor: pointer; user-select: none;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+.route-switch:focus-visible { outline: 2px solid var(--route); outline-offset: 2px; }
+.route-on {
+  background: color-mix(in srgb, var(--route) 5%, var(--surface));
+  border-color: color-mix(in srgb, var(--route) 45%, var(--rule));
+  box-shadow: 0 1px 2px rgb(30 41 51 / 0.08), 0 4px 14px color-mix(in srgb, var(--route) 22%, transparent);
+  transform: translateY(-1px);
+}
+.route-on:hover { box-shadow: 0 2px 4px rgb(30 41 51 / 0.1), 0 8px 20px color-mix(in srgb, var(--route) 28%, transparent); }
+.route-off {
+  background: var(--chrome); border-top-color: color-mix(in srgb, var(--route) 35%, var(--surface));
+  box-shadow: inset 0 1px 3px rgb(30 41 51 / 0.1);
+}
+.route-off:hover { background: color-mix(in srgb, var(--route) 4%, var(--chrome)); }
+.route-off .route-stats dd, .route-off .route-steps { color: var(--muted); }
+.route-off .route-swatch { opacity: 0.45; }
+.route-switch:active { transform: translateY(0); }
+.route-state { flex: none; font-size: 11px; font-weight: 600; color: var(--muted); }
+.route-on .route-state { color: var(--route); }
+.route-on .route-state::before { content: "●"; margin-right: 4px; font-size: 9px; vertical-align: 1px; }
+
+/* 출입 정보: folded behind a chevron (open when the point already has any). */
+.disclosure > legend { padding: 0; }
+.disclosure-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px; border: 0; border-radius: 4px;
+  background: none; color: var(--ink); font: inherit; font-weight: 600; cursor: pointer;
+}
+.disclosure-toggle:hover { background: var(--chrome); }
+.disclosure-toggle:focus-visible { outline: 2px solid #0b5fff; outline-offset: 1px; }
+.disclosure-chevron { transition: transform 0.15s ease; }
+.disclosure-toggle[aria-expanded="true"] .disclosure-chevron { transform: rotate(90deg); }
+.disclosure-summary { color: var(--muted); font-size: var(--text-s); font-weight: 400; }
+.disclosure:has(.disclosure-toggle[aria-expanded="false"]) { padding-bottom: 4px; }
+.disclosure-body { display: flex; flex-direction: column; gap: inherit; }
+
+/* ---- 고도: 평지 확인 · 단절선, 계산 값, 경사 구간, 고도 단절선, 다시 계산 ---- */
+:root { --breakline: #6b4423; --slope-caution: #d9a100; --slope-steep: #c92a2a; --grade-gentle: #1f8f68; }
+.elev { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 10px 12px 12px; border: 1px solid var(--rule); border-radius: 6px; }
+.elev-legend { padding: 0 4px; font-weight: 600; }
+.elev-flag > span { display: flex; flex-direction: column; gap: 1px; }
+.elev-help { color: var(--muted); font-size: var(--text-s); }
+.elev-flag.is-blocked { color: var(--muted); cursor: not-allowed; }
+.elev-values { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--rule); }
+.elev-badge {
+  display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px; border-radius: 4px;
+  background: var(--chrome); font-variant-numeric: tabular-nums; font-weight: 600; cursor: default;
+}
+.elev-badge b { color: var(--muted); font-size: 11px; font-weight: 500; }
+.elev-badge i { font-style: normal; font-size: 11px; }
+.elev-grade { --grade: var(--grade-gentle); box-shadow: inset 3px 0 0 var(--grade); }
+.elev-grade i { color: var(--grade); }
+.grade-caution { --grade: #a87700; }
+.grade-steep { --grade: var(--slope-steep); }
+
+.route-slope { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; font-size: var(--text-s); }
+.slope-chip { padding: 1px 8px 1px 18px; border-radius: 9px; font-weight: 600; position: relative; background: var(--chrome); }
+.slope-chip::before {
+  content: ""; position: absolute; left: 6px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 1px;
+  background: repeating-linear-gradient(90deg, var(--slope) 0 2px, transparent 2px 4px);
+}
+.slope-caution { --slope: var(--slope-caution); color: #7a5600; }
+.slope-steep { --slope: var(--slope-steep); color: var(--slope-steep); }
+.slope-max { color: var(--muted); }
+.route-steps li.step-steep::marker { color: var(--slope-steep); font-weight: 700; }
+
+/* 고도 상태 in the dark status bar: fresh (a quiet check), stale (an amber dot and the live button), busy. */
+.status-elev { display: inline-flex; align-items: center; gap: 6px; color: #b9c3cc; }
+.status-elev-mark { display: inline-grid; place-items: center; width: 12px; height: 12px; }
+.status-elev[data-state="fresh"] .status-elev-mark { color: #8fd9b0; }
+.status-elev[data-state="stale"], .status-elev[data-state="busy"] { color: #ffe08a; }
+.status-elev[data-state="busy"] .status-elev-mark { animation: elev-pulse 1.2s ease-in-out infinite; }
+@keyframes elev-pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .status-elev[data-state="busy"] .status-elev-mark { animation: none; } }
+.status-elev-run {
+  height: 20px; margin-left: 2px; padding: 0 10px; border: 1px solid currentColor; border-radius: 10px; background: transparent;
+  color: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.status-elev[data-state="stale"] .status-elev-run:hover { background: #ffe08a; color: var(--ink); }
+.status-elev-run[aria-disabled="true"] { border-color: #5b6875; color: #8e9aa6; cursor: help; }
+.status-elev[data-state="busy"] .status-elev-run { cursor: progress; }
+.status-elev-run:focus-visible { outline: 2px solid #ffe08a; outline-offset: 1px; }
+
+/* 고도 단절선 options row: the wall swatch and the one-line meaning, then the drawing order, then the lines drawn. */
+.breakline-form { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.breakline-what { display: inline-flex; align-items: center; gap: 7px; margin: 0; color: var(--ink); }
+.breakline-swatch { flex: none; color: var(--breakline); }
+.breakline-steps { display: flex; align-items: center; gap: 4px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: var(--text-s); }
+.breakline-steps li { display: inline-flex; align-items: center; gap: 5px; }
+.breakline-steps li + li::before { content: ""; width: 10px; height: 1px; margin-right: 3px; background: var(--rule); }
+.breakline-step-n {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--breakline); color: #fff; font-size: 10px; font-weight: 700;
+}
+.breakline-esc kbd { padding: 0 4px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); font: inherit; font-size: 10px; }
+.breakline-list { display: flex; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.breakline-list li { display: inline-flex; align-items: center; gap: 5px; padding: 1px 2px 1px 8px; border: 1px solid var(--rule); border-radius: 12px; background: var(--surface); font-size: var(--text-s); }
+.breakline-remove { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.breakline-remove:hover { background: var(--chrome); color: var(--danger); }
+.breakline-list li[data-selected] { border-color: var(--breakline); box-shadow: 0 0 0 2px #ffd43b; }
+.breakline-pick { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.breakline-todo { color: var(--danger); }
+.breakline-panel { display: grid; gap: 10px; }
+.breakline-panel h3 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: var(--text-m, 14px); }
+.breakline-panel .field-help { margin: 0; }
+.breakline-sides { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 8px; border: 1px solid var(--rule); border-radius: 6px; }
+.breakline-sides legend { padding: 0 4px; font-size: var(--text-s); color: var(--muted); }
+.breakline-sides button[aria-pressed="true"] { border-color: var(--breakline); background: var(--breakline); color: #fff; }
+.breakline-drop { display: grid; gap: 4px; font-size: var(--text-s); }
+.breakline-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.breakline-actions .danger { color: var(--danger); }
+.breakline-actions kbd { margin-left: 4px; font-size: 10px; }
+
+/* ---- 외곽선 수정: one indigo for the draft on the map (layers.ts OUTLINE_COLOR), its row, and the way in ---- */
+:root { --outline-edit: #3b5bdb; }
+.map[data-outline="true"] .maplibregl-canvas { cursor: default; }
+.outline-form { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.outline-what { display: inline-flex; align-items: baseline; gap: 8px; margin: 0; }
+.outline-swatch { align-self: center; width: 14px; height: 12px; border: 2px solid var(--outline-edit); border-radius: 2px; background: color-mix(in srgb, var(--outline-edit) 14%, transparent); }
+.outline-scope { color: var(--muted); font-size: var(--text-s); }
+.outline-how { display: flex; gap: 10px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: var(--text-s); }
+.outline-how kbd { margin-right: 3px; padding: 0 5px; border: 1px solid var(--rule); border-radius: 3px; background: var(--surface); color: var(--ink); font: inherit; font-size: 11px; }
+.outline-actions { display: flex; gap: 6px; margin-left: auto; }
+.outline-actions button { height: 28px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.outline-actions button[aria-disabled="true"] { color: var(--muted); opacity: 0.55; cursor: default; }
+.outline-actions .outline-done { border-color: var(--outline-edit); background: var(--outline-edit); color: #fff; font-weight: 600; }
+.outline-actions .outline-done:hover { background: color-mix(in srgb, var(--outline-edit) 85%, #000); }
+.outline-actions button:focus-visible { outline: 2px solid var(--outline-edit); outline-offset: 1px; }
+.floors-outline {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--outline-edit);
+  border-radius: 6px; background: var(--surface); color: var(--outline-edit); font-size: var(--text-s); font-weight: 600; cursor: pointer;
+}
+.floors-outline:hover { background: color-mix(in srgb, var(--outline-edit) 10%, var(--surface)); }
+.outline-floors { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
+.outline-floors li { display: flex; align-items: center; gap: 6px; }
+.outline-floors li span { min-width: 48px; font-weight: 600; color: var(--ink); }
+
+/* 3D 보기: a pill beside 되돌리기 / 다시 하기. Off it is a plain floating control; on it fills with the ink colour and glows
+   in the floor-shown yellow, the same yellow as the floor it lifts out of the stack. */
+.view3d-btn {
+  position: absolute; top: 10px; left: 148px; z-index: 2; height: 36px; padding: 0 12px 0 9px; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--rule); border-radius: 18px; background: var(--surface); color: var(--ink); cursor: pointer;
+  box-shadow: 0 2px 8px rgb(30 41 51 / 0.18); transition: background 0.15s, color 0.15s, box-shadow 0.15s, transform 0.12s;
+}
+.view3d-label { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; }
+.view3d-btn:hover { box-shadow: 0 3px 12px rgb(30 41 51 / 0.26); }
+.view3d-btn:active { transform: scale(0.96); }
+.view3d-btn:focus-visible { outline: 2px solid #0b5fff; outline-offset: 2px; }
+.view3d-btn[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #f2b705; box-shadow: 0 0 0 3px rgb(242 183 5 / 0.35), 0 4px 14px rgb(30 41 51 / 0.35); }
+.view3d-btn[aria-pressed="true"] .view3d-label { color: #fff; }
+@media (prefers-reduced-motion: reduce) { .view3d-btn { transition: none; } }
+
+/* 지형 3D: beside 건물 3D, the same pill; on, it glows in the relief's clay colour instead of the floor yellow. */
+.terrain3d { position: absolute; top: 10px; left: 226px; z-index: 2; display: flex; align-items: center; gap: 8px; }
+.terrain3d .terrain3d-btn { position: static; }
+.terrain3d-btn[aria-pressed="true"] { color: #e0b48c; box-shadow: 0 0 0 3px rgb(181 141 108 / 0.4), 0 4px 14px rgb(30 41 51 / 0.35); }
+.terrain3d-note {
+  margin: 0; padding: 4px 10px; border-radius: 12px; background: rgb(255 255 255 / 0.92); border: 1px solid var(--rule);
+  color: var(--ink); font-size: var(--text-s); font-weight: 600; box-shadow: 0 2px 8px rgb(30 41 51 / 0.14);
+}
+.terrain3d-note span { color: var(--muted); font-weight: 500; }
+.terrain3d-sample { border-color: #e8590c; }
+.terrain3d-sample span:last-child { color: #c2410c; }
+/* 높이 과장: a small card in the lower left, just above the compass and the scale bar, only while a 3D view is on. */
+.exaggeration {
+  position: absolute; left: 10px; bottom: 54px; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border: 1px solid var(--rule); border-radius: 10px; background: rgb(255 255 255 / 0.94); color: var(--ink);
+  box-shadow: 0 2px 8px rgb(30 41 51 / 0.16); font-size: var(--text-s);
+}
+.exaggeration-title { font-weight: 700; white-space: nowrap; }
+.exaggeration input[type="range"] { width: 120px; accent-color: #b58d6c; cursor: pointer; }
+.exaggeration-num { display: inline-flex; align-items: center; gap: 2px; font-weight: 600; }
+.exaggeration-num input {
+  width: 48px; height: 26px; padding: 0 4px; border: 1px solid var(--rule); border-radius: 5px; background: var(--surface);
+  color: var(--ink); font: inherit; font-variant-numeric: tabular-nums; text-align: right;
+}
+.exaggeration-num input:focus-visible, .exaggeration input[type="range"]:focus-visible, .exaggeration-reset:focus-visible { outline: 2px solid #0b5fff; outline-offset: 1px; }
+.exaggeration-reset {
+  height: 26px; padding: 0 8px; border: 1px solid var(--rule); border-radius: 5px; background: var(--surface); color: var(--muted);
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.exaggeration-reset:hover { color: var(--ink); }
+/* The 3D views' canvas (deck.gl) lies over the map's own drawing but under every control: the zoom and compass, the
+   floor picker and the floating buttons stay usable. */
+/* deck.gl puts its canvas in the top-left control slot, after the zoom buttons: lift them over it. */
+.map .maplibregl-ctrl-top-left > .maplibregl-ctrl { position: relative; z-index: 1; }
+.floors { z-index: 3; }

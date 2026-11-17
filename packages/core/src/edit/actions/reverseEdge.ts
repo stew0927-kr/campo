@@ -10,7 +10,8 @@ function swap(props: Record<string, unknown>, a: string, b: string): void {
 /**
  * Turn edges around (SPEC-v0.2 4.1): from / to and the order of vertices, and everything that is relative to the drawn
  * direction: conveying forward ↔ backward (reversible stays), incline up ↔ down, level_from ↔ level_to and
- * building_from ↔ building_to (they describe the from and to end). bidirectional and every other property stay.
+ * building_from ↔ building_to (they describe the from and to end), and the sign of elev_diff_m and grade_pct (height of
+ * to minus from). bidirectional, elev_sigma_m and every other property stay.
  */
 export function reverseEdge(ids: readonly string[]): Action {
   const list = [...new Set(ids)];
@@ -28,6 +29,10 @@ export function reverseEdge(ids: readonly string[]): Action {
         else if (p['conveying'] === 'backward') p['conveying'] = 'forward';
         if (p['incline'] === 'up') p['incline'] = 'down';
         else if (p['incline'] === 'down') p['incline'] = 'up';
+        for (const k of ['elev_diff_m', 'grade_pct']) {
+          const v = p[k];
+          if (typeof v === 'number' && v !== 0) p[k] = -v;
+        }
         edge.vertices = [...edge.vertices].reverse();
         bumpRev(edge.props);
       }

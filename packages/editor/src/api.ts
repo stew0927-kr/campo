@@ -1,4 +1,5 @@
 import type { LoadedFile } from '@campo/core';
+import type { TerrainGrid } from './model/terrain3d.ts';
 
 export async function fetchCampusFiles(campusId: string): Promise<LoadedFile[]> {
   const res = await fetch(`/api/campuses/${encodeURIComponent(campusId)}`);
@@ -44,6 +45,61 @@ export async function saveReportFiles(files: Record<string, string>): Promise<st
   return body.written;
 }
 
+// ---- 현장 기록 (dev server only) ----
+
+export async function fetchSurveyFiles(): Promise<{ id: string; text: string }[]> {
+  const res = await fetch('/api/surveys');
+  const body = (await res.json()) as { surveys?: { id: string; text: string }[]; error?: string };
+  if (!res.ok || !body.surveys) throw new Error(body.error ?? `현장 기록을 불러오지 못했습니다 (HTTP ${res.status}).`);
+  return body.surveys;
+}
+
+/** Keep an imported survey under data/surveys/<id>/: survey.json and its photos (base64 by file name). */
+/**
+ * Keep an imported survey on this PC: survey.json first, then each photo in a request of its own as raw bytes (a walk's
+ * photos as one base64 JSON body ran the tab and the dev server out of memory). A photo that fails stops the save with
+ * an error that says how far it got; importing the same file again is a retry that sends the photos again.
+ */
+export async function saveSurvey(
+  id: string,
+  text: string,
+  photos: { names: readonly string[]; read: (name: string) => Uint8Array } = { names: [], read: () => new Uint8Array() },
+): Promise<string[]> {
+  const res = await fetch(`/api/surveys/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, photos: {} }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { written?: string[]; error?: string };
+  if (!res.ok || !body.written) throw new Error(body.error ?? `현장 기록을 저장하지 못했습니다 (HTTP ${res.status}).`);
+  const written = [...body.written];
+  let done = 0;
+  const stopped = (why: string) => new Error(`${why} 사진 ${photos.names.length}장 중 ${done}장을 저장했습니다. 같은 파일을 다시 불러오면 이어서 저장합니다.`);
+  for (const name of photos.names) {
+    let bytes: Uint8Array;
+    try {
+      bytes = photos.read(name);
+    } catch (err) {
+      throw stopped(`사진 ${name}을(를) 파일에서 꺼내지 못했습니다(${(err as Error).message}).`);
+    }
+    let r: Response;
+    try {
+      r = await fetch(`/api/surveys/${encodeURIComponent(id)}/photos/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: new Blob([bytes as Uint8Array<ArrayBuffer>]),
+      });
+    } catch (err) {
+      throw stopped(`사진 ${name}을(를) 보내지 못했습니다(${(err as Error).message}).`);
+    }
+    const b = (await r.json().catch(() => ({}))) as { written?: string[]; error?: string };
+    if (!r.ok || !b.written) throw stopped(b.error ?? `사진 ${name}을(를) 저장하지 못했습니다 (HTTP ${r.status}).`);
+    written.push(...b.written);
+    done++;
+  }
+  return written;
+}
+
 /** Write changesets/<fileName>. */
 export async function saveChangeset(fileName: string, text: string): Promise<{ written: boolean }> {
   const res = await fetch(`/api/changesets/${encodeURIComponent(fileName)}`, {
@@ -54,4 +110,49 @@ export async function saveChangeset(fileName: string, text: string): Promise<{ w
   const body = (await res.json()) as { written?: boolean; error?: string };
   if (!res.ok || body.written === undefined) throw new Error(body.error ?? `changeset 파일을 저장하지 못했습니다 (HTTP ${res.status}).`);
   return { written: body.written };
+}
+
+// ---- 고도 (dev server only, server/elevation-api.ts) ----
+
+export interface ElevationInfo {
+  /** The elevation store text (break lines and measured Δh), or null when there is none yet. */
+  store: string | null;
+  solver: { ready: boolean; missing: string[] };
+}
+
+/** 지형 3D's height grid: the solver's corrected grid, else the DEM, else null (the view then offers a sample). */
+export async function fetchTerrain(campusId: string): Promise<TerrainGrid | null> {
+  const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/terrain`);
+  const body = (await res.json()) as { grid?: TerrainGrid | null; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `고도 그리드를 불러오지 못했습니다 (HTTP ${res.status}).`);
+  return body.grid ?? null;
+}
+
+export async function fetchElevation(campusId: string): Promise<ElevationInfo> {
+  const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}`);
+  const body = (await res.json()) as Partial<ElevationInfo> & { error?: string };
+  if (!res.ok || !body.solver) throw new Error(body.error ?? `고도 정보를 불러오지 못했습니다 (HTTP ${res.status}).`);
+  return { store: body.store ?? null, solver: body.solver };
+}
+
+export async function saveElevationStore(campusId: string, text: string): Promise<void> {
+  const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/store`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  const body = (await res.json()) as { written?: boolean; error?: string };
+  if (!res.ok || !body.written) throw new Error(body.error ?? `고도 단절선을 저장하지 못했습니다 (HTTP ${res.status}).`);
+}
+
+/** Send the recompute request and the campus as it would be saved; the solver's derived/elevation.json comes back. */
+export async function requestRecompute(campusId: string, request: unknown, files: Record<string, string>): Promise<{ derived: unknown; mode: 'solved' | 'existing'; log: string }> {
+  const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/recompute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request, files }),
+  });
+  const body = (await res.json()) as { derived?: unknown; mode?: 'solved' | 'existing'; log?: string; error?: string };
+  if (!res.ok || body.derived === undefined || !body.mode) throw new Error(body.error ?? `고도를 다시 계산하지 못했습니다 (HTTP ${res.status}).`);
+  return { derived: body.derived, mode: body.mode, log: body.log ?? '' };
 }

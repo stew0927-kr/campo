@@ -6,9 +6,11 @@
   "description": "Schema types, loading, validation, graph and routing shared by browser and Node.",
   "exports": {
     ".": "./src/index.ts",
-    "./node": "./src/node/index.ts"
+    "./node": "./src/node/index.ts",
+    "./elevation": "./src/elevation/index.ts"
   },
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json"
   },
   "dependencies": {

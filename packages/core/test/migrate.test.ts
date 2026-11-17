@@ -214,6 +214,18 @@ describe('migrateCampusFiles is idempotent', () => {
     expect(validateCampus(parseCampus(applied(empty, first.files))).errors).toEqual([]);
   });
 
+  it('keeps the optional elevation fields as they are (schema_version stays 0.2)', () => {
+    const files = v01();
+    const i = files.findIndex((f) => f.path === 'buildings/T/L1.geojson');
+    const fc = JSON.parse(files[i]!.text) as { features: AnyFeature[] };
+    const e = fc.features.find((f) => f.id === 'e_corr_ok')!;
+    Object.assign(e.properties, { flat_exact: true, elev_diff_m: 0.12, elev_sigma_m: 0.05, grade_pct: 0.2 });
+    files[i] = { path: files[i]!.path, text: collection(fc.features) };
+    const out = applied(files, migrateCampusFiles(files).files);
+    expect(featuresOf(out).get('e_corr_ok').properties).toMatchObject({ flat_exact: true, elev_diff_m: 0.12, elev_sigma_m: 0.05, grade_pct: 0.2 });
+    expect(migrateCampusFiles(out).files).toEqual([]);
+  });
+
   it('leaves the v0.2 fixture folder untouched', async () => {
     const result = migrateCampusFiles(await readCampusFiles(FIXTURE_DIR));
     expect(result.problems).toEqual([]);

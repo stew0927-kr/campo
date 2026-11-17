@@ -1,7 +1,7 @@
 // e2e of the editor. The dev server runs on its own port and saves into a temporary folder, never into data/.
 // Run from the repository root:  npx playwright test -c packages/editor
 import { defineConfig } from '@playwright/test';
-import { CHANGESETS_DIR, E2E_DIR, PORT, REPORTS_DIR } from './e2e/seed.ts';
+import { CHANGESETS_DIR, E2E_DIR, ELEVATION_DIR, PORT, REPORTS_DIR, SURVEYS_DIR } from './e2e/seed.ts';
 
 export default defineConfig({
   testDir: './e2e',
@@ -10,13 +10,17 @@ export default defineConfig({
   workers: 1,
   timeout: 120_000,
   reporter: [['list']],
-  use: { baseURL: `http://127.0.0.1:${PORT}`, viewport: { width: 1440, height: 900 }, browserName: 'chromium' },
+  use: {
+    baseURL: `http://127.0.0.1:${PORT}`, viewport: { width: 1440, height: 900 }, browserName: 'chromium',
+    // A machine that ships its own Chromium (another Playwright version's) names it here: CAMPO_CHROMIUM=/path/to/chrome
+    ...(process.env['CAMPO_CHROMIUM'] ? { launchOptions: { executablePath: process.env['CAMPO_CHROMIUM'] } } : {}),
+  },
   webServer: {
     command: `npx vite --port ${PORT} --strictPort`,
     cwd: '.',
     url: `http://127.0.0.1:${PORT}`,
     reuseExistingServer: false,
     timeout: 120_000,
-    env: { CAMPO_CAMPUSES_DIR: E2E_DIR, CAMPO_REPORTS_DIR: REPORTS_DIR, CAMPO_CHANGESETS_DIR: CHANGESETS_DIR },
+    env: { CAMPO_CAMPUSES_DIR: E2E_DIR, CAMPO_REPORTS_DIR: REPORTS_DIR, CAMPO_CHANGESETS_DIR: CHANGESETS_DIR, CAMPO_SURVEYS_DIR: SURVEYS_DIR, CAMPO_ELEVATION_DIR: ELEVATION_DIR },
   },
 });

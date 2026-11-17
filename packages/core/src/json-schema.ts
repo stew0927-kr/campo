@@ -1,14 +1,16 @@
-// Ajv set-up shared by the changeset and report schemas (data/schema/*.schema.json).
+// Ajv set-up shared by the changeset, report and survey schemas (data/schema/*.schema.json).
 // validate.ts keeps its own instance for campo.schema.json.
 import Ajv2020, { type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
 import campoSchema from '../../../data/schema/campo.schema.json' with { type: 'json' };
 import changesetSchema from '../../../data/schema/changeset.schema.json' with { type: 'json' };
 import reportSchema from '../../../data/schema/report.schema.json' with { type: 'json' };
+import surveySchema from '../../../data/schema/survey.schema.json' with { type: 'json' };
 
 const ajv = new Ajv2020({ allErrors: true, strictTypes: false });
 ajv.addSchema(campoSchema);
 ajv.addSchema(changesetSchema);
 ajv.addSchema(reportSchema);
+ajv.addSchema(surveySchema);
 
 function compiled<T>(id: string): ValidateFunction<T> {
   const fn = ajv.getSchema<T>(id);
@@ -18,9 +20,11 @@ function compiled<T>(id: string): ValidateFunction<T> {
 
 export const CHANGESET_SCHEMA_ID = changesetSchema.$id;
 export const REPORT_SCHEMA_ID = reportSchema.$id;
+export const SURVEY_SCHEMA_ID = surveySchema.$id;
 
 export const validateChangesetSchema = compiled<unknown>(CHANGESET_SCHEMA_ID);
 export const validateReportSchema = compiled<unknown>(REPORT_SCHEMA_ID);
+export const validateSurveySchema = compiled<unknown>(SURVEY_SCHEMA_ID);
 
 export interface SchemaCheck {
   ok: boolean;

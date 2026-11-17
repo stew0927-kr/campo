@@ -1,6 +1,6 @@
-// 상세 정보 of a building outline: name, code and the list of floors, all editable.
+// 상세 정보 of a building outline: name, code, the list of floors and the plinth floors, all editable.
 import { useEffect, useState } from 'react';
-import type { EditBuilding } from '@campo/core';
+import { plinthFloors, type EditBuilding } from '@campo/core';
 import { parseLevels } from '../model/building.ts';
 import { floorLabel } from '../model/scope.ts';
 
@@ -10,20 +10,28 @@ interface Props {
   onName: (name: string) => string | undefined;
   onRename: (code: string) => string | undefined;
   onLevels: (levels: number[]) => string | undefined;
+  /** 기반층 (ext.plinth_floors), as typed; blank or 0 clears it. */
+  onPlinthFloors: (text: string) => string | undefined;
   /** Why the code cannot be that (while typing), why a floor cannot be taken out. */
   renameBlocked: (code: string) => string | false;
   removeBlocked: (level: number) => string | false;
+  /** 외곽선 수정: of a floor, or of the building (null). A floor's own outline can go back to the building's. */
+  onEditOutline: (level: number | null) => void;
+  onResetOutline: (level: number) => void;
 }
 
-export function BuildingPanel({ building, onName, onRename, onLevels, renameBlocked, removeBlocked }: Props) {
+export function BuildingPanel({ building, onName, onRename, onLevels, onPlinthFloors, renameBlocked, removeBlocked, onEditOutline, onResetOutline }: Props) {
   const { code, name, levels, ground_levels } = building.props;
   const [nameText, setNameText] = useState(name);
   const [codeText, setCodeText] = useState(code);
   const [levelText, setLevelText] = useState('');
+  const plinthShown = String(plinthFloors(building));
+  const [plinthText, setPlinthText] = useState(plinthShown);
   const [error, setError] = useState<string>();
   // Another building was selected, or an undo changed this one.
   useEffect(() => setNameText(name), [name, building.id]);
   useEffect(() => setCodeText(code), [code, building.id]);
+  useEffect(() => setPlinthText(plinthShown), [plinthShown, building.id]);
   useEffect(() => setError(undefined), [building.id]);
 
   const sorted = [...levels].sort((a, b) => b - a);
@@ -40,6 +48,12 @@ export function BuildingPanel({ building, onName, onRename, onLevels, renameBloc
   const commitCode = () => {
     if (unchanged || codeReason !== false) return;
     setError(onRename(typedCode));
+  };
+  const commitPlinth = () => {
+    if (plinthText.trim() === plinthShown) return;
+    const err = onPlinthFloors(plinthText);
+    setError(err);
+    if (err) setPlinthText(plinthShown);
   };
   const addLevels = () => {
     const parsed = parseLevels(levelText);
@@ -107,6 +121,42 @@ export function BuildingPanel({ building, onName, onRename, onLevels, renameBloc
           <button type="button" onClick={addLevels}>층 추가</button>
         </div>
         <p className="field-help">지점이나 구간, 강의실 영역이 이미 있는 층은 지울 수 없습니다. 지하 1층은 -1입니다.</p>
+      </fieldset>
+      <div className="field">
+        <label htmlFor="building-plinth">기반층</label>
+        <div className="inline-row">
+          <input
+            id="building-plinth"
+            inputMode="decimal"
+            value={plinthText}
+            placeholder="0"
+            onChange={(e) => setPlinthText(e.target.value)}
+            onBlur={commitPlinth}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+          />
+        </div>
+        <p className="field-help">
+          지형 3D에서 건물 아래 한 덩어리로 그리는 층수입니다(0, 0.5, 1, 2처럼 소수도 됩니다). 기본은 0이고, 지형 3D를 끄면 그리지 않습니다.
+        </p>
+      </div>
+      <fieldset className="field outline-field">
+        <legend>외곽선</legend>
+        <div className="inline-row">
+          <button type="button" onClick={() => onEditOutline(null)} title="층만의 외곽선이 없는 모든 층이 따르는 건물 외곽선을 고칩니다">건물 외곽선 수정</button>
+        </div>
+        {sorted.some((l) => building.props.floor_outlines?.[String(l)] !== undefined) ? (
+          <ul className="outline-floors" aria-label="층만의 외곽선이 있는 층">
+            {sorted.filter((l) => building.props.floor_outlines?.[String(l)] !== undefined).map((l) => (
+              <li key={l}>
+                <span>{floorLabel(l)}</span>
+                <button type="button" onClick={() => onEditOutline(l)} title={`${floorLabel(l)}만의 외곽선을 고칩니다`}>수정</button>
+                <button type="button" onClick={() => onResetOutline(l)} title={`${floorLabel(l)}만의 외곽선을 지우고 건물 외곽선을 따르게 합니다`}>건물 외곽선으로</button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="field-help">모든 층이 건물 외곽선을 따릅니다. 모양이 다른 층은 층을 고른 뒤 [외곽선 수정]으로 그 층만의 외곽선을 만듭니다.</p>
+        )}
       </fieldset>
       {error && <p className="field-error" role="alert">{error}</p>}
     </section>

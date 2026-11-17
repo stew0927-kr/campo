@@ -225,7 +225,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
         }
       }
     }
-    expect(compared).toBe(3000);
+    expect(compared).toBe(200 * 5 * PROFILES.length);
     expect(reachable).toBeGreaterThan(800);
     expect(fellBack).toBeGreaterThan(0);
   });
@@ -623,7 +623,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     for (const profile of PROFILES) {
       expect(findRoute(g, TOWER.hall(3), TOWER.hall(3), profile)).toEqual({
         found: true, profile, nodes: [TOWER.hall(3)], edgeIds: [], cost: 0, timeSec: 0, distanceM: 0, stairsCount: 0,
-        escalatorCount: 0, steps: [], uncertainSegments: [], fallback: null,
+        escalatorCount: 0, steps: [], uncertainSegments: [], slopeSegments: [], fallback: null,
       });
     }
     const missing = findRoute(g, 'n_nowhere', TOWER.hall(1), 'shortest');
@@ -942,9 +942,9 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
   // ---- R21 (outside the checklist) ----
   it('R21: an unknown profile name is rejected with unknown-profile instead of a route with NaN cost', () => {
     const g = buildGraph(oneWay());
-    const bad = 'wheelchair' as Profile;
+    const bad = 'hovercraft' as Profile;
     expect(findRoute(g, ONE_WAY.A, ONE_WAY.B, bad)).toEqual({
-      found: false, profile: 'wheelchair', reason: 'unknown-profile', message: '알 수 없는 길찾기 방식입니다: "wheelchair"',
+      found: false, profile: 'hovercraft', reason: 'unknown-profile', message: '알 수 없는 길찾기 방식입니다: "hovercraft"',
     });
     expect(findNearest(g, ONE_WAY.A, () => true, bad)).toMatchObject({ found: false, reason: 'unknown-profile' });
     // Checked before the node ids.

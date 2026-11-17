@@ -23,7 +23,7 @@ export function stopsOf(state: EditState, elevatorId: string): EditNode[] {
     .sort((a, b) => (a.props.level ?? 0) - (b.props.level ?? 0));
 }
 
-const rideEdge = (ctx: EditContext, from: string, to: string, lo: number, hi: number): Step => edgeStep({
+export const rideEdge = (ctx: EditContext, from: string, to: string, lo: number, hi: number): Step => edgeStep({
   kind: 'edge', highway: 'elevator', edge_type: 'indoor', step_free: true, from, to, bidirectional: true, level_from: lo, level_to: hi, source: DRAWN_SOURCE,
 }, ctx);
 

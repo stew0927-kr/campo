@@ -12,9 +12,15 @@ export function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Development runs this effect twice (StrictMode): only the last load becomes the session. Two sessions would leave
+    // the screen showing one's state while edits go to the other's history (the first edit then looks like a change of everything).
+    let current = true;
     fetchCampusFiles(CAMPUS_ID)
-      .then((files) => setSession(createSession(CAMPUS_ID, files)))
-      .catch((err: Error) => setLoadError(err.message));
+      .then((files) => current && setSession(createSession(CAMPUS_ID, files)))
+      .catch((err: Error) => current && setLoadError(err.message));
+    return () => {
+      current = false;
+    };
   }, []);
 
   if (loadError) return <p className="load-message notice-error">캠퍼스 데이터를 불러오지 못했습니다. {loadError}</p>;

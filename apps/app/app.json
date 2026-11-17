@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "캠포",
+    "slug": "campo",
+    "version": "0.1.0",
+    "scheme": "campo",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "android": {
+      "package": "kr.hanyang.campo",
+      "versionCode": 1,
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACTIVITY_RECOGNITION",
+        "android.permission.BODY_SENSORS",
+        "android.permission.HIGH_SAMPLING_RATE_SENSORS"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "kr.hanyang.campo",
+      "supportsTablet": false
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "캠퍼스 지도 위에 지금 계신 곳을 표시하고 길을 안내하기 위해 위치를 사용합니다. 위치는 안내가 끝나면 앱 안에서만 잠시 쓰고 서버로 보내지 않습니다.",
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "건물 안에서 몇 층에 계신지 기압으로 판단해 길을 안내하기 위해 기압 센서를 사용합니다. 기압 값은 두 지점 사이의 높이 차로만 쓰고 저장하지 않습니다."
+        }
+      ],
+      "@maplibre/maplibre-react-native"
+    ]
+  }
+}

@@ -291,6 +291,24 @@ describe('schema v0.2 (SPEC-v0.2 §2)', () => {
     expect(result.errors).toEqual([]);
   });
 
+  it('elevation fields: accepted on the right edges, flat_exact and is_breakline limited by highway and never both true', () => {
+    const ok = broken(({ get }) => {
+      Object.assign(get('e_out_0001__out_0002').properties, { elev_diff_m: 1.2, elev_sigma_m: 0.2, grade_pct: 2.6 });
+      Object.assign(get('e_out_0002__out_0004').properties, { flat_exact: false, is_breakline: true });
+      get('e_out_0004__out_0005').properties.is_breakline = false;
+    });
+    expect(ok.errors).toEqual([]);
+    const bad = broken(({ get }) => {
+      get('e_out_0002__out_0003').properties.flat_exact = true; // steps
+      get('e_out_0002__out_0004').properties.grade_pct = 3; // without elev_diff_m
+      Object.assign(get('e_out_0005__out_0003').properties, { flat_exact: true, is_breakline: true });
+      Object.assign(get('e_out_0001__out_0002').properties, { elev_diff_m: 0, elev_sigma_m: 0 });
+    });
+    expect(codes(schemaErrors(bad)).sort()).toEqual([
+      [E.schema, 'e_out_0001__out_0002'], [E.schema, 'e_out_0002__out_0003'], [E.schema, 'e_out_0002__out_0004'], [E.schema, 'e_out_0005__out_0003'],
+    ]);
+  });
+
   it('rejects other step_free values', () => {
     const result = broken(({ get }) => {
       get('e_out_0001__out_0002').properties.step_free = 'maybe';
@@ -563,6 +581,29 @@ describe('validateCampus v0.2 warnings (SPEC-v0.2 §8)', () => {
       get('e_A_3_north__C_5_bridge').geometry.coordinates[1] = get('n_A_3_hall').geometry.coordinates;
     });
     expect(codes(result.warnings)).toEqual([[W.bridgeSameBuilding, 'e_A_3_north__C_5_bridge']]);
+  });
+
+  it('W15: warns when a flat_exact edge has a recomputed height difference outside its σ', () => {
+    const result = broken(({ get }) => {
+      Object.assign(get('e_out_0001__out_0002').properties, { flat_exact: true, elev_diff_m: -0.4, elev_sigma_m: 0.1, grade_pct: -0.8 });
+      Object.assign(get('e_out_0002__out_0004').properties, { flat_exact: true, elev_diff_m: 0.05, elev_sigma_m: 0.1 }); // inside σ
+    });
+    expect(result.errors).toEqual([]);
+    expect(codes(result.warnings)).toEqual([[W.flatExactNotFlat, 'e_out_0001__out_0002']]);
+    expect(result.warnings[0]?.message).toContain('-0.40m');
+  });
+
+  it('W16: warns about a ramp steeper than 8 %, either way; 8 % itself and other edges are fine', () => {
+    const steep = broken(({ get }) => {
+      Object.assign(get('e_out_0004__out_0005').properties, { elev_diff_m: -4.1, elev_sigma_m: 0.2, grade_pct: -9.4 });
+      Object.assign(get('e_out_0001__out_0002').properties, { elev_diff_m: 5, elev_sigma_m: 0.2, grade_pct: 11 }); // footway
+    });
+    expect(steep.errors).toEqual([]);
+    expect(codes(steep.warnings)).toEqual([[W.steepRamp, 'e_out_0004__out_0005']]);
+    const limit = broken(({ get }) => {
+      Object.assign(get('e_out_0004__out_0005').properties, { elev_diff_m: 3.5, elev_sigma_m: 0.2, grade_pct: 8 });
+    });
+    expect(limit.warnings).toEqual([]);
   });
 });
 

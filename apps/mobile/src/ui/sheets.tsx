@@ -1,0 +1,465 @@
+// The bottom sheets of the record buttons. They only collect answers; SurveyScreen turns the answers into plans.
+import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, heightFromPressure, type AccessInfo, type AccessProp, type DoorRole, type EditBuilding, type RestroomGender, type Wheelchair } from '@campo/core';
+import { createContext, useContext, useState, type ReactNode } from 'react';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { defaultLevel, floorLabel, type Scope } from '../model/scope.ts';
+import { usePressure } from '../sensors/device.ts';
+import type { VerticalKind } from '../survey/plans.ts';
+import { BottomSheet } from './BottomSheet.tsx';
+import { BigButton, Choice, FieldLabel } from './controls.tsx';
+import { compassWord } from './dial.ts';
+import { STEP_FREE_CHOICES, type StepFree } from './stepFree.ts';
+import { TOUCH, TOUCH_LARGE, color, font, radius, space } from './theme.ts';
+
+// ---- shared ----
+
+/** The directions of the pictures taken for the record being made, and the button that sets one (SurveyScreen provides it). */
+export const ShotsContext = createContext<{ headings: readonly (number | null)[]; onEdit: (index: number) => void } | null>(null);
+
+function PhotoRow({ count, onPhoto }: { count: number; onPhoto: () => void }) {
+  const shots = useContext(ShotsContext);
+  return (
+    <View>
+      <BigButton tone="plain" label="사진 촬영" hint={count > 0 ? `${count}장 찍었습니다` : '기록과 함께 저장됩니다'} onPress={onPhoto} style={styles.gapTop} />
+      {shots && count > 0 && (
+        <View style={styles.shotRow}>
+          {Array.from({ length: count }, (_, i) => {
+            const h = shots.headings[i] ?? null;
+            return (
+              <Pressable key={i} onPress={() => shots.onEdit(i)} accessibilityRole="button" accessibilityLabel={`사진 ${i + 1} 방향 설정`} style={styles.shot}>
+                <Text style={styles.shotLabel}>사진 {i + 1} · {h === null ? '방향 설정' : `${h}° ${compassWord(h)}`}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const levelOptions = (levels: readonly number[]) => [...levels].sort((a, b) => a - b).map((l) => ({ value: l, label: floorLabel(l) }));
+
+// ---- 문/강의실 번호 ----
+
+const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'B', '0', '-'] as const;
+
+/** A number pad for room numbers: larger than the system keyboard's keys, and it does not cover the sheet. */
+function RoomPad({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <View>
+      <View style={styles.readout} accessibilityLabel={value === '' ? '호실 번호 없음' : `호실 번호 ${value}`}>
+        <Text style={[styles.readoutText, value === '' && styles.readoutEmpty]}>{value === '' ? '번호 없는 문' : `${value}호`}</Text>
+        <Pressable onPress={() => onChange(value.slice(0, -1))} accessibilityRole="button" accessibilityLabel="한 글자 지우기" style={styles.erase}>
+          <Text style={styles.eraseLabel}>지우기</Text>
+        </Pressable>
+      </View>
+      <View style={styles.pad}>
+        {KEYS.map((k) => (
+          <Pressable
+            key={k}
+            onPress={() => onChange(value.length < 8 ? value + k : value)}
+            accessibilityRole="button"
+            accessibilityLabel={k}
+            style={({ pressed }) => [styles.key, pressed && { backgroundColor: color.line }]}
+          >
+            <Text style={styles.keyLabel}>{k}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+interface DoorSheetProps {
+  /** The next room number after the last one recorded, or empty. */
+  suggestion: string;
+  photos: number;
+  onPhoto: () => void;
+  onRecord: (answer: { roomRef: string; doorRole: DoorRole }) => void;
+  onClose: () => void;
+}
+
+export function DoorSheet({ suggestion, photos, onPhoto, onRecord, onClose }: DoorSheetProps) {
+  const [roomRef, setRoomRef] = useState(suggestion);
+  const [doorRole, setDoorRole] = useState<DoorRole>('front');
+  return (
+    <BottomSheet title="문/강의실 번호" onClose={onClose}>
+      <RoomPad value={roomRef} onChange={setRoomRef} />
+      <FieldLabel>어느 문인가요?</FieldLabel>
+      <Choice label="문 종류" value={doorRole} onChange={setDoorRole} options={[{ value: 'front', label: '앞문' }, { value: 'back', label: '뒷문' }, { value: 'other', label: '그 밖' }]} />
+      <PhotoRow count={photos} onPhoto={onPhoto} />
+      <BigButton label="십자선 자리에 문 기록" onPress={() => onRecord({ roomRef, doorRole })} style={styles.gapTop} />
+    </BottomSheet>
+  );
+}
+
+// ---- 계단 · 엘리베이터: 다른 층과 연결 (started from the point's sheet) ----
+
+/** A floor change that has started: the surveyor is on the stairs or in the elevator. */
+export interface FloorTrip {
+  kind: VerticalKind;
+  toLevel: number;
+  /** Pressure when leaving, when the phone has a barometer. */
+  startHpa: number | null;
+}
+
+interface FloorSheetProps {
+  /** What the trip is: the kind of the point it starts from. */
+  kind: VerticalKind;
+  scope: Extract<Scope, { kind: 'building' }>;
+  building: EditBuilding;
+  trip: FloorTrip | null;
+  photos: number;
+  onPhoto: () => void;
+  onDepart: (trip: FloorTrip) => void;
+  onArrive: (answer: { incline: 'up' | 'down' | undefined; endHpa: number | null }) => void;
+  onCancelTrip: () => void;
+  onClose: () => void;
+}
+
+/** Below this the barometer cannot tell up from down reliably, so the surveyor says which. */
+const MIN_CLEAR_HEIGHT_M = 1;
+
+export function FloorSheet({ kind, scope, building, trip, photos, onPhoto, onDepart, onArrive, onCancelTrip, onClose }: FloorSheetProps) {
+  // Live pressure while the sheet is open (the reading is shared with the rest of the screen).
+  const { value: pressure, available: barometer } = usePressure();
+  const levels = [...building.props.levels].sort((a, b) => a - b);
+  const at = levels.indexOf(scope.level);
+  // Stairs are recorded one floor at a time (the floor above or below); an elevator can go to any floor.
+  const reachable = (k: VerticalKind): number[] => levels.filter((l, i) => l !== scope.level && (k === 'elevator' || Math.abs(i - at) === 1));
+  const others = reachable(kind);
+  const [picked, setToLevel] = useState<number | undefined>(undefined);
+  const toLevel = picked !== undefined && others.includes(picked) ? picked : others.length === 1 ? others[0] : undefined;
+  const [said, setSaid] = useState<'up' | 'down' | undefined>(undefined);
+
+  if (!trip) {
+    return (
+      <BottomSheet title={kind === 'stairs' ? '계단 · 다른 층과 연결' : '엘리베이터 · 다른 층과 연결'} onClose={onClose}>
+        <Text style={styles.lead}>
+          {floorLabel(scope.level)}의 이 {kind === 'stairs' ? '계단' : '엘리베이터'}에서 출발합니다. 갈 층을 고르고 [여기서 출발]을 누른 뒤, 도착하면 메뉴의 [도착 기록]을 눌러 주세요.
+        </Text>
+        <FieldLabel>{kind === 'stairs' ? '바로 위나 아래, 어느 층으로 가나요?' : '어느 층에서 내리나요?'}</FieldLabel>
+        <Choice label="도착 층" value={toLevel} onChange={setToLevel} options={levelOptions(others)} />
+        <Text style={styles.note}>
+          {barometer === false ? '이 기기에는 기압계가 없어 높이는 기록하지 않습니다.'
+            : pressure === undefined ? '기압계를 읽는 중입니다.'
+            : `지금 기압 ${pressure.toFixed(1)} hPa. 출발과 도착의 차이로 높이를 잽니다.`}
+        </Text>
+        <BigButton label="여기서 출발" disabled={toLevel === undefined} onPress={() => onDepart({ kind, toLevel: toLevel!, startHpa: pressure ?? null })} style={styles.gapTop} />
+      </BottomSheet>
+    );
+  }
+
+  const height = trip.startHpa !== null && pressure !== undefined ? heightFromPressure(trip.startHpa, pressure) : undefined;
+  const measured = height !== undefined && Math.abs(height) >= MIN_CLEAR_HEIGHT_M ? (height > 0 ? 'up' : 'down') : undefined;
+  return (
+    <BottomSheet title={`${floorLabel(trip.toLevel)}으로 이동 중`} onClose={onClose}>
+      <Text style={styles.lead}>{trip.kind === 'stairs' ? '계단을 다 올라가거나 내려간 뒤' : '엘리베이터에서 내린 뒤'} 도착을 눌러 주세요.</Text>
+      <View style={styles.readout}>
+        <Text style={styles.readoutText}>{height === undefined ? '높이 측정 없음' : `${height >= 0 ? '+' : '−'}${Math.abs(height).toFixed(1)} m`}</Text>
+      </View>
+      {trip.kind === 'stairs' && measured === undefined && (
+        <>
+          <FieldLabel>올라갔나요, 내려갔나요?</FieldLabel>
+          <Choice label="방향" value={said} onChange={setSaid} options={[{ value: 'up', label: '올라감' }, { value: 'down', label: '내려감' }]} />
+        </>
+      )}
+      <PhotoRow count={photos} onPhoto={onPhoto} />
+      <BigButton
+        label={`${floorLabel(trip.toLevel)} 도착 기록`}
+        onPress={() => onArrive({ incline: trip.kind === 'stairs' ? measured ?? said : undefined, endHpa: trip.startHpa !== null && pressure !== undefined ? pressure : null })}
+        style={styles.gapTop}
+      />
+      <BigButton tone="plain" label="이동 취소" onPress={onCancelTrip} style={styles.gapTop} />
+    </BottomSheet>
+  );
+}
+
+// ---- 포탈 ----
+
+interface PortalSheetProps {
+  scope: Scope;
+  /** Buildings, nearest to the crosshair first. */
+  buildings: readonly EditBuilding[];
+  stepFree: StepFree;
+  photos: number;
+  onPhoto: () => void;
+  onRecord: (answer: { buildingId: string; level: number; stepFree: StepFree }) => void;
+  onClose: () => void;
+}
+
+export function PortalSheet({ scope, buildings, stepFree, photos, onPhoto, onRecord, onClose }: PortalSheetProps) {
+  const goingOut = scope.kind === 'building';
+  const [buildingId, setBuildingId] = useState<string | undefined>(buildings[0]?.id);
+  const building = buildings.find((b) => b.id === buildingId);
+  const [level, setLevel] = useState<number | undefined>(building ? defaultLevel(building) : undefined);
+  const [sill, setSill] = useState<StepFree>(stepFree);
+  const ready = goingOut || (building !== undefined && level !== undefined);
+
+  return (
+    <BottomSheet title={goingOut ? '포탈: 밖으로 나가기' : '포탈: 건물로 들어가기'} onClose={onClose}>
+      <Text style={styles.lead}>
+        {goingOut ? '출입문에 십자선을 맞춰 주세요. 이 층의 출입구로 기록하고 바깥 길에 잇습니다.' : '출입문에 십자선을 맞추고, 문 안쪽이 어느 건물 몇 층인지 골라 주세요.'}
+      </Text>
+      {!goingOut && (
+        <>
+          <FieldLabel>어느 건물인가요?</FieldLabel>
+          <Choice
+            label="건물"
+            value={buildingId}
+            onChange={(id) => {
+              setBuildingId(id);
+              const b = buildings.find((x) => x.id === id);
+              setLevel(b ? defaultLevel(b) : undefined);
+            }}
+            options={buildings.slice(0, 6).map((b) => ({ value: b.id, label: b.props.name }))}
+          />
+          {building && (
+            <>
+              <FieldLabel>문 안쪽은 몇 층인가요?</FieldLabel>
+              <Choice label="층" value={level} onChange={setLevel} options={levelOptions(building.props.levels)} />
+            </>
+          )}
+        </>
+      )}
+      <FieldLabel>문턱이나 계단이 있나요?</FieldLabel>
+      <Choice label="문턱" value={sill} onChange={setSill} options={STEP_FREE_CHOICES} />
+      <PhotoRow count={photos} onPhoto={onPhoto} />
+      <BigButton
+        label="출입구 기록"
+        disabled={!ready}
+        onPress={() => onRecord({ buildingId: building?.id ?? '', level: level ?? 0, stepFree: sill })}
+        style={styles.gapTop}
+      />
+    </BottomSheet>
+  );
+}
+
+// ---- 건물·층 고르기 ----
+
+interface ScopeSheetProps {
+  scope: Scope;
+  buildings: readonly EditBuilding[];
+  onPick: (scope: Scope) => void;
+  onClose: () => void;
+}
+
+export function ScopeSheet({ scope, buildings, onPick, onClose }: ScopeSheetProps) {
+  return (
+    <BottomSheet title="어디를 조사하나요?" onClose={onClose}>
+      <BigButton tone={scope.kind === 'outdoor' ? 'primary' : 'plain'} label="바깥" onPress={() => onPick({ kind: 'outdoor' })} />
+      {buildings.length === 0 && <Text style={styles.note}>등록된 건물이 없습니다. 메뉴의 [건물 외곽선 가져오기]로 OSM 건물을 가져오거나 [외곽선 그리기]로 그려 주세요.</Text>}
+      {buildings.map((b) => (
+        <View key={b.id}>
+          <FieldLabel>{b.props.name}</FieldLabel>
+          <Choice
+            label={`${b.props.name} 층`}
+            value={scope.kind === 'building' && scope.buildingId === b.id ? scope.level : undefined}
+            onChange={(level) => onPick({ kind: 'building', buildingId: b.id, level })}
+            options={levelOptions(b.props.levels)}
+          />
+        </View>
+      ))}
+    </BottomSheet>
+  );
+}
+
+// ---- 지점·문 정보 (개방시간 / 폐쇄기간 / 개방조건, 메모, 사진) ----
+
+interface PointInfoSheetProps {
+  /** Shown first: the point's way to other floors (stairs, elevator, escalator), when it has one. */
+  header?: ReactNode;
+  /** "문 101호", "출입구 A동 1층 출입구". */
+  title: string;
+  /** The edges at the point that can have a sill (not steps): how many, and what they say when they agree. Left out when there are none. */
+  sill?: { count: number; value: StepFree | undefined };
+  /** What the point says now. */
+  access: AccessInfo;
+  note: string;
+  photos: number;
+  onPhoto: () => void;
+  onSave: (answer: { access: Required<AccessInfo>; note: string; stepFree?: StepFree }) => void;
+  onClose: () => void;
+}
+
+/** One value: the usual answers as one-press chips, anything else typed in. Pressing the chosen chip again clears it. */
+function AccessInput({ name, value, onChange }: { name: AccessProp; value: string; onChange: (value: string) => void }) {
+  const presets = ACCESS_PRESETS[name];
+  return (
+    <View>
+      <FieldLabel>{ACCESS_LABELS[name]}</FieldLabel>
+      {presets.length > 0 && (
+        <Choice
+          label={`${ACCESS_LABELS[name]} 빠른 선택`}
+          value={presets.includes(value) ? value : undefined}
+          onChange={(preset) => onChange(preset === value ? '' : preset)}
+          options={presets.map((p) => ({ value: p, label: p }))}
+        />
+      )}
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={ACCESS_PLACEHOLDERS[name]}
+        placeholderTextColor={color.inkSoft}
+        accessibilityLabel={`${ACCESS_LABELS[name]} 직접 입력`}
+        autoCorrect={false}
+        style={[styles.input, presets.length > 0 && styles.inputBelow]}
+      />
+    </View>
+  );
+}
+
+export function PointInfoSheet({ header, title, sill, access, note, photos, onPhoto, onSave, onClose }: PointInfoSheetProps) {
+  const [stepFree, setStepFree] = useState<StepFree | undefined>(sill?.value);
+  const [values, setValues] = useState<Required<AccessInfo>>({ hours: access.hours ?? '', closed_period: access.closed_period ?? '', access_condition: access.access_condition ?? '' });
+  const [memo, setMemo] = useState(note);
+  // Mostly left empty, so folded away; open from the start when the point already has any of them.
+  const filled = ACCESS_PROPS.filter((name) => (access[name] ?? '') !== '').length + (note !== '' ? 1 : 0);
+  const [open, setOpen] = useState(filled > 0);
+  return (
+    <BottomSheet title={title} onClose={onClose}>
+      {header}
+      <Pressable
+        onPress={() => setOpen((o) => !o)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`개방시간, 개방조건, 폐쇄기간, 메모 ${open ? '접기' : '펼치기'}`}
+        style={({ pressed }) => [styles.fold, pressed && { opacity: 0.6 }]}
+      >
+        <Text style={[styles.foldChevron, open && styles.foldChevronOpen]}>›</Text>
+        <View style={styles.foldText}>
+          <Text style={styles.foldTitle}>개방시간 · 개방조건 · 폐쇄기간 · 메모</Text>
+          <Text style={styles.foldHint}>{filled > 0 ? `${filled}개 입력됨` : '대부분 비워 둡니다. 눌러서 적기'}</Text>
+        </View>
+      </Pressable>
+      {open && (
+        <>
+          <Text style={styles.note}>현장에서 본 대로 적어 주세요. 비워 두면 지워집니다.</Text>
+          {ACCESS_PROPS.map((name) => (
+            <AccessInput key={name} name={name} value={values[name]} onChange={(value) => setValues((v) => ({ ...v, [name]: value }))} />
+          ))}
+          <FieldLabel>메모</FieldLabel>
+          <TextInput
+            value={memo}
+            onChangeText={setMemo}
+            placeholder="예: 경비실에서 열어 줍니다"
+            placeholderTextColor={color.inkSoft}
+            accessibilityLabel="메모"
+            multiline
+            style={[styles.input, styles.inputTall]}
+          />
+        </>
+      )}
+      {sill && (
+        <>
+          <FieldLabel>이 지점에 닿는 길의 문턱·턱 (구간 {sill.count}개)</FieldLabel>
+          <Choice label="문턱" value={stepFree} onChange={setStepFree} options={STEP_FREE_CHOICES} />
+        </>
+      )}
+      <PhotoRow count={photos} onPhoto={onPhoto} />
+      <BigButton label="이 지점에 저장" onPress={() => onSave({ access: values, note: memo, ...(stepFree !== undefined && stepFree !== sill?.value ? { stepFree } : {}) })} style={styles.gapTop} />
+    </BottomSheet>
+  );
+}
+
+// ---- 화장실 ----
+
+export interface RestroomAnswer {
+  gender: RestroomGender;
+  wheelchair: Wheelchair;
+  changingTable: boolean | null;
+}
+
+interface RestroomSheetProps {
+  photos: number;
+  onPhoto: () => void;
+  onRecord: (answer: RestroomAnswer) => void;
+  onClose: () => void;
+}
+
+export function RestroomSheet({ photos, onPhoto, onRecord, onClose }: RestroomSheetProps) {
+  const [gender, setGender] = useState<RestroomGender | undefined>(undefined);
+  const [wheelchair, setWheelchair] = useState<Wheelchair>('unknown');
+  const [changingTable, setChangingTable] = useState<boolean | null>(null);
+  return (
+    <BottomSheet title="화장실" onClose={onClose}>
+      <Text style={styles.lead}>화장실 입구에 십자선을 맞춰 주세요. 가까운 복도에 이어집니다.</Text>
+      <FieldLabel>누구를 위한 화장실인가요?</FieldLabel>
+      <Choice label="화장실 종류" value={gender} onChange={setGender} options={[{ value: 'male', label: '남' }, { value: 'female', label: '여' }, { value: 'unisex', label: '남·여 모두' }]} />
+      <FieldLabel>휠체어로 쓸 수 있나요?</FieldLabel>
+      <Choice label="휠체어" value={wheelchair} onChange={setWheelchair} options={[{ value: 'yes', label: '가능' }, { value: 'no', label: '불가능' }, { value: 'unknown', label: '모름' }]} />
+      <FieldLabel>기저귀 교환대</FieldLabel>
+      <Choice label="기저귀 교환대" value={changingTable} onChange={setChangingTable} options={[{ value: null, label: '모름' }, { value: true, label: '있음' }, { value: false, label: '없음' }]} />
+      <PhotoRow count={photos} onPhoto={onPhoto} />
+      <BigButton label="십자선 자리에 화장실 기록" disabled={gender === undefined} onPress={() => gender && onRecord({ gender, wheelchair, changingTable })} style={styles.gapTop} />
+    </BottomSheet>
+  );
+}
+
+// ---- 데이터 내보내기 ----
+
+interface ExportSheetProps {
+  counts: { nodes: number; edges: number; photos: number; measurements: number; timings: number };
+  busy: boolean;
+  /** Photos put into the zip so far, while it is being written. */
+  progress?: { done: number; total: number } | null;
+  onExport: () => void;
+  onReset: () => void;
+  onClose: () => void;
+}
+
+export function ExportSheet({ counts, busy, progress = null, onExport, onReset, onClose }: ExportSheetProps) {
+  const empty = counts.nodes + counts.edges + counts.photos + counts.measurements + counts.timings === 0;
+  return (
+    <BottomSheet title="데이터 내보내기" onClose={onClose}>
+      <Text style={styles.lead}>
+        지점 {counts.nodes}개, 구간 {counts.edges}개, 사진 {counts.photos}장, 높이 측정 {counts.measurements}건, 시간 측정 {counts.timings}건을 기록했습니다.
+      </Text>
+      <Text style={styles.note}>
+        기록은 이 기기에 저장되어 있습니다. 내보낸 zip 파일을 PC로 옮긴 뒤 편집기의 “현장 기록 불러오기”에서 열어 주세요. 사진에 사람 얼굴이 찍혔는지 확인해 주세요.
+      </Text>
+      <BigButton label={busy ? (progress && progress.total > 0 ? `묶는 중입니다 (사진 ${progress.done}/${progress.total})` : '묶는 중입니다') : '데이터 내보내기'} disabled={busy || empty} onPress={onExport} style={styles.gapTop} />
+      <BigButton tone="danger" label="기록 지우고 새 조사 시작" disabled={busy} onPress={onReset} style={styles.gapTopWide} />
+    </BottomSheet>
+  );
+}
+
+const styles = StyleSheet.create({
+  // 개방시간 · 개방조건 · 폐쇄기간 · 메모, folded
+  fold: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: TOUCH, paddingHorizontal: space.md, paddingVertical: space.sm,
+    borderRadius: radius.sm, borderWidth: 1, borderColor: color.line, backgroundColor: color.surface,
+  },
+  foldChevron: { width: 14, fontSize: 22, lineHeight: 24, fontWeight: '700', color: color.inkSoft, textAlign: 'center' },
+  foldChevronOpen: { transform: [{ rotate: '90deg' }] },
+  foldText: { flex: 1 },
+  foldTitle: { fontSize: font.body, fontWeight: '700', color: color.ink },
+  foldHint: { fontSize: font.small, color: color.inkSoft, marginTop: 1 },
+  lead: { fontSize: font.body, lineHeight: 24, color: color.ink, marginTop: space.sm },
+  note: { fontSize: font.small, lineHeight: 21, color: color.inkSoft, marginTop: space.md },
+  gapTop: { marginTop: space.lg },
+  shotRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.sm },
+  shot: { minHeight: TOUCH, paddingHorizontal: space.lg, borderRadius: radius.pill, backgroundColor: color.surface, borderWidth: 1.5, borderColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  shotLabel: { fontSize: font.small, fontWeight: '700', color: color.primary },
+  gapTopWide: { marginTop: space.xl * 1.5 },
+  readout: {
+    minHeight: TOUCH_LARGE, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: space.md,
+    paddingLeft: space.lg, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: 1.5, borderColor: color.line,
+  },
+  readoutText: { fontSize: font.display, fontWeight: '800', color: color.ink, fontVariant: ['tabular-nums'] },
+  readoutEmpty: { fontSize: font.label, fontWeight: '600', color: color.inkSoft },
+  erase: { minHeight: TOUCH_LARGE, minWidth: TOUCH_LARGE + space.xl, alignItems: 'center', justifyContent: 'center' },
+  eraseLabel: { fontSize: font.body, fontWeight: '700', color: color.inkSoft },
+  pad: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
+  key: {
+    flexBasis: '30%', flexGrow: 1, minHeight: TOUCH_LARGE, borderRadius: radius.sm, backgroundColor: color.surface,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: color.line,
+  },
+  keyLabel: { fontSize: font.title, fontWeight: '700', color: color.ink },
+  input: {
+    minHeight: TOUCH_LARGE, paddingHorizontal: space.lg, borderRadius: radius.md, backgroundColor: color.surface,
+    borderWidth: 1.5, borderColor: color.line, fontSize: font.label, color: color.ink,
+  },
+  inputBelow: { marginTop: space.sm },
+  inputTall: { minHeight: TOUCH_LARGE * 1.5, paddingVertical: space.md, textAlignVertical: 'top' },
+});

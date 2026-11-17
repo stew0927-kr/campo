@@ -20,7 +20,8 @@ import {
   type WarningCode,
 } from './types.ts';
 import { CALIBRATION_FILE, CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
-import { isStepFreePassable } from './costs.ts';
+import { GRADE_CAUTION_MAX_PCT, isStepFreePassable } from './costs.ts';
+import { outlineProblem } from './outline.ts';
 
 /** Max distance (m) between an edge's line ends and its from/to nodes (§7 error 4). */
 export const ENDPOINT_TOLERANCE_M = 1;
@@ -208,6 +209,19 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     } else if (level !== null && !building.feature.properties.levels.includes(level)) {
       error(file, node.id, E.levelNotInBuilding,
         `level ${level}이 건물 "${building_id}"의 levels(${building.feature.properties.levels.join(', ')})에 없습니다.`);
+    }
+  }
+
+  // ---- E15. A floor outline belongs to a level of the building and is closed rings of 4+ positions ----
+  for (const { file, feature: building } of buildings.values()) {
+    for (const [key, polygon] of Object.entries(building.properties.floor_outlines ?? {})) {
+      const level = Number(key);
+      if (!building.properties.levels.includes(level)) {
+        error(file, building.id, E.floorOutlineInvalid, `floor_outlines의 "${key}"층이 건물의 levels(${building.properties.levels.join(', ')})에 없습니다.`);
+        continue;
+      }
+      const problem = outlineProblem(polygon);
+      if (problem) error(file, building.id, E.floorOutlineInvalid, `floor_outlines "${key}": ${problem}`);
     }
   }
 
@@ -443,6 +457,20 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
   for (const { file, edge, from, to } of linked) {
     if (edge.properties.edge_type === 'bridge' && from.properties.building_id === to.properties.building_id) {
       warn(file, edge.id, W.bridgeSameBuilding, '연결통로의 양 끝 지점이 같은 건물에 있습니다.');
+    }
+  }
+
+  // W15. An edge checked to be level whose recomputed height difference is more than its σ: the site check or the
+  // measurements are wrong (the solver holds flat_exact at σ 1 cm, so only strong evidence can pull it off zero).
+  // W16. A ramp steeper than GRADE_CAUTION_MAX_PCT (8 %): too steep for a wheelchair ramp, check it on site.
+  for (const { file, feature: edge } of edges) {
+    const p = edge.properties;
+    if (p.flat_exact === true && p.elev_diff_m !== undefined && p.elev_sigma_m !== undefined && Math.abs(p.elev_diff_m) > p.elev_sigma_m) {
+      warn(file, edge.id, W.flatExactNotFlat,
+        `평지로 확인한 구간인데 계산한 높이 차가 ${p.elev_diff_m.toFixed(2)}m(±${p.elev_sigma_m.toFixed(2)}m)입니다. 현장에서 평지인지 다시 확인해 주세요.`);
+    }
+    if (p.highway === 'ramp' && p.grade_pct !== undefined && Math.abs(p.grade_pct) > GRADE_CAUTION_MAX_PCT) {
+      warn(file, edge.id, W.steepRamp, `경사로의 계산한 경사가 ${Math.abs(p.grade_pct).toFixed(1)}%로 ${GRADE_CAUTION_MAX_PCT}%를 넘습니다. 현장에서 확인해 주세요.`);
     }
   }
 

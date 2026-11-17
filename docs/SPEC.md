@@ -44,7 +44,7 @@ v0.1은 아래가 모두 되면 끝이다.
 | 길찾기 | ngraph.graph + ngraph.path(A*), 브라우저와 Node 공용 | 서버 없이 동작 |
 | 저장 | Git 저장소의 GeoJSON 파일. 편집기는 로컬 개발 서버로 실행하고, 저장 버튼이 저장소 파일에 직접 쓴다. 그 뒤 사람이 커밋한다 | 무료, 변경 이력과 되돌리기가 자동 |
 | 좌표 | EPSG:4326(경도, 위도 순서). 길이는 Turf.js 측지 거리로 계산 | GeoJSON 표준 |
-| 배경 지도 | 표시용 OSM 타일 + 따라 그리기용 국토지리정보원 영상지도(공공누리 1유형, 출처 표시). **구글·네이버·카카오 지도와 위성사진은 편집기에 넣지 않는다** | 약관상 따라 그린 데이터를 쓸 수 없음 |
+| 배경 지도 | 표시용 OSM 타일 + 따라 그리기용 브이월드(국토교통부) 위성지도(인증키 VITE_VWORLD_API_KEY, 출처 표시 © 국토교통부 브이월드). **구글·네이버·카카오 지도와 위성사진은 편집기에 넣지 않는다** | 약관상 따라 그린 데이터를 쓸 수 없음 |
 | 기술 | npm workspaces, TypeScript, Vite + React, Vitest, ajv(JSON Schema) | |
 
 ## 4. 데이터 모델
@@ -61,9 +61,41 @@ v0.1은 아래가 모두 되면 끝이다.
 
 | kind | geometry | 필수 속성 | 선택 속성 |
 |---|---|---|---|
-| `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m` |
-| `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check` |
-| `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check` |
+| `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m`, `ext.plinth_floors`(기반층, 아래 참고), `floor_outlines`(층별 외곽선, 아래 참고) |
+| `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check`, `hours`, `closed_period`, `access_condition`, `sync_group` |
+| `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check`, `flat_exact`, `is_breakline`, `elev_diff_m`, `elev_sigma_m`, `grade_pct` |
+
+지점의 출입 정보와 층 연동(모두 선택 속성, 없는 예전 파일도 그대로 읽는다)
+
+| 속성 | 뜻 | 예 |
+|---|---|---|
+| `hours` | 개방시간. 사람이 읽는 글자 그대로 | `"07:00-22:00"`, `"24/7"` |
+| `closed_period` | 폐쇄기간 | `"2026-11-15~2026-11-30"` |
+| `access_condition` | 개방조건 | `"상시개방"`, `"학생증 태깅"`, `"관리실 문의"` |
+| `sync_group` | 층 복사로 묶인 지점들이 함께 갖는 id. 편집기가 같은 건물의 같은 `sync_group` 지점 사이 평지 구간을 층마다 똑같이 유지한다 | `"sg_k7x2qa"` |
+
+- 출입 정보는 안내에 보여 주는 값이다. 길찾기는 읽지 않는다(시간에 따라 막는 일은 `overrides.json`이 한다).
+- `sync_group`은 편집 도구용이다. 길찾기는 읽지 않고, 층 번호도 비교하지 않는다.
+
+구간의 높이 정보(모두 선택 속성, 없는 예전 파일도 그대로 읽고 길찾기도 예전과 같다. 자세한 규칙은 docs/ELEVATION_INTEGRATION.md)
+
+| 속성 | 누가 | 뜻 | 쓸 수 있는 곳 |
+|---|---|---|---|
+| `flat_exact` | 사람 | 현장에서 평지로 확인함. 높이 계산은 높이 차 0으로 고정하고 길찾기는 경사 0으로 본다 | footway, corridor |
+| `is_breakline` | 사람 | 지형이 끊기는 곳(연석, 옹벽, 바깥 계단). 높이 보간이 이 선을 넘지 않는다. 없으면 바깥 계단이 해당, `false`로 끔 | footway, steps, ramp. `flat_exact: true`와 함께 `true` 불가 |
+| `elev_diff_m` | 고도 재계산 | `to` 높이 − `from` 높이(m) | −200~200 |
+| `elev_sigma_m` | 고도 재계산 | `elev_diff_m`의 표준편차(m) | 0 초과, `elev_diff_m`과 함께 |
+| `grade_pct` | 고도 재계산 | from → to 경사(%), 오르막이 양수 | `elev_diff_m`과 함께 |
+
+- 계산 값 셋은 편집 동작 `setEdgeElevation`만 쓴다. 구간을 뒤집으면 `elev_diff_m`·`grade_pct`의 부호가 바뀌고, 나누거나 합치면 지워졌다가 다음 재계산이 다시 쓴다.
+- 길찾기는 이 값들을 구간 자신의 속성으로만 읽는다(층 번호는 여전히 비교하지 않음). 경사가 오르막·내리막 시간과 프로필 벌점에 들어간다.
+- 건물을 OpenStreetMap에서 가져오면 `source`는 `osm`이다(ODbL, © OpenStreetMap 기여자).
+
+건물의 기반층(선택 속성, 3D 보기 전용, 길찾기는 읽지 않음)
+
+- `ext.plinth_floors`(0 이상 숫자, 없으면 0): 기반층 수. 건축물대장에서 계산하지 않고 사람이 편집기 건물 상세 정보의 `기반층` 칸에 직접 넣는다(0, 0.5, 1, 2처럼 소수도 가능).
+- core `plinthFloors`는 `ext.plinth_floors ?? 0`을 그대로 읽는다. `levels`를 바꿔도 기반층은 변하지 않는다.
+- 3D 보기(core `stackLayout`): 지형 3D가 꺼져 있으면 기반층은 그리지 않고 1층 바닥이 지면(0 m), 지하층은 그 아래. 지형 3D가 켜져 있고 기반층이 있으면 지형 위에 기반층 × 층고 높이의 통짜 블록(기단부)을 세우고 그 바로 위에 지하층 → 1층 → 지상층을 쌓는다.
 
 `node_type` 값
 
@@ -104,6 +136,7 @@ data/campuses/hanyang-seoul/
                                # 층을 넘는 계단·엘리베이터 edge는 아래층 파일에 둔다
 ```
 
+- `building`의 `floor_outlines`(선택): 층마다 외곽선이 다를 때(저층부 포디움, 셋백, 넓은 지하층) 그 층만의 외곽선. 키는 `String(level)`(`"-1"`, `"3"`), 값은 Polygon 좌표(닫힌 고리, 점 4개 이상). 없는 층은 건물 Feature의 geometry를 쓴다(core `getBuildingOutlineForLevel`). 화면 표시용이며 길찾기는 읽지 않는다. 검사 E15가 그 층이 `levels`에 있는지와 고리가 닫혔는지 확인한다. 층을 지우면 그 층의 외곽선도 함께 지운다.
 - `campus.json`의 `map_limits`(선택): `bounds`([서, 남, 동, 북], 캠퍼스 중심을 포함해야 함), `min_zoom`, `max_zoom`. 편집기는 지도를 이 범위 밖으로 옮기지 못하게 한다. 범위는 코드에 두지 않고 캠퍼스마다 이 파일에 적는다(한양대는 중심에서 약 1.5km). 없으면 제한이 없다. 검사 E14가 순서·중심·줌 범위를 확인한다(v0.2 8장).
 - 한 건물은 한 사람이 맡아 편집한다. 그러면 Git 충돌이 거의 없다.
 - 저장할 때 Feature는 `id` 순서로 정렬하고, Feature 하나를 한 줄에 쓴다. 그래야 Git에서 바뀐 부분이 잘 보인다.
@@ -131,6 +164,7 @@ data/campuses/hanyang-seoul/
 ## 5. 고도·건물 높이 결합 (v0.1에서는 키만)
 
 - 원본 데이터는 고치지 않는다. 나중에 빌드 스크립트가 `derived/elevation.json`(`{ node_id: { z_ground_m, z_floor_m } }`)을 만든다.
+  - 2026-11-15 갱신: `tools/elevation/campo_height_solver.py --derived-out`이 `derived/elevation.json`(`campo-derived-elevation/1`: 지점별 `z_m`·`sigma_m`, 구간별 `elev_diff_m`·`elev_sigma_m`)을 만들고, 사람이 재계산을 누를 때 편집 동작 `setEdgeElevation`이 구간의 계산 값(4.2)만 고친다. DEM 원본은 읽기 전용이다(docs/ELEVATION_INTEGRATION.md).
 - 결합 키: 건물은 `ext.moct_bldg_id`(국토교통부 GIS건물통합정보 고유번호), 지점은 좌표. 건물 높이는 층수 × 층고로 계산한다.
 - 외부 원본은 `data/ref/`에 두고 Git에 올리지 않는다(.gitignore).
 
@@ -164,6 +198,7 @@ data/campuses/hanyang-seoul/
 6. 엘리베이터·계단 구간의 `level_from`·`level_to`가 양 끝 지점의 level과 다름
 7. `ground_levels`에 있는 층에 `entrance` 지점이 하나도 없음
 8. `entrance` 지점이 포탈 구간에 연결되지 않음
+- E15. `floor_outlines`의 층이 건물 `levels`에 없거나, 외곽선 고리가 닫히지 않았거나 점이 4개 미만
 
 **경고(통과는 함)**
 
@@ -178,7 +213,7 @@ data/campuses/hanyang-seoul/
 
 **지도 보기**
 
-- 배경 전환: OSM 표시용 / 국토지리정보원 영상지도. 화면 구석에 출처 표시.
+- 배경 전환: OSM 표시용 / 브이월드 위성지도. 화면 구석에 출처 표시.
 - 바깥 모드에서는 바깥 데이터와 건물 외곽선만 진하게, 건물 모드에서는 고른 건물의 고른 층만 진하게 보인다.
 
 **도구**
@@ -187,6 +222,7 @@ data/campuses/hanyang-seoul/
 |---|---|
 | 바깥 길 | 지도를 클릭하며 이어 그리면 지점과 구간이 자동으로 생긴다. 기존 지점 근처(5px)를 클릭하면 그 지점에 붙는다. 종류(평지 / 계단 / 경사로)는 도구 막대에서 고른다 |
 | 건물 | 외곽선을 그리고 이름·코드·층 목록·지면 층을 입력한다 |
+| OSM 건물 가져오기 | 건물 위를 누르면 OpenStreetMap(Overpass)의 외곽선·이름·층수로 건물을 등록한다. `needs_check`가 붙고 되돌릴 수 있다 |
 | 건물 선택 | 건물을 클릭하면 층 선택기가 나온다. 층을 고르면 건물 모드가 된다 |
 | 지점 추가 | 건물 모드에서 종류(출입구 / 문 / 강의실 문 / 복도 / 엘리베이터 / 계단)를 고르고 클릭한다 |
 | 엘리베이터 | 한 번 클릭하고 정차 층을 체크하면, 모든 정차 층에 지점과 구간이 같은 위치에 생긴다 |

@@ -2,7 +2,7 @@
 // the one routing file that reads floor numbers (node `level`), to print floor
 // names and to pick 올라가세요 / 내려가세요 when an edge has no `incline`. It
 // never chooses or connects anything; the route is fixed before it gets here.
-import { conveyingOf, isEscalator } from './costs.ts';
+import { conveyingOf, gradeClass, isEscalator } from './costs.ts';
 import type { CampusGraph, GraphLinkData } from './graph.ts';
 import type { EdgeFeature, Level, NodeFeature } from './types.ts';
 
@@ -29,7 +29,12 @@ export interface RouteStep {
   edgeIds: string[];
   /** Korean, polite form. */
   text: string;
+  /** Walk and ramp steps with a steep part (grade above GRADE_CAUTION_MAX_PCT in travel direction). Absent otherwise. */
+  steep?: true;
 }
+
+/** Added to the sentence of a walk or ramp step with a steep part. */
+export const STEEP_NOTE = '경사가 급한 길입니다';
 
 type Direction = 'up' | 'down' | null;
 
@@ -111,6 +116,10 @@ function makeStep(g: CampusGraph, kind: RouteStepKind, legs: readonly Leg[]): Ro
     const edge = edgeOf(leg);
     return edge !== null && conveyingOf(edge.properties) === 'reversible';
   });
+  // Grades come from the edges' own properties (graph.ts); the walk link already holds them in travel direction.
+  const steep = (kind === 'walk' || kind === 'ramp') &&
+    legs.some((leg) => leg.data.kind === 'walk' && leg.data.gradePct !== null && gradeClass(leg.data.gradePct) === 'steep');
+  const notes = [...(steep ? [STEEP_NOTE] : []), ...(reversible ? ['운행 방향이 바뀔 수 있습니다'] : [])];
   return {
     kind,
     fromNodeId: start.id,
@@ -120,7 +129,8 @@ function makeStep(g: CampusGraph, kind: RouteStepKind, legs: readonly Leg[]): Ro
     distanceM: round1(distanceM),
     timeSec: round1(timeSec),
     edgeIds,
-    text: sentence(g, kind, legs, start, end, distanceM) + (reversible ? ' (운행 방향이 바뀔 수 있습니다)' : ''),
+    text: sentence(g, kind, legs, start, end, distanceM) + (notes.length > 0 ? ` (${notes.join(', ')})` : ''),
+    ...(steep ? { steep: true as const } : {}),
   };
 }
 

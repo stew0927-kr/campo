@@ -60,7 +60,7 @@ export function buildingAt(state: Pick<EditState, 'buildings'>, position: Positi
   return best?.b;
 }
 
-function pointInRing([x, y]: Position, ring: Position[]): boolean {
+export function pointInRing([x, y]: Position, ring: readonly Position[]): boolean {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const [xi, yi] = ring[i]!;
@@ -70,7 +70,7 @@ function pointInRing([x, y]: Position, ring: Position[]): boolean {
   return inside;
 }
 
-function ringArea(ring: Position[]): number {
+export function ringArea(ring: readonly Position[]): number {
   let a = 0;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) a += (ring[j]![0] + ring[i]![0]) * (ring[j]![1] - ring[i]![1]);
   return a / 2;

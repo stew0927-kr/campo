@@ -32,3 +32,34 @@ export function levelRemoveBlocked(state: EditState, code: string, level: number
   if (building.props.levels.length === 1) return '층이 하나뿐인 건물은 층을 지울 수 없습니다.';
   return setBuildingLevels(code, building.props.levels.filter((l) => l !== level)).disabled(state);
 }
+
+/** 우클릭 메뉴의 층고(m): building.ext.floor_height_m. Blank clears it (the elevation code then uses 3.9 m). */
+export function planSetFloorHeight(state: EditState, code: string, text: string): PlanResult {
+  const building = state.buildings[code];
+  if (!building) return { error: '건물을 찾을 수 없습니다.' };
+  const t = text.trim().replace(',', '.').replace(/\s*m$/i, '');
+  const { floor_height_m: _old, ...rest } = building.props.ext ?? {};
+  if (t === '') return { annotation: `건물 ${code} 층고 지우기`, steps: [() => setProps([building.id], { ext: Object.keys(rest).length > 0 ? rest : undefined })] };
+  const v = Number(t);
+  if (!Number.isFinite(v) || v < 2 || v > 12) return { error: '층고는 2~12 m 사이 숫자로 넣어 주세요.' };
+  const value = Math.round(v * 100) / 100;
+  return { annotation: `건물 ${code} 층고를 ${value} m로 바꾸기`, steps: [() => setProps([building.id], { ext: { ...rest, floor_height_m: value } })] };
+}
+
+/**
+ * 기반층: building.ext.plinth_floors, typed in by hand (0, 0.5, 1, 2 …). Drawn as one block under the building when the
+ * 3D terrain is on (core plinthFloors). Blank or 0 clears it (no plinth).
+ */
+export function planSetPlinthFloors(state: EditState, code: string, text: string): PlanResult {
+  const building = state.buildings[code];
+  if (!building) return { error: '건물을 찾을 수 없습니다.' };
+  const t = text.trim().replace(',', '.').replace(/\s*층$/, '');
+  const { plinth_floors: _old, ...rest } = building.props.ext ?? {};
+  const clear = { annotation: `건물 ${code} 기반층 지우기`, steps: [() => setProps([building.id], { ext: Object.keys(rest).length > 0 ? rest : undefined })] };
+  if (t === '') return clear;
+  const v = Number(t);
+  if (!Number.isFinite(v) || v < 0 || v > 50) return { error: '기반층은 0~50 사이 숫자로 넣어 주세요(예: 0, 0.5, 1, 2).' };
+  const value = Math.round(v * 100) / 100;
+  if (value === 0) return clear;
+  return { annotation: `건물 ${code} 기반층을 ${value}층으로 바꾸기`, steps: [() => setProps([building.id], { ext: { ...rest, plinth_floors: value } })] };
+}

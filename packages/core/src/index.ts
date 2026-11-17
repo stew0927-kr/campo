@@ -4,11 +4,17 @@ import { enablePatches } from 'immer';
 enablePatches();
 
 export * from './types.ts';
+export * from './access.ts';
+export { findNearestRestroom, isRestroomFor, isWheelchairRestroom } from './restroom.ts';
+export { findNearestRestroomFrom, findRouteBetween, snapToRoutes, type PointRoute, type PointRouteResult, type RouteEnd, type RouteSnap } from './routing/fromPoint.ts';
 export { CAMPUS_META_FILE, CALIBRATION_FILE, OBSERVATIONS_DIR, OVERRIDES_FILE, isCampusFile, parseCampus } from './load.ts';
 export { formatFeatureCollection, formatMeta } from './format.ts';
 export { migrateCampusFiles, type MigrateProblem, type MigrateResult, type MigrateSummary } from './migrate.ts';
 export { ENDPOINT_TOLERANCE_M, isClassroomDoor, isValidFeature, mapLimitsProblem, validateCampus } from './validate.ts';
 export * from './costs.ts';
+export * from './pictograms.ts';
+export * from './outline.ts';
+export * from './buildingStack.ts';
 export * from './calibration/index.ts';
 export {
   buildGraph,
@@ -35,10 +41,14 @@ export {
   type Route,
   type RouteFallback,
   type RouteResult,
+  type SlopeSegment,
   type UncertainSegment,
 } from './route.ts';
 export type { RouteStep, RouteStepKind } from './route-text.ts';
+export { STEEP_NOTE } from './route-text.ts';
 export * from './edit/index.ts';
 export * from './changeset/index.ts';
 export * from './reports/index.ts';
+export * from './survey/index.ts';
+export * from './matching/index.ts';
 export { describeSchemaErrors, type SchemaCheck } from './json-schema.ts';

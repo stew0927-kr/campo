@@ -129,12 +129,14 @@
       "required": ["type", "coordinates"],
       "properties": {
         "type": { "const": "Polygon" },
-        "coordinates": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "array", "minItems": 4, "items": { "$ref": "#/$defs/position" } }
-        }
+        "coordinates": { "$ref": "#/$defs/polygonCoordinates" }
       }
+    },
+    "polygonCoordinates": {
+      "description": "Rings of a Polygon: each closed (first = last, checked by E15 for floor outlines) with 4+ positions.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "array", "minItems": 4, "items": { "$ref": "#/$defs/position" } }
     },
 
     "level": {
@@ -173,12 +175,19 @@
         "levels": { "$ref": "#/$defs/levelList" },
         "ground_levels": { "$ref": "#/$defs/levelList" },
         "building_type": { "description": "A footbridge registered as a building (v0.2 §2.6).", "const": "bridge" },
+        "floor_outlines": {
+          "description": "Outlines of single floors that differ from the building geometry. Key String(level) (\"-1\", \"3\"), never \"0\"; a floor without one uses the geometry. Display only.",
+          "type": "object",
+          "propertyNames": { "pattern": "^-?[1-9][0-9]*$" },
+          "additionalProperties": { "$ref": "#/$defs/polygonCoordinates" }
+        },
         "ext": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "moct_bldg_id": { "type": "string", "minLength": 1 },
-            "floor_height_m": { "type": "number", "exclusiveMinimum": 0 }
+            "floor_height_m": { "type": "number", "exclusiveMinimum": 0 },
+            "plinth_floors": { "type": "number", "minimum": 0 }
           }
         }
       },
@@ -211,7 +220,11 @@
         "door_role": { "enum": ["front", "back", "other"] },
         "restroom_gender": { "enum": ["male", "female", "unisex", "family"] },
         "wheelchair": { "enum": ["yes", "limited", "no", "unknown"] },
-        "changing_table": { "type": ["boolean", "null"] }
+        "changing_table": { "type": ["boolean", "null"] },
+        "hours": { "description": "When the point can be passed, e.g. 07:00-22:00, 24/7. Free text.", "type": "string", "minLength": 1 },
+        "closed_period": { "description": "A period it is closed, e.g. 2026-11-15~2026-11-30.", "type": "string", "minLength": 1 },
+        "access_condition": { "description": "What it takes to get through, e.g. 상시개방, 학생증 태깅, 관리실 문의.", "type": "string", "minLength": 1 },
+        "sync_group": { "description": "Points copied to other floors of one building share this id (the editor keeps the flat edges between them alike).", "type": "string", "minLength": 1 }
       },
       "allOf": [
         {
@@ -262,9 +275,34 @@
         "covered": { "type": "boolean" },
         "hours": { "type": "string", "minLength": 1 },
         "building_from": { "type": "string", "minLength": 1 },
-        "building_to": { "type": "string", "minLength": 1 }
+        "building_to": { "type": "string", "minLength": 1 },
+        "flat_exact": { "description": "footway / corridor checked on site to be level: the height solver holds the height difference at 0 (docs/ELEVATION_INTEGRATION.md).", "type": "boolean" },
+        "is_breakline": { "description": "A terrain break (kerb, retaining wall, outdoor steps): height interpolation does not smooth across it. Missing: outdoor steps are one; false opts out.", "type": "boolean" },
+        "elev_diff_m": { "description": "Derived by the elevation recompute: height of to minus height of from, metres.", "type": "number", "minimum": -200, "maximum": 200 },
+        "elev_sigma_m": { "description": "Derived: standard deviation of elev_diff_m, metres.", "type": "number", "exclusiveMinimum": 0 },
+        "grade_pct": { "description": "Derived: elev_diff_m over the plan length, percent, from → to (positive = uphill).", "type": "number", "minimum": -1000, "maximum": 1000 }
       },
       "allOf": [
+        {
+          "description": "flat_exact only on footway and corridor (a level ramp is a footway).",
+          "if": { "required": ["flat_exact"] },
+          "then": { "properties": { "highway": { "enum": ["footway", "corridor"] } } }
+        },
+        {
+          "description": "is_breakline only on footway, steps and ramp (a terrain break is crossed on foot).",
+          "if": { "required": ["is_breakline"] },
+          "then": { "properties": { "highway": { "enum": ["footway", "steps", "ramp"] } } }
+        },
+        {
+          "description": "A level edge is not a terrain break: flat_exact and is_breakline are not both true.",
+          "if": { "required": ["flat_exact", "is_breakline"], "properties": { "flat_exact": { "const": true } } },
+          "then": { "properties": { "is_breakline": { "const": false } } }
+        },
+        {
+          "description": "elev_sigma_m and grade_pct come with elev_diff_m (all three are written by the recompute).",
+          "if": { "anyOf": [{ "required": ["elev_sigma_m"] }, { "required": ["grade_pct"] }] },
+          "then": { "required": ["elev_diff_m"] }
+        },
         {
           "description": "Allowed highway / edge_type pairs (§4.2).",
           "if": { "required": ["edge_type"], "properties": { "highway": { "const": "footway" } } },

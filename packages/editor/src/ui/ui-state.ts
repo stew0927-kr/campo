@@ -1,12 +1,20 @@
 // Screen-only state. Never saved; never mixed into CampusDoc.
 // (What the editor offers - tools, operations, panel tabs - is in registry.ts.)
-import { buildingById, findFeature, type EditState } from '@campo/core';
+import { buildingById, findFeature, type EditState, type Position } from '@campo/core';
 import type { IndoorNodeKind, OutdoorKind } from '../model/tools.ts';
 import { OUTDOOR, type Scope } from '../model/scope.ts';
 import { initialDoorRun, type DoorRun } from '../model/doors.ts';
 import type { EscalatorMode } from '../model/escalator.ts';
 import type { BasemapId } from '../map/basemaps.ts';
 import { toolAvailable, type PanelTab, type Tool } from './registry.ts';
+
+/** The three routes of 경로 테스트 (core profiles). */
+export type RouteKind = 'step_free' | 'shortest' | 'elevator_first';
+/** A point picked on the map for 직접 선택, and the floor (or the outdoors) it was picked on: only edges there are snapped to. */
+export interface RoutePoint {
+  at: Position;
+  scope: Scope;
+}
 
 /** What "지점 추가" places: indoors a node or a staircase; outdoors a point or a poi (SPEC §8). Elevators have their own tool. */
 export type AddKind = IndoorNodeKind | 'stairs' | 'outdoor' | 'poi';
@@ -32,6 +40,13 @@ export interface UiState {
   selection: string[];
   routeFrom: string | null;
   routeTo: string | null;
+  /** 경로 테스트 → 직접 선택: a point clicked on the map, snapped to the nearest edge for the route (routeFrom / routeTo are then null). */
+  routeFromPoint: RoutePoint | null;
+  routeToPoint: RoutePoint | null;
+  /** The end the next map click sets while 직접 선택 is waiting for it. */
+  routePick: 'from' | 'to' | null;
+  /** Routes drawn on the map (경로 테스트 toggles); null: only the fastest one. */
+  routeShown: RouteKind[] | null;
   /** 가장 가까운 화장실 asked for in the 경로 테스트 tab: any, or wheelchair-usable only. */
   nearest: 'any' | 'wheelchair' | null;
   /** 호실 연속 입력: next room number, step, last room. */
@@ -60,6 +75,10 @@ export const initialUi: UiState = {
   selection: [],
   routeFrom: null,
   routeTo: null,
+  routeFromPoint: null,
+  routeToPoint: null,
+  routePick: null,
+  routeShown: null,
   nearest: null,
   doorRun: initialDoorRun,
 };

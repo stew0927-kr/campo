@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ERROR_CODES as E, WARNING_CODES as W, isValidFeature, validateCampus, type LoadedCampus, type Position } from '../../src/index.ts';
 import { loadCampus } from '../../src/node/index.ts';
-import { rect, ring } from './helpers.ts';
+import { P, rect, ring } from './helpers.ts';
 
 const PLAZA_DIR = fileURLToPath(new URL('../fixtures/campus-plaza', import.meta.url));
 const meta = { id: 't', schema_version: '0.2', name: 't', center: [127.0001, 37.0001], bbox: [126.99, 36.99, 127.01, 37.01] };
@@ -51,6 +51,19 @@ describe('plaza checks', () => {
     expect(r.errors).toEqual([E.plazaOverlap]);
     expect(r.result.errors[0]!.featureId).toBe('b');
     expect(codes(campus(plaza('a', [rect(0, 0, 20, 20), rect(5, 5, 15, 15, false)]), plaza('b', [rect(7, 7, 13, 13)]))).errors).toEqual([]);
+  });
+  it('W17: a plaza that touches no outdoor node or walkable edge', () => {
+    expect(codes(campus(plaza('p', [rect(0, 0, 10, 10)]))).warnings).toContain(W.plazaNoContact);
+    const n = (id: string, x: number, y: number) => ({
+      type: 'Feature', id, geometry: { type: 'Point', coordinates: P(x, y) },
+      properties: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: 't', rev: 1 },
+    });
+    const e = {
+      type: 'Feature', id: 'e', geometry: { type: 'LineString', coordinates: [P(-5, 5), P(15, 5)] },
+      properties: { kind: 'edge', highway: 'footway', edge_type: 'outdoor', from: 'a', to: 'b', bidirectional: true, step_free: true, source: 't', rev: 1 },
+    };
+    expect(codes(campus(plaza('p', [rect(0, 0, 10, 10)]), n('a', -5, 5), n('b', 15, 5), e)).warnings).not.toContain(W.plazaNoContact);
+    expect(codes(campus(plaza('p', [rect(0, 0, 10, 10)]), n('a', 5, 5))).warnings).not.toContain(W.plazaNoContact);
   });
   it('W18: a plaza over a building outline', () => {
     const building = {

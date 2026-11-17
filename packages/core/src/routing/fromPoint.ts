@@ -5,8 +5,9 @@ import { footOnLine, lineLength } from '../edit/geo.ts';
 import type { CampusGraph, WalkLinkData } from '../graph.ts';
 import { findRoute, type NearestRoute, type Route, type RouteResult, type SlopeSegment } from '../route.ts';
 import { findNearestRestroom } from '../restroom.ts';
-import { gradeClass, type Profile } from '../costs.ts';
+import { WALK_SPEED_MPS, gradeClass, type Profile } from '../costs.ts';
 import type { EdgeFeature, Position } from '../types.ts';
+import { plazaAt, plazaDistance, plazaGeodesics, type PlazaPoint } from './plaza.ts';
 
 /** Where a point meets the route network. */
 export interface RouteSnap {
@@ -43,14 +44,27 @@ export function snapToRoutes(g: CampusGraph, point: Position, accept: (edge: Edg
   return best;
 }
 
-/** One end of a route: a campus node, or a snapped point. */
-export type RouteEnd = { nodeId: string } | { snap: RouteSnap };
+/** One end of a route: a campus node, a snapped point, or a point on a plaza (평지). */
+export type RouteEnd = { nodeId: string } | { snap: RouteSnap } | { plaza: PlazaPoint };
 
-/** A route between two ends; a snapped end adds its foot and the stretch of edge to the graph route. */
+/** The straight walk across a plaza between a picked point and where the plaza meets the network. */
+export interface PlazaLeg {
+  plazaId: string;
+  /** Start: picked point → contact. Destination: contact → picked point. Bends around holes included. */
+  path: Position[];
+  lengthM: number;
+  /** Where the walk meets the network. 'direct': both ends on one plaza, walked straight without the network. */
+  contact: { kind: 'node'; nodeId: string } | { kind: 'edge'; edgeId: string; at: Position; along: number } | { kind: 'direct' };
+}
+
+/** A route between two ends; a snapped end adds its foot and the stretch of edge to the graph route, a plaza end its walk. */
 export type PointRoute = Route & {
   /** Foot of the perpendicular at the start / end, when that end was a snapped point. */
   startFoot: Position | null;
   endFoot: Position | null;
+  /** Only when that end is a plaza point. */
+  startPlaza?: PlazaLeg;
+  endPlaza?: PlazaLeg;
 };
 
 export type PointRouteResult = PointRoute | Exclude<RouteResult, Route>;
@@ -62,6 +76,7 @@ interface Leg {
   distanceM: number;
   /** The part of a caution / steep edge walked between the foot and the edge's end (in travel direction). */
   slope?: SlopeSegment;
+  plaza?: PlazaLeg;
 }
 
 /** The walk link from `a` to `b` over edge `edgeId`, if the edge can be walked that way. */
@@ -100,13 +115,74 @@ function legsOf(g: CampusGraph, snap: RouteSnap, profile: Profile, leaving: bool
   return legs;
 }
 
+function plazaSeconds(lengthM: number): number {
+  return lengthM / WALK_SPEED_MPS;
+}
+
+function withPlaza(leg: Leg, plaza: PlazaLeg): Leg {
+  const t = plazaSeconds(plaza.lengthM);
+  return { ...leg, cost: leg.cost + t, timeSec: leg.timeSec + t, distanceM: leg.distanceM + plaza.lengthM, plaza };
+}
+
+/**
+ * The ways an end joins the graph. A node is itself; a snapped point walks to either end of its edge; a plaza point
+ * walks straight across the plaza to each contact (a node, or a point on an edge that then walks to either end of it).
+ * The plaza walk is flat ground: cost = time = length / WALK_SPEED_MPS for every profile.
+ */
+function legsOfEnd(g: CampusGraph, end: RouteEnd, profile: Profile, leaving: boolean): Leg[] {
+  if ('nodeId' in end) return [{ nodeId: end.nodeId, cost: 0, timeSec: 0, distanceM: 0 }];
+  if ('snap' in end) return legsOf(g, end.snap, profile, leaving);
+  const out: Leg[] = [];
+  for (const { contact, geodesic } of plazaGeodesics(g, end.plaza)) {
+    const path = leaving ? geodesic.path : [...geodesic.path].reverse();
+    if (contact.kind === 'node') {
+      const leg: PlazaLeg = { plazaId: end.plaza.plazaId, path, lengthM: geodesic.lengthM, contact: { kind: 'node', nodeId: contact.nodeId } };
+      out.push(withPlaza({ nodeId: contact.nodeId, cost: 0, timeSec: 0, distanceM: 0 }, leg));
+      continue;
+    }
+    const leg: PlazaLeg = {
+      plazaId: end.plaza.plazaId, path, lengthM: geodesic.lengthM,
+      contact: { kind: 'edge', edgeId: contact.edgeId, at: contact.at, along: contact.along },
+    };
+    const snap: RouteSnap = { point: contact.at, edgeId: contact.edgeId, foot: contact.at, distanceM: 0, along: contact.along };
+    for (const l of legsOf(g, snap, profile, leaving)) out.push(withPlaza(l, leg));
+  }
+  return out;
+}
+
+function noLegs(end: RouteEnd, profile: Profile): Exclude<RouteResult, Route> {
+  return 'plaza' in end
+    ? { found: false, profile, reason: 'no-route', message: '이 평지는 길과 닿는 곳이 없어 길을 찾을 수 없습니다.' }
+    : { found: false, profile, reason: 'no-route', message: '고른 자리 옆 구간을 이 방식으로는 지날 수 없습니다.' };
+}
+
+function footOf(end: RouteEnd): Position | null {
+  return 'snap' in end ? end.snap.foot : null;
+}
+
+/** The same plaza at both ends: the straight walk inside it, without the network. */
+function directRoute(g: CampusGraph, from: { plaza: PlazaPoint }, to: { plaza: PlazaPoint }, profile: Profile): PointRoute | null {
+  const d = plazaDistance(g, from.plaza.plazaId, from.plaza.point, to.plaza.point);
+  if (!d) return null;
+  const t = round1(plazaSeconds(d.lengthM));
+  const plazaId = from.plaza.plazaId;
+  return {
+    found: true, profile, nodes: [], edgeIds: [], cost: t, timeSec: t, distanceM: round1(d.lengthM),
+    stairsCount: 0, escalatorCount: 0, steps: [], uncertainSegments: [], slopeSegments: [], fallback: null,
+    startFoot: null, endFoot: null,
+    startPlaza: { plazaId, path: d.path, lengthM: d.lengthM, contact: { kind: 'direct' } },
+    endPlaza: { plazaId, path: [d.path[d.path.length - 1]!], lengthM: 0, contact: { kind: 'direct' } },
+  };
+}
+
 /**
  * The cheapest route between two ends for `profile`. A snapped end tries both ends of its edge (each a findRoute), so
- * the route may leave the foot either way. A node end is findRoute itself.
+ * the route may leave the foot either way; a plaza end tries every contact. A node end is findRoute itself. Both ends
+ * on one plaza also try the straight walk inside it, and the cheaper one wins.
  */
 export function findRouteBetween(g: CampusGraph, from: RouteEnd, to: RouteEnd, profile: Profile): PointRouteResult {
-  const starts: Leg[] = 'nodeId' in from ? [{ nodeId: from.nodeId, cost: 0, timeSec: 0, distanceM: 0 }] : legsOf(g, from.snap, profile, true);
-  const ends: Leg[] = 'nodeId' in to ? [{ nodeId: to.nodeId, cost: 0, timeSec: 0, distanceM: 0 }] : legsOf(g, to.snap, profile, false);
+  const starts = legsOfEnd(g, from, profile, true);
+  const ends = legsOfEnd(g, to, profile, false);
   let best: { route: Route; s: Leg; e: Leg; total: number } | null = null;
   let firstMiss: Exclude<RouteResult, Route> | null = null;
   for (const s of starts) {
@@ -120,8 +196,10 @@ export function findRouteBetween(g: CampusGraph, from: RouteEnd, to: RouteEnd, p
       if (!best || total < best.total) best = { route: r, s, e, total };
     }
   }
+  const direct = 'plaza' in from && 'plaza' in to && from.plaza.plazaId === to.plaza.plazaId ? directRoute(g, from, to, profile) : null;
+  if (direct && (!best || direct.cost <= round1(best.total))) return direct;
   if (!best) {
-    return firstMiss ?? { found: false, profile, reason: 'no-route', message: '고른 자리 옆 구간을 이 방식으로는 지날 수 없습니다.' };
+    return firstMiss ?? (starts.length === 0 ? noLegs(from, profile) : noLegs(to, profile));
   }
   const { route, s, e, total } = best;
   return {
@@ -131,8 +209,10 @@ export function findRouteBetween(g: CampusGraph, from: RouteEnd, to: RouteEnd, p
     distanceM: round1(route.distanceM + s.distanceM + e.distanceM),
     // The stretches between the feet and the graph route count too (a point picked on a steep edge).
     slopeSegments: [...(s.slope ? [s.slope] : []), ...route.slopeSegments, ...(e.slope ? [e.slope] : [])],
-    startFoot: 'snap' in from ? from.snap.foot : null,
-    endFoot: 'snap' in to ? to.snap.foot : null,
+    startFoot: footOf(from),
+    endFoot: footOf(to),
+    ...(s.plaza ? { startPlaza: s.plaza } : {}),
+    ...(e.plaza ? { endPlaza: e.plaza } : {}),
   };
 }
 
@@ -140,10 +220,10 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-/** 가장 가까운 화장실 from an end that may be a snapped point (findNearestRestroom from each end of its edge). */
+/** 가장 가까운 화장실 from an end that may be a snapped point or a plaza point (findNearestRestroom from each way in). */
 export function findNearestRestroomFrom(g: CampusGraph, from: RouteEnd, kind: 'any' | 'wheelchair'): (PointRoute & { targetId: string }) | Exclude<RouteResult, Route> {
   const profile: Profile = kind === 'wheelchair' ? 'wheelchair' : 'shortest';
-  const starts: Leg[] = 'nodeId' in from ? [{ nodeId: from.nodeId, cost: 0, timeSec: 0, distanceM: 0 }] : legsOf(g, from.snap, profile, true);
+  const starts = legsOfEnd(g, from, profile, true);
   let best: { route: NearestRoute; s: Leg; total: number } | null = null;
   let firstMiss: Exclude<RouteResult, Route> | null = null;
   for (const s of starts) {
@@ -155,7 +235,7 @@ export function findNearestRestroomFrom(g: CampusGraph, from: RouteEnd, kind: 'a
     const total = s.cost + r.cost;
     if (!best || total < best.total) best = { route: r, s, total };
   }
-  if (!best) return firstMiss ?? { found: false, profile, reason: 'no-route', message: '고른 자리 옆 구간을 이 방식으로는 지날 수 없습니다.' };
+  if (!best) return firstMiss ?? noLegs(from, profile);
   const { route, s, total } = best;
   return {
     ...route,
@@ -163,7 +243,55 @@ export function findNearestRestroomFrom(g: CampusGraph, from: RouteEnd, kind: 'a
     timeSec: round1(route.timeSec + s.timeSec),
     distanceM: round1(route.distanceM + s.distanceM),
     slopeSegments: [...(s.slope ? [s.slope] : []), ...route.slopeSegments],
-    startFoot: 'snap' in from ? from.snap.foot : null,
+    startFoot: footOf(from),
     endFoot: null,
+    ...(s.plaza ? { startPlaza: s.plaza } : {}),
+  };
+}
+
+/**
+ * The end a picked point makes: a point in a plaza's solid area is a plaza end, any other point (a plaza hole too) snaps
+ * to the nearest walkable edge, and null when there is none. plazaAt tells a caller the point was in a hole.
+ */
+export function endAtPoint(g: CampusGraph, point: Position, accept?: (e: EdgeFeature) => boolean): RouteEnd | null {
+  const on = plazaAt(g, point);
+  if (on?.hit === 'solid') return { plaza: { plazaId: on.plaza.id, point: [point[0], point[1]] } };
+  const snap = snapToRoutes(g, point, accept);
+  return snap ? { snap } : null;
+}
+
+/** A route through every end in order (stops in between): one findRouteBetween per pair, joined. The first miss is returned. */
+export function findRouteThrough(g: CampusGraph, ends: RouteEnd[], profile: Profile): PointRouteResult {
+  if (ends.length < 2) return { found: false, profile, reason: 'no-route', message: '출발과 도착을 모두 골라 주세요.' };
+  const parts: PointRoute[] = [];
+  for (let i = 0; i + 1 < ends.length; i++) {
+    const r = findRouteBetween(g, ends[i]!, ends[i + 1]!, profile);
+    if (!r.found) return r;
+    parts.push(r);
+  }
+  const first = parts[0]!;
+  const last = parts[parts.length - 1]!;
+  if (parts.length === 1) return first;
+  const nodes: string[] = [];
+  for (const p of parts) for (const n of p.nodes) if (nodes[nodes.length - 1] !== n) nodes.push(n);
+  const sum = (f: (p: PointRoute) => number) => round1(parts.reduce((s, p) => s + f(p), 0));
+  return {
+    found: true,
+    profile,
+    nodes,
+    edgeIds: parts.flatMap((p) => p.edgeIds),
+    cost: sum((p) => p.cost),
+    timeSec: sum((p) => p.timeSec),
+    distanceM: sum((p) => p.distanceM),
+    stairsCount: parts.reduce((s, p) => s + p.stairsCount, 0),
+    escalatorCount: parts.reduce((s, p) => s + p.escalatorCount, 0),
+    steps: parts.flatMap((p) => p.steps),
+    uncertainSegments: parts.flatMap((p) => p.uncertainSegments),
+    slopeSegments: parts.flatMap((p) => p.slopeSegments),
+    fallback: parts.find((p) => p.fallback !== null)?.fallback ?? null,
+    startFoot: first.startFoot,
+    endFoot: last.endFoot,
+    ...(first.startPlaza ? { startPlaza: first.startPlaza } : {}),
+    ...(last.endPlaza ? { endPlaza: last.endPlaza } : {}),
   };
 }

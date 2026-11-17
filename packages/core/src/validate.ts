@@ -23,7 +23,7 @@ import {
 import { CALIBRATION_FILE, CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
 import { GRADE_CAUTION_MAX_PCT, isStepFreePassable } from './costs.ts';
 import { outlineProblem } from './outline.ts';
-import { plazaHoleProblem, plazaRegionsOverlap, plazaRingProblem } from './plaza/geometry.ts';
+import { plazaHoleProblem, plazaRegionsOverlap, plazaRingProblem, plazaTouchesNetwork } from './plaza/geometry.ts';
 
 /** Max distance (m) between an edge's line ends and its from/to nodes (§7 error 4). */
 export const ENDPOINT_TOLERANCE_M = 1;
@@ -503,6 +503,18 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     }
     if (p.highway === 'ramp' && p.grade_pct !== undefined && Math.abs(p.grade_pct) > GRADE_CAUTION_MAX_PCT) {
       warn(file, edge.id, W.steepRamp, `경사로의 계산한 경사가 ${Math.abs(p.grade_pct).toFixed(1)}%로 ${GRADE_CAUTION_MAX_PCT}%를 넘습니다. 현장에서 확인해 주세요.`);
+    }
+  }
+
+  // W17. A plaza that touches no outdoor node and no walkable outdoor edge: a route cannot get on or off it.
+  // (A simplified version of the routing contacts, kept here so the checks do not depend on routing.)
+  const outdoorNodes = [...nodes.values()].filter(({ feature: n }) => n.properties.building_id === null).map(({ feature: n }) => n.geometry.coordinates);
+  const walkLines = edges
+    .filter(({ feature: e }) => e.properties.highway !== 'elevator' && e.properties.edge_type !== 'indoor')
+    .map(({ feature: e }) => e.geometry.coordinates);
+  for (const { file, feature: plaza } of goodPlazas) {
+    if (!plazaTouchesNetwork(plaza.geometry.coordinates, outdoorNodes, walkLines)) {
+      warn(file, plaza.id, W.plazaNoContact, '평지가 어떤 길과도 닿지 않아 길찾기에서 이 평지를 지날 수 없습니다. 바깥 지점이나 구간을 평지에 이어 주세요.');
     }
   }
 

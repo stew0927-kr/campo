@@ -22,7 +22,8 @@ import {
 } from './costs.ts';
 import { edgeTargetKey, elevatorTargetKey, measuredTimes } from './routing/measured.ts';
 import { activeClosures } from './routing/overrides.ts';
-import type { BuildingFeature, EdgeFeature, EdgeProperties, LoadedCampus, NodeFeature, Position } from './types.ts';
+import { plazaProblem } from './plaza/geometry.ts';
+import type { BuildingFeature, EdgeFeature, EdgeProperties, LoadedCampus, NodeFeature, PlazaFeature, Position } from './types.ts';
 
 export interface GraphNodeData {
   /** The campus node this graph node stands for (an elevator car maps to its stop). */
@@ -74,6 +75,8 @@ export interface CampusGraph {
   graph: Graph<GraphNodeData, GraphLinkData>;
   nodes: Map<string, NodeFeature>;
   buildings: Map<string, BuildingFeature>;
+  /** Plazas (평지) with usable rings, by id. Routes may walk straight across them to where they meet the network. */
+  plazas: Map<string, PlazaFeature>;
   /** Feature ids closed by an active override when the graph was built. */
   closed: ReadonlySet<string>;
   /**
@@ -131,6 +134,7 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
   const graph = createGraph<GraphNodeData, GraphLinkData>({ multigraph: true });
   const nodes = new Map<string, NodeFeature>();
   const buildings = new Map<string, BuildingFeature>();
+  const plazas = new Map<string, PlazaFeature>();
   const edges: EdgeFeature[] = [];
   const closed = activeClosures(options.overrides !== undefined ? options.overrides : campus.overrides, options.now ?? new Date());
   const measured = measuredTimes(options.calibration !== undefined ? options.calibration : campus.calibration);
@@ -141,6 +145,13 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     if (isNode(feature)) nodes.set(feature.id, feature);
     else if (isEdge(feature)) edges.push(feature);
     else if (isBuilding(feature)) buildings.set(feature.id, feature);
+    else if (isPlaza(feature)) {
+      if (plazaProblem(feature.geometry.coordinates)) {
+        warnings.push(`평지 '${feature.properties.name ?? feature.id}'의 모양이 올바르지 않아 길찾기에 쓰지 않습니다.`);
+      } else {
+        plazas.set(feature.id, feature);
+      }
+    }
   }
   for (const node of nodes.values()) {
     graph.addNode(node.id, { nodeId: node.id, position: node.geometry.coordinates });
@@ -225,7 +236,7 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     if (against) add(to, from, edge);
   }
 
-  return { graph, nodes, buildings, closed, heuristicSpeedMps, warnings };
+  return { graph, nodes, buildings, plazas, closed, heuristicSpeedMps, warnings };
 }
 
 /**
@@ -289,4 +300,7 @@ function isEdge(f: unknown): f is EdgeFeature {
 }
 function isBuilding(f: unknown): f is BuildingFeature {
   return hasKind(f, 'building', 'Polygon');
+}
+function isPlaza(f: unknown): f is PlazaFeature {
+  return hasKind(f, 'plaza', 'Polygon');
 }

@@ -7,7 +7,7 @@
 //   operations below    whether each operation can run now, and how (one entry per operation)
 //   panels below        what each side-panel tab shows              (one entry per tab)
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { buildingById, type EditBuilding, type EditEdge, type EditNode, type EditState, type Override, type Position, type Survey } from '@campo/core';
+import { buildingById, type EditBuilding, type EditEdge, type EditNode, type EditPlaza, type EditState, type Override, type Position, type Survey } from '@campo/core';
 import { fetchSurveyFiles, saveCampus, saveSurvey } from '../api.ts';
 import { MapView, type FocusRequest } from '../map/MapView.tsx';
 import { brokenByLevel, brokenIds, findBroken, nextBroken, planConnectNear, type BrokenItem } from '../model/broken.ts';
@@ -18,6 +18,7 @@ import { HandleDrag, NodeDrag, type DragResult } from '../model/drag.ts';
 import { featureCenter, featureScope } from '../model/locate.ts';
 import { makeObservation, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 import { menuFields, planMenuEdit, selectionSummary, type MenuEdits } from '../model/menu.ts';
+import { planDeletePlaza, planPlaza, planPlazaEdit, planRemovePlazaHole, plazaDraftMessage, plazaLabel, type PlazaEdits } from '../model/plaza.ts';
 import { buildingAt } from '../model/building.ts';
 import { breaklinePositions, insertBreaklinePoint, moveBreaklinePoint, planElevationFlag, removeBreaklinePoint, sideLabel } from '../model/elevation.ts';
 import { fetchOsmBuilding, osmCode, planOsmBuilding } from '../model/osm.ts';
@@ -34,7 +35,8 @@ import { levelRemoveBlocked, planRenameBuilding, planSetBuildingLevels, planSetB
 import { BreaklineForm, BreaklinePanel, breaklineTitle } from '../ui/BreaklineForm.tsx';
 import { BuildingPanel } from '../ui/BuildingPanel.tsx';
 import { ChecksPanel } from '../ui/ChecksPanel.tsx';
-import { BreaklineContextMenu, BuildingContextMenu, ContextMenu } from '../ui/ContextMenu.tsx';
+import { BreaklineContextMenu, BuildingContextMenu, ContextMenu, PlazaContextMenu } from '../ui/ContextMenu.tsx';
+import { PlazaPanel } from '../ui/PlazaPanel.tsx';
 import { CopyPanel } from '../ui/CopyPanel.tsx';
 import { CrossPicker } from '../ui/CrossPicker.tsx';
 import { FloorPicker } from '../ui/FloorPicker.tsx';
@@ -649,18 +651,28 @@ export function Workspace({ session }: { session: Session }) {
 
   // ---- 우클릭 메뉴, 다른 층에 복사 (SPEC-v0.2 5.1 작업) ----
   /** The target joins the selection when it was not in it (only it is selected then); the menu opens at the pointer. */
-  const onContextMenu = ({ node, edge, building, breakline, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; building?: EditBuilding; breakline?: BreaklineHit; x: number; y: number }) => {
+  const onContextMenu = ({ node, edge, building, plaza, breakline, x, y }: { node: EditNode | undefined; edge: EditEdge | undefined; building?: EditBuilding; plaza?: EditPlaza; breakline?: BreaklineHit; x: number; y: number }) => {
     if (breakline) {
       setCtxMenu(null);
       if (lineSel !== breakline.id) selectLine(breakline.id);
       return setLineMenu({ ...breakline, x, y });
     }
     setLineMenu(null);
-    const hit = node?.id ?? edge?.id ?? building?.id;
+    const hit = node?.id ?? edge?.id ?? building?.id ?? plaza?.id;
     if (!hit) return setCtxMenu(null);
     if (!ui.selection.includes(hit)) patchUi({ selection: [hit], panelTab: 'properties' });
     setCtxMenu({ x, y });
   };
+  /** The one plaza selected (상세 정보 and the right-click menu show the plaza's own fields). */
+  const selectedPlaza = ui.selection.length === 1 ? state.plazas[ui.selection[0]!] : undefined;
+  /** 평지 도구: the ring drawn becomes a new plaza (selected, 상세 정보 open for its name and height) or a hole. */
+  const onPlazaDrawn = (ring: Position[]) => {
+    const { plan, plazaId, created } = planPlaza(state, ctx, ring);
+    // A new plaza is selected with 상세 정보 open, so its name and height can be typed right away; a hole selects its plaza.
+    if (perform(plan) === undefined && plazaId !== null) patchUi({ selection: [plazaId], panelTab: 'properties' });
+    void created;
+  };
+  const editPlaza = (id: string, edits: PlazaEdits): string | undefined => perform(planPlazaEdit(state, id, edits));
   /** The one building selected while the right-click menu is open: it gets the building menu. */
   const contextBuilding = ui.selection.length === 1 ? buildingById(state, ui.selection[0]!) : undefined;
   /** A plan from the building menu: its error stays in the menu, success closes it. */
@@ -853,7 +865,17 @@ export function Workspace({ session }: { session: Session }) {
             onResetOutline={(level) => perform(planResetOutline(state, selectedBuilding.id, level))}
           />
         )}
-        <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))} />
+        {selectedPlaza ? (
+          <PlazaPanel
+            key={selectedPlaza.id}
+            plaza={selectedPlaza}
+            onEdit={(edits) => editPlaza(selectedPlaza.id, edits)}
+            onRemoveHole={(index) => perform(planRemovePlazaHole(state, selectedPlaza.id, index))}
+            onDelete={() => perform(planDeletePlaza(state, ctx, selectedPlaza.id))}
+          />
+        ) : (
+          <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))} />
+        )}
         {one && <SurveyNotes notes={surveyNotes(surveys, one.id, state)} />}
         {measure && measureTarget && (
           <MeasurePanel
@@ -970,7 +992,8 @@ export function Workspace({ session }: { session: Session }) {
           breaklineEdit={breaklineEdit}
           breaklines={elevation.breaklineShapes}
           slopes={elevation.slopes}
-          onPolygonDrawn={(ring) => setDialog({ kind: 'building', ring })}
+          onPolygonDrawn={(ring) => (ui.tool === 'plaza' ? onPlazaDrawn(ring) : setDialog({ kind: 'building', ring }))}
+          onPlazaDraft={(first) => info(plazaDraftMessage(state, first))}
           onMapClick={(click) => {
             // 경로 테스트 → 직접 선택: the click is the route's end, snapped to the nearest edge there.
             if (ui.panelTab === 'routes' && ui.routePick) {
@@ -1082,7 +1105,25 @@ export function Workspace({ session }: { session: Session }) {
           onClose={() => setCtxMenu(null)}
         />
       )}
-      {ctxMenu && ui.selection.length > 0 && !contextBuilding && (
+      {ctxMenu && selectedPlaza && (
+        <PlazaContextMenu
+          key={selectedPlaza.id}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          title={plazaLabel(selectedPlaza)}
+          name={selectedPlaza.props.name}
+          surface={selectedPlaza.props.surface}
+          fixedHeight={selectedPlaza.props.fixed_height_m}
+          holes={selectedPlaza.polygon.length - 1}
+          onName={(name) => runMenuPlan(planPlazaEdit(state, selectedPlaza.id, { name }))}
+          onSurface={(surface) => runMenuPlan(planPlazaEdit(state, selectedPlaza.id, { surface: surface as NonNullable<PlazaEdits['surface']> | null }))}
+          onHeight={(height) => runMenuPlan(planPlazaEdit(state, selectedPlaza.id, { height }))}
+          onRemoveHole={(index) => runMenuPlan(planRemovePlazaHole(state, selectedPlaza.id, index))}
+          onDelete={() => runMenuPlan(planDeletePlaza(state, ctx, selectedPlaza.id))}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {ctxMenu && ui.selection.length > 0 && !contextBuilding && !selectedPlaza && (
         <ContextMenu
           x={ctxMenu.x}
           y={ctxMenu.y}

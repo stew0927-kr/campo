@@ -7,6 +7,7 @@ import type { BreakLineSide } from '@campo/core/elevation';
 import { parseLevels } from '../model/building.ts';
 import { parseDropM, sideLabel } from '../model/elevation.ts';
 import type { MenuEdits, MenuFields } from '../model/menu.ts';
+import { PLAZA_SURFACE_LABELS as PLAZA_SURFACE_NAMES } from '../model/plaza.ts';
 import { tabLabel } from './registry.ts';
 
 interface Props {
@@ -289,6 +290,60 @@ export function BuildingContextMenu(p: BuildingMenuProps) {
       )}
       {menuItem('외곽선 수정', false, p.onEditOutline, 'edit-outline')}
       {menuItem('삭제', p.deleteBlocked, p.onDelete, 'delete')}
+    </MenuShell>
+  );
+}
+
+interface PlazaMenuProps {
+  x: number;
+  y: number;
+  /** 평지 '분수 광장' */
+  title: string;
+  name: string | undefined;
+  surface: string | undefined;
+  fixedHeight: number | undefined;
+  /** How many holes (구멍 n) the plaza has. */
+  holes: number;
+  /** Each returns the error to show in the menu, or undefined when it ran. */
+  onName: (name: string) => string | undefined;
+  onSurface: (surface: string | null) => string | undefined;
+  onHeight: (text: string) => string | undefined;
+  onRemoveHole: (index: number) => string | undefined;
+  onDelete: () => void;
+  onClose: () => void;
+}
+
+/** The right-click menu of a 평지: 이름·표면·고정 높이, 구멍 삭제, 평지 삭제. */
+export function PlazaContextMenu(p: PlazaMenuProps) {
+  const [name, setName] = useState(p.name ?? '');
+  const [height, setHeight] = useState(p.fixedHeight === undefined ? '' : String(p.fixedHeight));
+  const [error, setError] = useState<string | null>(null);
+  const enter = (run: () => string | undefined) => (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    setError(run() ?? null);
+  };
+  return (
+    <MenuShell x={p.x} y={p.y} label="평지 메뉴" onClose={p.onClose} relayout={error}>
+      <p className="ctx-head">{p.title}</p>
+      <div className="ctx-props">
+        <label>이름
+          <input aria-label="평지 이름" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={enter(() => p.onName(name))} />
+        </label>
+        <label>표면
+          <select aria-label="표면" value={p.surface ?? ''} onChange={(e) => setError(p.onSurface(e.target.value === '' ? null : e.target.value) ?? null)}>
+            <option value="">정하지 않음</option>
+            {Object.entries(PLAZA_SURFACE_NAMES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label>고정 높이 (m, 비우면 자동)
+          <input aria-label="고정 높이" inputMode="decimal" value={height} placeholder="자동" onChange={(e) => setHeight(e.target.value)} onKeyDown={enter(() => p.onHeight(height))} />
+        </label>
+        {error && <p className="ctx-reason" role="alert">{error}</p>}
+        <p className="field-help">이름과 높이는 Enter를 눌러 넣습니다.</p>
+      </div>
+      {Array.from({ length: p.holes }, (_, i) => menuItem(`구멍 ${i + 1} 삭제`, false, () => setError(p.onRemoveHole(i) ?? null), `hole-${i}`))}
+      {menuItem('평지 삭제', false, p.onDelete, 'delete')}
     </MenuShell>
   );
 }

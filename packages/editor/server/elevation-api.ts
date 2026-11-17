@@ -191,6 +191,8 @@ export function createElevationApi(opts: ElevationApiOptions) {
           await writeFile(dirty, `${JSON.stringify(request, null, 2)}\n`, 'utf8');
           const previousResidual = join(paths.solve, 'residual_field.json');
           const args = [
+            // 평지 is held flat by height solver v2 only: a campus with one always runs v2.
+            ...(campusHasPlaza(body.files as Record<string, string>) ? ['--engine', 'v2'] : []),
             '--store', paths.store, '--dem', paths.dem, ...(opts.sigmaDem ? ['--sigma-dem', opts.sigmaDem] : []),
             '--campus', campus, '--out', paths.solve, '--derived-out', paths.derived, '--dirty', dirty,
             ...(await exists(previousResidual) ? ['--previous-residual', previousResidual] : []),
@@ -212,6 +214,19 @@ export function createElevationApi(opts: ElevationApiOptions) {
       return send(res, status, { error: (err as Error).message });
     }
   };
+}
+
+/** Whether the campus files hold a plaza (평지) Feature. Files that are not FeatureCollection JSON are skipped. */
+export function campusHasPlaza(files: Readonly<Record<string, string>>): boolean {
+  return Object.entries(files).some(([path, text]) => {
+    if (!path.endsWith('.geojson') || !text.includes('plaza')) return false;
+    try {
+      const fc = JSON.parse(text) as { features?: { properties?: { kind?: unknown } }[] };
+      return (fc.features ?? []).some((f) => f?.properties?.kind === 'plaza');
+    } catch {
+      return false;
+    }
+  });
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {

@@ -714,10 +714,14 @@ def breakline_boxes(req: dict, project: Optional[Callable[[float, float], tuple[
     RecomputeRequest.breaklines[].boxes (WGS84 [minLng, minLat, maxLng, maxLat]: where a 고도 단절선 was drawn, changed or
     removed, before and after) → 격자 CRS의 (xmin, ymin, xmax, ymax). 투영 함수가 없으면 빈 목록.
     """
+    return _request_boxes(req, project, "breaklines")
+
+
+def _request_boxes(req: dict, project, key: str) -> list[tuple[float, float, float, float]]:
     out = []
     if project is None:
         return out
-    for line in req.get("breaklines", []) or []:
+    for line in req.get(key, []) or []:
         for b in line.get("boxes", []) or []:
             if len(b) != 4:
                 continue
@@ -737,7 +741,8 @@ def dirty_seeds(req: dict, cm: Optional[CampusModel], keys: Iterable[str],
         seeds |= {cm.var_of[n] for n in req.get("campusNodes", []) if n in cm.var_of}
         for eid in req.get("campusEdges", []):
             seeds |= set(cm.edge_vars.get(eid, ()))
-        for x0, y0, x1, y1 in breakline_boxes(req, project):
+        # 평지가 그려지거나 바뀌거나 지워진 곳(req.plazas, 선택 키)도 같은 방식: 그 상자를 지나는 구간의 변수
+        for x0, y0, x1, y1 in breakline_boxes(req, project) + _request_boxes(req, project, "plazas"):
             for eid, ((ax, ay), (bx, by)) in cm.edge_xy.items():
                 if max(ax, bx) >= x0 and min(ax, bx) <= x1 and max(ay, by) >= y0 and min(ay, by) <= y1:
                     seeds |= set(cm.edge_vars.get(eid, ()))

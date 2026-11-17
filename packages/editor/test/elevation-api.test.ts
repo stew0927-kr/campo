@@ -69,6 +69,17 @@ describe('elevation API (고도 다시 계산)', () => {
     expect((await readdir(join(root, 'campus-a'))).filter((f) => f.startsWith('.work-'))).toEqual([]);
   });
 
+  it('a campus with a plaza (평지) runs height solver v2; without one the engine is left to the solver', async () => {
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    await writeFile(join(root, 'campus-a', 'store.json'), STORE);
+    await writeFile(join(root, 'campus-a', 'dem.json'), '{}');
+    const plaza = '{"type":"FeatureCollection","features":[{"type":"Feature","id":"plaza_a","properties":{"kind":"plaza","source":"t","rev":1}}]}';
+    expect((await recompute({ request: REQUEST, files: { 'outdoor.geojson': plaza } })).status).toBe(200);
+    expect(calls[0]!.slice(0, 2)).toEqual(['--engine', 'v2']);
+    expect((await recompute({ request: REQUEST, files: { 'outdoor.geojson': '{"type":"FeatureCollection","features":[]}' } })).status).toBe(200);
+    expect(calls[1]).not.toContain('--engine');
+  });
+
   it('a failing solver is a 500 with the end of its output; bad requests are 400', async () => {
     await mkdir(join(root, 'campus-a'), { recursive: true });
     await writeFile(join(root, 'campus-a', 'store.json'), STORE);

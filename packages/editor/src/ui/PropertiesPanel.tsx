@@ -15,7 +15,7 @@ const SOURCES = [
 const KIND_LABELS: Record<string, string> = {
   building: '건물', outdoor: '바깥 지점', entrance: '출입구', door: '문', corridor: '복도 지점',
   elevator_stop: '엘리베이터 정차', stair_landing: '계단참', poi: '출발·도착 후보', restroom: '화장실',
-  footway: '평지 길', steps: '계단', corridor_edge: '복도', elevator: '엘리베이터', ramp: '경사로',
+  footway: '평지 길', steps: '계단', corridor_edge: '복도', elevator: '엘리베이터', ramp: '경사로', plaza: '평지',
 };
 
 /** What `conveying` says, read from the drawn direction (from → to). Turning it round is the 뒤집기 operation (F). */
@@ -89,7 +89,7 @@ export function PropertiesPanel({ feature, selectedCount, onEdit, onFlag }: Pane
   const kind = p.kind === 'node' ? KIND_LABELS[p.node_type] : p.kind === 'edge'
     ? (p.conveying !== undefined && p.highway === 'steps' ? '에스컬레이터' : p.conveying !== undefined ? '무빙워크'
       : p.edge_type === 'portal' ? '출입구 연결' : p.edge_type === 'bridge' ? '연결통로' : KIND_LABELS[p.highway === 'corridor' ? 'corridor_edge' : p.highway])
-    : p.kind === 'room' ? '강의실 영역' : KIND_LABELS.building;
+    : p.kind === 'room' ? '강의실 영역' : p.kind === 'plaza' ? KIND_LABELS.plaza : KIND_LABELS.building;
   const sources = SOURCES.some((s) => s.value === p.source) ? SOURCES : [...SOURCES, { value: p.source, label: p.source }];
   return (
     <form className="props" onSubmit={(e) => e.preventDefault()}>

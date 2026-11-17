@@ -256,7 +256,8 @@ SPEC-v0.2 9장은 "경사도 계산, 고도 데이터 합치기"를 v0.2 범위 
 | `ElevationRepo` | 완료 | `storage/elevationRepo.ts`: `elevation/store.json`(`serializeElevationStore`, 임시 파일을 거쳐 씀), `elevation/dirty.json`(`markMeasurements`의 heightNodes), 설치 id. 내보내기 zip에 `elevation_store.json`, `elevation_dirty.json`(Δh·σ·Δt만) |
 | `motionPermission` | 완료 | app.json 문구 |
 | 검사 경고 | 완료 | W15 `flat-exact-not-flat`, W16 `steep-ramp`(SPEC-v0.2 8장) |
-| 남은 일 | — | 편집기 현장 기록 불러오기가 zip의 `elevation_store.json`을 `derived/<캠퍼스>/store.json`에 합치는 것(지금은 손으로 복사), SPEC-v0.2 3.4 프로필 표, σ 모델 재추정 |
+| 현장 기록의 고도 측정 | 완료 | 편집기 현장 기록 불러오기가 zip의 `elevation_store.json`을 `derived/<캠퍼스>/store.json`에 합친다(`model/elevation.ts` `mergePhoneStore`). 같은 휴대폰(`installId`)이 전에 가져온 세션·Δh는 새 내보내기로 바꾸고(휴대폰에서 지우거나 대체한 Δh는 다시 살아나지 않음), 다른 휴대폰의 측정·편집기에서 그린 단절선·솔버 추정값은 둔다. 바뀐 Δh의 양 끝을 `heightNodes`로 표시해 다시 계산 대상이 된다. 높이 기준이 다르거나 절대 기압이 있으면 넣지 않고 알림에 이유를 쓴다 |
+| 남은 일 | — | SPEC-v0.2 3.4 프로필 표, σ 모델 재추정 |
 
 ### 지형 3D와 건물 3D (편집기)
 

@@ -10,7 +10,7 @@ import { PICTOGRAM_COLORS, STACK_COLORS, beltEndIds, buildingById, edgeCoords, o
 import type { Scope } from '../model/scope.ts';
 import {
   ROUTE_LIFT_M, buildingGround, buildingSegments, drapePath, floorBases, groundOf, nodeHeights, routePath3D, terrainMesh, terrainWire,
-  type Ground, type RouteRef, type Segment3D, type TerrainGrid,
+  wallCells, wallMesh, type Ground, type RouteRef, type Segment3D, type TerrainGrid, type TerrainWall, type WallTriangle,
 } from '../model/terrain3d.ts';
 import type { SlopeLine } from '../model/elevation.ts';
 import { pictogramDataUrl, routePinDataUrl } from './iconUrls.ts';
@@ -39,12 +39,18 @@ const SLAB_GAP_M = 0.4;
 const SELECTED_PLATE_M = 0.35;
 /** The indoor points and links are drawn over the slabs whatever is in front, so they never hide behind a floor. */
 const ON_TOP = { depthCompare: 'always' as const };
+/** A wall's section floats this far (× 높이 과장) over the relief, so where the two overlap they do not flicker. */
+const WALL_LIFT_M = 0.03;
+/** The face of a wall: concrete grey, apart from the relief's sage-sand-clay. */
+const WALL_FACE = rgb('#8d8f8c');
 
 export interface Deck3DInput {
   state: EditState;
   scope: Scope;
   /** The height grid, or null (flat ground). */
   grid: TerrainGrid | null;
+  /** 옹벽: the 1 m sections across the drawn walls that came with the grid (none: the relief as it is). */
+  walls?: readonly TerrainWall[];
   terrain: boolean;
   buildings: boolean;
   measured: (buildingId: string) => ReadonlyMap<Level, number>;
@@ -61,20 +67,38 @@ interface Slab {
   role: 'floor' | 'below' | 'selected' | 'ground' | 'plinth';
 }
 
-export function deckLayers({ state, scope, grid, terrain, buildings, measured, exaggeration: k, routes, slopes }: Deck3DInput): Layer[] {
+export function deckLayers({ state, scope, grid, walls = [], terrain, buildings, measured, exaggeration: k, routes, slopes }: Deck3DInput): Layer[] {
   const layers: Layer[] = [];
   const ground: Ground = terrain ? groundOf(grid, k) : () => 0;
   const mode: StackMode = terrain ? 'terrain' : 'flat';
 
   if (terrain && grid) {
-    const cells = terrainMesh(grid, 1, k);
+    // The thinned cells a wall crosses are left out: the wall's 1 m section is drawn there instead.
+    const cut = walls.length > 0 ? wallCells(grid, walls) : undefined;
+    const cells = terrainMesh(grid, 1, k, cut);
     const top = Math.max(1, ...cells.map((c) => c.z));
     layers.push(new SolidPolygonLayer({
       id: 'terrain-mesh', data: cells, _full3d: true, filled: true, extruded: false, opacity: 0.93,
       getPolygon: (c: (typeof cells)[number]) => c.polygon, getFillColor: (c: (typeof cells)[number]) => reliefColor(c.z / top),
     }));
+    if (walls.length > 0) {
+      // Each wall a hair higher than the one before, so crossing sections do not flicker either.
+      const tris = walls.flatMap((w, i) => wallMesh(grid, [w], k, (WALL_LIFT_M + 0.01 * i) * k));
+      const strip = tris.filter((t) => t.role === 'strip');
+      const face = tris.filter((t) => t.role === 'face');
+      layers.push(
+        new SolidPolygonLayer({
+          id: 'terrain-wall-strip', data: strip, _full3d: true, filled: true, extruded: false, opacity: 0.93,
+          getPolygon: (t: WallTriangle) => t.polygon, getFillColor: (t: WallTriangle) => reliefColor(t.z / top),
+        }),
+        new SolidPolygonLayer({
+          id: 'terrain-wall-face', data: face, _full3d: true, filled: true, extruded: false, opacity: 1,
+          getPolygon: (t: WallTriangle) => t.polygon, getFillColor: WALL_FACE,
+        }),
+      );
+    }
     // A light wire every few cells: the eye reads slope from how the lines bend.
-    const lines = terrainWire(grid, Math.max(2, Math.round(grid.width / 24)), k);
+    const lines = terrainWire(grid, Math.max(2, Math.round(grid.width / 24)), k, cut);
     layers.push(new PathLayer({
       id: 'terrain-wire', data: lines, getPath: (l: [number, number, number][]) => l,
       getColor: [255, 255, 255, 80], getWidth: 1, widthUnits: 'pixels',

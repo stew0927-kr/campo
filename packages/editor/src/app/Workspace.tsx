@@ -45,7 +45,7 @@ import { TerrainButton } from '../ui/TerrainButton.tsx';
 import { measuredFloorLevels, plinthFloors } from '@campo/core';
 import { deckLayers } from '../map/deck3d.ts';
 import { fetchTerrain } from '../api.ts';
-import { groundOf, sampleTerrainGrid, terrainBase, terrainTop, type TerrainGrid } from '../model/terrain3d.ts';
+import { groundOf, sampleTerrainGrid, terrainBase, terrainTop, type TerrainGrid, type TerrainWall } from '../model/terrain3d.ts';
 import { ExaggerationControl } from '../ui/ExaggerationControl.tsx';
 import { HelpDialog } from '../ui/HelpDialog.tsx';
 import { MeasurePanel } from '../ui/MeasurePanel.tsx';
@@ -122,6 +122,11 @@ export function Workspace({ session }: { session: Session }) {
   /** 지형 3D: on or off (independent of 건물 3D), and the grid once it has been asked for (null: none; undefined: not yet). */
   const [terrain3d, setTerrain3d] = useState(false);
   const [terrainGrid, setTerrainGrid] = useState<TerrainGrid | null | undefined>(undefined);
+  /** 옹벽: the 1 m sections across the drawn walls that came with the grid (none with the sample relief). */
+  const [terrainWalls, setTerrainWalls] = useState<TerrainWall[]>([]);
+  /** The grid has been asked for (refs: the reload runs from callbacks made in earlier renders), and the latest request. */
+  const terrainAsked = useRef(false);
+  const terrainSeq = useRef(0);
   /** 높이 과장 of both 3D views: kept while they are turned off and on again, back to 1 only when the page is reloaded (never saved). */
   const [exaggeration, setExaggeration] = useState(1);
   const toggleTerrain = () => {
@@ -130,29 +135,43 @@ export function Workspace({ session }: { session: Session }) {
       return info(view3d ? '지형 3D를 껐습니다. 건물 3D는 그대로입니다.' : '지형 3D를 껐습니다.');
     }
     setTerrain3d(true);
-    if (terrainGrid !== undefined) return;
+    if (terrainAsked.current) return;
+    terrainAsked.current = true;
+    const seq = ++terrainSeq.current;
     fetchTerrain(session.campusId).then(
-      (grid) => {
+      ({ grid, walls }) => {
+        if (seq !== terrainSeq.current) return;
         setTerrainGrid(grid ?? sampleTerrainGrid(session.meta.center));
+        setTerrainWalls(grid ? walls : []);
         info(grid
-          ? `${grid.source === 'corrected' ? '보정한 고도 그리드' : 'DEM(보정 전)'}로 지형을 그렸습니다. 바깥 길과 건물 1층 외곽선이 지형 높이에 올라갑니다.`
+          ? `${grid.source === 'corrected' ? '보정한 고도 그리드' : 'DEM(보정 전)'}로 지형을 그렸습니다. 바깥 길과 건물 1층 외곽선이 지형 높이에 올라갑니다.${walls.length > 0 ? ` 옹벽 ${walls.length}개는 1 m 단면으로 그립니다.` : ''}`
           : '보정 고도 그리드도 DEM도 없어 샘플 지형(실제 고도가 아님)을 보여 줍니다. derived/<캠퍼스>/에 DEM을 두고 고도 다시 계산을 돌리면 실제 지형이 나옵니다.');
       },
       // Without the dev server's elevation API: the sample, so the view can still be tried.
       () => {
+        if (seq !== terrainSeq.current) return;
         setTerrainGrid(sampleTerrainGrid(session.meta.center));
+        setTerrainWalls([]);
         info('고도 그리드를 불러오지 못해 샘플 지형(실제 고도가 아님)을 보여 줍니다.');
       },
     );
   };
-  /** After 고도 다시 계산 wrote new files: the grid is read again (if it was ever asked for), so 지형 3D shows the corrected relief. */
+  /**
+   * After 고도 다시 계산 wrote new files, or a break line was saved: the grid and the walls are read again (if they were ever
+   * asked for), so 지형 3D shows the corrected relief and the walls follow the lines. Only the latest request is applied.
+   */
   const reloadTerrain = () => {
-    if (terrainGrid === undefined) return;
+    if (!terrainAsked.current) return;
+    const seq = ++terrainSeq.current;
     fetchTerrain(session.campusId).then(
-      (grid) => {
-        if (grid) setTerrainGrid(grid);
+      ({ grid, walls }) => {
+        if (seq !== terrainSeq.current || !grid) return;
+        setTerrainGrid(grid);
+        setTerrainWalls(walls);
       },
-      () => info('다시 계산한 지형을 불러오지 못했습니다. 지형 3D를 껐다 켜 보세요.'),
+      () => {
+        if (seq === terrainSeq.current) info('다시 계산한 지형을 불러오지 못했습니다. 지형 3D를 껐다 켜 보세요.');
+      },
     );
   };
   /** Bumped when the session's unsaved measurements or loaded observations change (they live in the session, outside the edit history). */
@@ -210,7 +229,7 @@ export function Workspace({ session }: { session: Session }) {
   };
 
   // ---- 고도: dirty marks, 고도 다시 계산, 불연속선, the slope parts of the routes (useElevation.ts) ----
-  const elevation = useElevation({ session, state, perform, info, fail, routes: routeResults, shown: routeShown, nearest: nearest?.result ?? null, onSolved: reloadTerrain });
+  const elevation = useElevation({ session, state, perform, info, fail, routes: routeResults, shown: routeShown, nearest: nearest?.result ?? null, onSolved: reloadTerrain, onStoreSaved: reloadTerrain });
 
   // ---- 고도 단절선 selected for editing: its side, drop and points go to the elevation store (not the edit history) ----
   const selectedLine = lineSel ? elevation.breaklines.find((b) => b.id === lineSel) : undefined;
@@ -745,11 +764,11 @@ export function Workspace({ session }: { session: Session }) {
   /** 건물 3D (floors stacked by height: measured floor planes, then the building's floor height, then 3.9 m) and 지형 3D. */
   const deck = useMemo(
     () => (view3d || terrain3d ? deckLayers({
-      state, scope: ui.scope, grid: terrainGrid ?? null, terrain: terrain3d, buildings: view3d,
+      state, scope: ui.scope, grid: terrainGrid ?? null, walls: terrainWalls, terrain: terrain3d, buildings: view3d,
       measured: (id) => measuredFloorLevels(elevation.estimates, id),
       exaggeration, routes: routeLines, slopes: elevation.slopes,
     }) : []),
-    [view3d, terrain3d, terrainGrid, state, ui.scope, elevation.estimates, exaggeration, routeLines, elevation.slopes],
+    [view3d, terrain3d, terrainGrid, terrainWalls, state, ui.scope, elevation.estimates, exaggeration, routeLines, elevation.slopes],
   );
   /** 지형 3D: the relief as drawn, so clicks and drawing land where the cursor is seen on it. */
   const surface = useMemo(

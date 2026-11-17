@@ -4,60 +4,9 @@
 // routing never reads a height.
 import { edgeCoords, outlineOfLevel, stackLayout, type EditBuilding, type StackMode, type EditState, type Level, type Position } from '@campo/core';
 
-// ---- EPSG:5186 (Korea 2000 / Central Belt 2010): transverse Mercator on GRS80 ----
-
-const A = 6378137;
-const F = 1 / 298.257222101;
-const E2 = F * (2 - F);
-const EP2 = E2 / (1 - E2);
-const LAT0 = (38 * Math.PI) / 180;
-const LON0 = (127 * Math.PI) / 180;
-const K0 = 1;
-const FE = 200000;
-const FN = 600000;
-
-function meridian(phi: number): number {
-  const e4 = E2 * E2;
-  const e6 = e4 * E2;
-  return A * ((1 - E2 / 4 - (3 * e4) / 64 - (5 * e6) / 256) * phi
-    - ((3 * E2) / 8 + (3 * e4) / 32 + (45 * e6) / 1024) * Math.sin(2 * phi)
-    + ((15 * e4) / 256 + (45 * e6) / 1024) * Math.sin(4 * phi)
-    - ((35 * e6) / 3072) * Math.sin(6 * phi));
-}
-const M0 = meridian(LAT0);
-
-/** [longitude, latitude] → [x, y] metres in EPSG:5186. */
-export function toKorea2000(p: Position): [number, number] {
-  const phi = (p[1] * Math.PI) / 180;
-  const lam = (p[0] * Math.PI) / 180;
-  const [s, c, t] = [Math.sin(phi), Math.cos(phi), Math.tan(phi)];
-  const N = A / Math.sqrt(1 - E2 * s * s);
-  const T = t * t;
-  const C = EP2 * c * c;
-  const a = (lam - LON0) * c;
-  const x = FE + K0 * N * (a + ((1 - T + C) * a ** 3) / 6 + ((5 - 18 * T + T * T + 72 * C - 58 * EP2) * a ** 5) / 120);
-  const y = FN + K0 * (meridian(phi) - M0 + N * t * (a * a / 2 + ((5 - T + 9 * C + 4 * C * C) * a ** 4) / 24
-    + ((61 - 58 * T + T * T + 600 * C - 330 * EP2) * a ** 6) / 720));
-  return [x, y];
-}
-
-/** [x, y] metres in EPSG:5186 → [longitude, latitude]. */
-export function fromKorea2000(x: number, y: number): Position {
-  const e1 = (1 - Math.sqrt(1 - E2)) / (1 + Math.sqrt(1 - E2));
-  const mu = (M0 + (y - FN) / K0) / (A * (1 - E2 / 4 - (3 * E2 * E2) / 64 - (5 * E2 ** 3) / 256));
-  const phi1 = mu + ((3 * e1) / 2 - (27 * e1 ** 3) / 32) * Math.sin(2 * mu) + ((21 * e1 * e1) / 16 - (55 * e1 ** 4) / 32) * Math.sin(4 * mu)
-    + ((151 * e1 ** 3) / 96) * Math.sin(6 * mu) + ((1097 * e1 ** 4) / 512) * Math.sin(8 * mu);
-  const [s, c, t] = [Math.sin(phi1), Math.cos(phi1), Math.tan(phi1)];
-  const C1 = EP2 * c * c;
-  const T1 = t * t;
-  const N1 = A / Math.sqrt(1 - E2 * s * s);
-  const R1 = (A * (1 - E2)) / (1 - E2 * s * s) ** 1.5;
-  const D = (x - FE) / (N1 * K0);
-  const phi = phi1 - ((N1 * t) / R1) * (D * D / 2 - ((5 + 3 * T1 + 10 * C1 - 4 * C1 * C1 - 9 * EP2) * D ** 4) / 24
-    + ((61 + 90 * T1 + 298 * C1 + 45 * T1 * T1 - 252 * EP2 - 3 * C1 * C1) * D ** 6) / 720);
-  const lam = LON0 + (D - ((1 + 2 * T1 + C1) * D ** 3) / 6 + ((5 - 2 * C1 + 28 * T1 - 3 * C1 * C1 + 8 * EP2 + 24 * T1 * T1) * D ** 5) / 120) / c;
-  return [(lam * 180) / Math.PI, (phi * 180) / Math.PI];
-}
+// EPSG:5186 lives in korea2000.ts (no imports, so the dev server reads it too).
+export { fromKorea2000, toKorea2000 } from './korea2000.ts';
+import { fromKorea2000, toKorea2000 } from './korea2000.ts';
 
 // ---- the height grid ----
 
@@ -157,8 +106,11 @@ export interface TerrainCell {
   z: number;
 }
 
-/** The surface as triangles (two per cell between cell centres, every `step` cells), z above the grid's lowest point (× k). */
-export function terrainMesh(grid: TerrainGrid, step = 1, k = 1): TerrainCell[] {
+/**
+ * The surface as triangles (two per cell between cell centres, every `step` cells), z above the grid's lowest point (× k).
+ * `skip`: cells (row × width + col of their north-west centre) left out, where a wall's section is drawn instead (wallCells).
+ */
+export function terrainMesh(grid: TerrainGrid, step = 1, k = 1, skip?: ReadonlySet<number>): TerrainCell[] {
   const base = terrainBase(grid);
   const vertex = (r: number, c: number): [number, number, number] | null => {
     const h = grid.z[r * grid.width + c];
@@ -166,9 +118,15 @@ export function terrainMesh(grid: TerrainGrid, step = 1, k = 1): TerrainCell[] {
     const [lng, lat] = fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res);
     return [lng, lat, (h - base) * k];
   };
+  const skipped = (r: number, c: number): boolean => {
+    if (!skip || skip.size === 0) return false;
+    for (let i = r; i < r + step; i++) for (let j = c; j < c + step; j++) if (skip.has(i * grid.width + j)) return true;
+    return false;
+  };
   const cells: TerrainCell[] = [];
   for (let r = 0; r + step < grid.height; r += step) {
     for (let c = 0; c + step < grid.width; c += step) {
+      if (skipped(r, c)) continue;
       const [a, b, d, e] = [vertex(r, c), vertex(r, c + step), vertex(r + step, c), vertex(r + step, c + step)];
       for (const tri of [[a, b, e], [a, e, d]]) {
         if (tri.every((v) => v !== null)) {
@@ -179,6 +137,119 @@ export function terrainMesh(grid: TerrainGrid, step = 1, k = 1): TerrainCell[] {
     }
   }
   return cells;
+}
+
+// ---- 옹벽: the drawn retaining walls as upright faces ----
+//
+// The grid comes thinned (one value every ~9 m), which smears a wall's 1 m step into a slope. The dev server sends, for
+// every drawn break line with lowSide and dropM > 0, a section read from the grid at its own resolution (server/terrain.ts
+// terrainWalls): rows across the line every metre, two rows at offset 0 (the low ground and the high ground at the line).
+// Drawn as a strip, the cells between the two 0 rows are the wall's face. The thinned cells the wall crosses are left out
+// of the relief (wallCells), so their smeared triangles neither cover the face nor poke through it; the section is wider
+// than a thinned cell's diagonal, so it covers them.
+
+/** A wall's section as GET /terrain sends it. */
+export interface TerrainWall {
+  id: string;
+  lowSide: 'left' | 'right';
+  dropM: number;
+  /** Rows across the line (m): -W … -1, 0 (low ground at the line), 0 (high ground at the line), 1 … W. */
+  offsets: number[];
+  /** Columns: points on the line (EPSG:5186 m), run out W past both ends; nx, ny: the unit normal toward the high side. */
+  x: number[];
+  y: number[];
+  nx: number[];
+  ny: number[];
+  /** The columns at the first and the last drawn point. */
+  drawn: [number, number];
+  /** Heights (m), rows × cols row by row, null where the grid has none. */
+  z: (number | null)[];
+}
+
+/** The EPSG:5186 point of a section's row and column: the column's point on the line + offset × its high normal. */
+export function wallPoint(w: TerrainWall, row: number, col: number): [number, number] {
+  const o = w.offsets[row]!;
+  return [w.x[col]! + o * w.nx[col]!, w.y[col]! + o * w.ny[col]!];
+}
+
+export interface WallTriangle {
+  /** Three [lng, lat, z], z as terrainMesh's (height − the grid's lowest point) × k, + lift. */
+  polygon: [number, number, number][];
+  /** Mean z of the corners, for the colour. */
+  z: number;
+  /** 'face': between the two 0 rows (the upright wall); 'strip': the ground on either side. */
+  role: 'strip' | 'face';
+  wall: string;
+}
+
+/** Every wall's section as triangles (two per cell of rows × cols; a cell with a missing corner is left out). */
+export function wallMesh(grid: TerrainGrid, walls: readonly TerrainWall[], k = 1, lift = 0): WallTriangle[] {
+  const base = terrainBase(grid);
+  const out: WallTriangle[] = [];
+  for (const w of walls) {
+    const cols = w.x.length;
+    const face = w.offsets.findIndex((o, i) => o === 0 && w.offsets[i + 1] === 0);
+    const vertex = (r: number, c: number): [number, number, number] | null => {
+      const h = w.z[r * cols + c];
+      if (h === null || h === undefined) return null;
+      const [x, y] = wallPoint(w, r, c);
+      const [lng, lat] = fromKorea2000(x, y);
+      return [lng, lat, (h - base) * k + lift];
+    };
+    for (let r = 0; r + 1 < w.offsets.length; r++) {
+      const role = r === face ? 'face' : 'strip';
+      for (let c = 0; c + 1 < cols; c++) {
+        const [a, b, d, e] = [vertex(r, c), vertex(r, c + 1), vertex(r + 1, c), vertex(r + 1, c + 1)];
+        if (!a || !b || !d || !e) continue;
+        for (const polygon of [[a, b, e], [a, e, d]]) {
+          out.push({ polygon, z: (polygon[0]![2] + polygon[1]![2] + polygon[2]![2]) / 3, role, wall: w.id });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The cells of the (thinned) grid a wall's drawn line crosses or touches (row × width + col of the cell's north-west
+ * centre, as terrainMesh's `skip`). Cells are the squares between four cell centres.
+ */
+export function wallCells(grid: TerrainGrid, walls: readonly TerrainWall[]): Set<number> {
+  const out = new Set<number>();
+  const X = (c: number) => grid.originX + (c + 0.5) * grid.res;
+  const Y = (r: number) => grid.originY - (r + 0.5) * grid.res;
+  // Does the segment a → b meet the box [x0, x1] × [y0, y1] (edges included)? Liang–Barsky.
+  const meets = (ax: number, ay: number, bx: number, by: number, x0: number, x1: number, y0: number, y1: number): boolean => {
+    let [t0, t1] = [0, 1];
+    const [dx, dy] = [bx - ax, by - ay];
+    for (const [p, q] of [[-dx, ax - x0], [dx, x1 - ax], [-dy, ay - y0], [dy, y1 - ay]] as const) {
+      if (p === 0) {
+        if (q < 0) return false;
+      } else {
+        const t = q / p;
+        if (p < 0) t0 = Math.max(t0, t);
+        else t1 = Math.min(t1, t);
+        if (t0 > t1) return false;
+      }
+    }
+    return true;
+  };
+  for (const w of walls) {
+    for (let i = w.drawn[0]; i < w.drawn[1]; i++) {
+      const [ax, ay, bx, by] = [w.x[i]!, w.y[i]!, w.x[i + 1]!, w.y[i + 1]!];
+      if (ax === bx && ay === by) continue;
+      const cA = Math.floor((Math.min(ax, bx) - grid.originX) / grid.res - 0.5);
+      const cB = Math.floor((Math.max(ax, bx) - grid.originX) / grid.res - 0.5);
+      const rA = Math.floor((grid.originY - Math.max(ay, by)) / grid.res - 0.5);
+      const rB = Math.floor((grid.originY - Math.min(ay, by)) / grid.res - 0.5);
+      for (let r = Math.max(0, rA - 1); r <= Math.min(grid.height - 2, rB + 1); r++) {
+        for (let c = Math.max(0, cA - 1); c <= Math.min(grid.width - 2, cB + 1); c++) {
+          if (meets(ax, ay, bx, by, X(c), X(c + 1), Y(r + 1), Y(r))) out.add(r * grid.width + c);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** Metres between two positions (flat, good over a campus). */
@@ -301,8 +372,11 @@ export function buildingSegments(state: EditState, buildingId: string, level: Le
   return out;
 }
 
-/** Light lines along every `every`-th row and column of the grid (z above its lowest point): the bend of a line shows the slope. */
-export function terrainWire(grid: TerrainGrid, every: number, k = 1): [number, number, number][][] {
+/**
+ * Light lines along every `every`-th row and column of the grid (z above its lowest point): the bend of a line shows the
+ * slope. A line breaks along the cells in `skip` (where a wall's section is drawn instead).
+ */
+export function terrainWire(grid: TerrainGrid, every: number, k = 1, skip?: ReadonlySet<number>): [number, number, number][][] {
   const base = terrainBase(grid);
   const vertex = (r: number, c: number): [number, number, number] | null => {
     const h = grid.z[r * grid.width + c];
@@ -310,6 +384,7 @@ export function terrainWire(grid: TerrainGrid, every: number, k = 1): [number, n
     const [lng, lat] = fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res);
     return [lng, lat, (h - base) * k + 0.05];
   };
+  const cut = (r: number, c: number) => skip !== undefined && r >= 0 && c >= 0 && skip.has(r * grid.width + c);
   const lines: [number, number, number][][] = [];
   const flush = (run: [number, number, number][]) => {
     if (run.length > 1) lines.push(run);
@@ -318,6 +393,8 @@ export function terrainWire(grid: TerrainGrid, every: number, k = 1): [number, n
     let run: [number, number, number][] = [];
     for (let c = 0; c < grid.width; c++) {
       const v = vertex(r, c);
+      // The piece (r, c - 1) → (r, c) lies on the cells above and below it.
+      if (c > 0 && (cut(r - 1, c - 1) || cut(r, c - 1))) { flush(run); run = []; }
       if (v) run.push(v);
       else { flush(run); run = []; }
     }
@@ -327,6 +404,7 @@ export function terrainWire(grid: TerrainGrid, every: number, k = 1): [number, n
     let run: [number, number, number][] = [];
     for (let r = 0; r < grid.height; r++) {
       const v = vertex(r, c);
+      if (r > 0 && (cut(r - 1, c - 1) || cut(r - 1, c))) { flush(run); run = []; }
       if (v) run.push(v);
       else { flush(run); run = []; }
     }

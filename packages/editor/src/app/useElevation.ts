@@ -32,12 +32,14 @@ interface Env {
   nearest: PointRouteResult | null;
   /** The solver wrote new files (corrected_dem …): the 지형 3D grid of the screen is read again. */
   onSolved?: () => void;
+  /** The store was saved (a break line drawn, changed or removed): 지형 3D reads its walls again. */
+  onStoreSaved?: () => void;
 }
 
 /** The area a drawn line covers (null: no points). */
 const lineBox = (line: BreakLine | undefined): LngLatBox | null => (line ? boxOf(line.coordinates) : null);
 
-export function useElevation({ session, state, perform, info, fail, routes, shown, nearest, onSolved }: Env) {
+export function useElevation({ session, state, perform, info, fail, routes, shown, nearest, onSolved, onStoreSaved }: Env) {
   const [dirty, setDirty] = useState<ElevationDirty>(emptyDirty);
   const [busy, setBusy] = useState(false);
   const [store, setStore] = useState<ElevationStore | null>(null);
@@ -112,6 +114,7 @@ export function useElevation({ session, state, perform, info, fail, routes, show
       setStore(next);
       setDirty((d) => markBreakline({ ...d, nodes: new Set([...d.nodes, ...near]) }, lineId, areas));
       info(done);
+      onStoreSaved?.();
       return true;
     } catch (err) {
       fail((err as Error).message);

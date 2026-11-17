@@ -3,7 +3,8 @@
 //   PUT  /api/elevation/:id/store      ← { text }    the ElevationStore (break lines drawn in the editor). No absolute pressure.
 //   POST /api/elevation/:id/recompute  ← { request, files }  recomputeRequest JSON and the campus as it would be saved
 //        → { derived, mode: 'solved' | 'existing', log }
-//   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null }  solve/corrected_dem first, else dem.json (server/terrain.ts)
+//   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null, walls: TerrainWall[] }  solve/corrected_dem first, else dem.json;
+//        walls: 1 m sections across the store's break lines with lowSide and dropM > 0 (server/terrain.ts terrainWalls)
 // Per campus folder <elevationDir>/<id>/ (default derived/<id>/, git-ignored):
 //   store.json      ElevationStore (copy the survey app's elevation_store.json here)
 //   dem.json        campo-grid DEM meta (dem_prep.py output, read only). CAMPO_ELEVATION_DEM overrides it.
@@ -18,7 +19,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { HttpError, writeCampusFiles } from './campus-api.ts';
 import { findPython, outputTail, parseCommand, pythonCandidates, showCommand, type Probe, type PythonCommand } from './python.ts';
-import { readGridFile } from './terrain.ts';
+import { readTerrain } from './terrain.ts';
 
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
@@ -149,9 +150,11 @@ export function createElevationApi(opts: ElevationApiOptions) {
       }
       if (m[2] === '/terrain' && req.method === 'GET') {
         const corrected = join(paths.solve, 'corrected_dem.json');
-        if (await exists(corrected)) return send(res, 200, { grid: await readGridFile(corrected, 'corrected') });
-        if (await exists(paths.dem)) return send(res, 200, { grid: await readGridFile(paths.dem, 'dem') });
-        return send(res, 200, { grid: null });
+        // The walls come from the store's drawn lines; a store that cannot be read gives none, the relief still comes.
+        const store = await readIfExists(paths.store).catch(() => null);
+        if (await exists(corrected)) return send(res, 200, await readTerrain(corrected, 'corrected', store));
+        if (await exists(paths.dem)) return send(res, 200, await readTerrain(paths.dem, 'dem', store));
+        return send(res, 200, { grid: null, walls: [] });
       }
       if (m[2] === '/store' && req.method === 'PUT') {
         const body = JSON.parse(await readBody(req)) as { text?: unknown };

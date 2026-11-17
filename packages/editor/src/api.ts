@@ -1,5 +1,5 @@
 import type { LoadedFile } from '@campo/core';
-import type { TerrainGrid } from './model/terrain3d.ts';
+import type { TerrainGrid, TerrainWall } from './model/terrain3d.ts';
 
 export async function fetchCampusFiles(campusId: string): Promise<LoadedFile[]> {
   const res = await fetch(`/api/campuses/${encodeURIComponent(campusId)}`);
@@ -86,12 +86,17 @@ export interface ElevationInfo {
   solver: { ready: boolean; missing: string[] };
 }
 
-/** 지형 3D's height grid: the solver's corrected grid, else the DEM, else null (the view then offers a sample). */
-export async function fetchTerrain(campusId: string): Promise<TerrainGrid | null> {
+export type { TerrainWall } from './model/terrain3d.ts';
+
+/**
+ * 지형 3D's height grid: the solver's corrected grid, else the DEM, else null (the view then offers a sample); and the
+ * 1 m sections across the drawn retaining walls (none from an older server).
+ */
+export async function fetchTerrain(campusId: string): Promise<{ grid: TerrainGrid | null; walls: TerrainWall[] }> {
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/terrain`);
-  const body = (await res.json()) as { grid?: TerrainGrid | null; error?: string };
+  const body = (await res.json()) as { grid?: TerrainGrid | null; walls?: TerrainWall[]; error?: string };
   if (!res.ok) throw new Error(body.error ?? `고도 그리드를 불러오지 못했습니다 (HTTP ${res.status}).`);
-  return body.grid ?? null;
+  return { grid: body.grid ?? null, walls: Array.isArray(body.walls) ? body.walls : [] };
 }
 
 export async function fetchElevation(campusId: string): Promise<ElevationInfo> {

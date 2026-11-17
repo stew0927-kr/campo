@@ -1035,6 +1035,27 @@ def _dem_value(grid: Grid, n: Node) -> Optional[float]:
     return v if np.isfinite(v) else None
 
 
+def previous_residual_mismatch(grid: Grid, path: Optional[str]) -> Optional[str]:
+    """
+    Why the residual field of an earlier run cannot be reused with this DEM (None when it can, or when there is none).
+    The field only fits the DEM it was made from: another dem_prep --res / --buffer changes the shape or the origin (numpy
+    errors, or a field shifted by whole cells), another source changes the values (old tiles and old heights go stale).
+    Its meta carries dem_sha256 of that DEM since this check exists; a field without it is not trusted (one full run).
+    """
+    if not path:
+        return None
+    prev = Grid.load(path)
+    why = grid.same_geometry(prev)
+    if why:
+        return f"grid differs from the DEM: {why}"
+    digest = prev.meta.get("dem_sha256")
+    if digest is None:
+        return "made before DEM fingerprints were recorded"
+    if digest != grid.fingerprint():
+        return "the DEM changed since it was made"
+    return None
+
+
 ENGINE_V2 = "campo-height-solver/2"
 DEFAULT_ENGINE = "v1"  # the editor keeps v1 until v2 is validated on real campus data (CAMPO_ELEVATION_ENGINE=v2 opts in)
 
@@ -1104,10 +1125,19 @@ def _run_v1(a: argparse.Namespace):
         print(line)
     restrict = None
     line_boxes: list[tuple[float, float, float, float]] = []
+    z_prev = None
     if a.dirty:
         req = json.loads(Path(a.dirty).read_text(encoding="utf-8"))
-        restrict = dirty_seeds(req, cm, [n.key for n in nodes], tf.transform)
-        line_boxes = breakline_boxes(req, tf.transform)
+        why = previous_residual_mismatch(grid, a.previous_residual)
+        if why:
+            # The DEM was made again since the last run (another --res / --buffer / source): the old residual field and the
+            # old heights of the components this request leaves alone belong to the old DEM, so everything is solved again.
+            print(f"previous residual field not reused ({why}) -> full run")
+        else:
+            restrict = dirty_seeds(req, cm, [n.key for n in nodes], tf.transform)
+            line_boxes = breakline_boxes(req, tf.transform)
+            if a.previous_residual:
+                z_prev = Grid.load(a.previous_residual).data
     res = solve_heights(nodes, edges, dem=grid, sigma_dem=a.sigma_dem, alpha=a.alpha, huber_k=a.huber_k,
                         soft_flat=soft, soft_flat_max_grade=a.soft_flat_max_grade, sigma_dem_scale=scale, restrict_to=restrict)
     for line in res.log:
@@ -1121,8 +1151,7 @@ def _run_v1(a: argparse.Namespace):
         centers = residual_centers(nodes, merged)
     else:
         centers = residual_centers(nodes, res)
-    if restrict is not None and a.previous_residual:
-        z_prev = Grid.load(a.previous_residual).data
+    if restrict is not None and z_prev is not None:
         tiles = dirty_tiles(grid, [c for c in centers if c.key in res.solved])
         # A 고도 단절선 changed: every tile a centre could reach across it is redone, even where no point of the campus is near.
         # (Without any centre, the default influence radius.)
@@ -1134,9 +1163,10 @@ def _run_v1(a: argparse.Namespace):
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    dem_id = {"dem_sha256": grid.fingerprint()}
     Grid(grid.data + z, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(
-        out / "corrected_dem", source=f"{grid.meta.get('source', '')} + CAMPO residual ({a.method})")
-    Grid(z, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(out / "residual_field")
+        out / "corrected_dem", source=f"{grid.meta.get('source', '')} + CAMPO residual ({a.method})", extra=dem_id)
+    Grid(z, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(out / "residual_field", extra=dem_id)
     run_id, now_ms = str(uuid.uuid4()), int(time.time() * 1000)
     (out / "store.solved.json").write_text(
         json.dumps(write_back(store, res, run_id, now_ms), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1761,7 +1791,10 @@ def _run_v2(a: argparse.Namespace):
     solved, partial = all_keys, False
     if a.dirty:
         req = json.loads(Path(a.dirty).read_text(encoding="utf-8"))
-        if prev_derived is not None and prev_derived.get("engine") == ENGINE_V2:
+        why = previous_residual_mismatch(grid, a.previous_residual)
+        if why:
+            _say(f"previous residual field not reused ({why}) -> every component is written")
+        elif prev_derived is not None and prev_derived.get("engine") == ENGINE_V2:
             seeds = dirty_seeds(req, cm, [n.key for n in nodes], tf.transform)
             solved = {k for comp in w.components if seeds.intersection(comp) for k in comp}
             partial = True
@@ -1795,9 +1828,11 @@ def _run_v2(a: argparse.Namespace):
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    dem_id = {"dem_sha256": grid.fingerprint()}
     Grid(g.h, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(
-        out / "corrected_dem", source=f"{grid.meta.get('source', '')} + CAMPO grading (v2)")
-    Grid(g.residual, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(out / "residual_field")
+        out / "corrected_dem", source=f"{grid.meta.get('source', '')} + CAMPO grading (v2)", extra=dem_id)
+    Grid(g.residual, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(out / "residual_field",
+                                                                                                extra=dem_id)
     run_id, now_ms = str(uuid.uuid4()), int(time.time() * 1000)
     (out / "store.solved.json").write_text(
         json.dumps(write_back(store, res, run_id, now_ms), ensure_ascii=False, indent=2), encoding="utf-8")

@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createElevationApi, type RunSolver } from '../server/elevation-api.ts';
+import { createElevationApi, pythonRunner, type RunSolver } from '../server/elevation-api.ts';
 
 let root: string;
 let server: Server;
@@ -92,4 +92,113 @@ describe('elevation API (고도 다시 계산)', () => {
     expect((await put(STORE.replace('"edges":[]', '"edges":[],"x":{"meanPressureHpa":1003.2}'))).status).toBe(400);
     expect((await put('{"schemaVersion":2}')).status).toBe(400);
   });
+
+  it('terrain: a DEM in another CRS than EPSG:5186 is a 422 that says how to remake it (not a 500)', async () => {
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    const meta = { format: 'campo-grid/1', crs: 'EPSG:5179', origin_x: 950000, origin_y: 1950000, res: 1, width: 2, height: 1, dtype: 'float32', nodata: -9999, bin: 'dem.bin' };
+    await writeFile(join(root, 'campus-a', 'dem.json'), JSON.stringify(meta));
+    await writeFile(join(root, 'campus-a', 'dem.bin'), new Uint8Array(new Float32Array([1, 2]).buffer));
+    const r = await fetch(`${base}/api/elevation/campus-a/terrain`);
+    expect(r.status).toBe(422);
+    const error = ((await r.json()) as { error: string }).error;
+    expect(error).toContain('EPSG:5179');
+    expect(error).toContain('--dst-crs EPSG:5186');
+    await writeFile(join(root, 'campus-a', 'dem.json'), JSON.stringify({ ...meta, crs: 'EPSG:5186' }));
+    const ok = (await (await fetch(`${base}/api/elevation/campus-a/terrain`)).json()) as { grid: { z: number[] } };
+    expect(ok.grid.z).toEqual([1, 2]);
+  });
+
+  it('two recomputes of one campus at once run one after the other, and each answer is its own request’s result', async () => {
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    await writeFile(join(root, 'campus-a', 'store.json'), STORE);
+    await writeFile(join(root, 'campus-a', 'dem.json'), '{}');
+    let active = 0;
+    let most = 0;
+    solver = async (args) => {
+      active++;
+      most = Math.max(most, active);
+      const dirty = JSON.parse(await readFile(args[args.indexOf('--dirty') + 1]!, 'utf8')) as unknown;
+      const out = args[args.indexOf('--out') + 1]!;
+      await mkdir(out, { recursive: true });
+      await writeFile(join(out, 'residual_field.json'), JSON.stringify(dirty));
+      await writeFile(args[args.indexOf('--derived-out') + 1]!, JSON.stringify({ ...DERIVED, dirty }));
+      await new Promise((r) => setTimeout(r, 60)); // the other tab's run would write here meanwhile
+      active--;
+      return { code: 0, output: 'ok' };
+    };
+    const reqA = { ...REQUEST, campusNodes: ['a'] };
+    const reqB = { ...REQUEST, campusNodes: ['b'] };
+    const [ra, rb] = await Promise.all([recompute({ request: reqA, files: {} }), recompute({ request: reqB, files: {} })]);
+    const [a, b] = (await Promise.all([ra.json(), rb.json()])) as { derived: { dirty: unknown } }[];
+    expect(most).toBe(1);
+    expect(a!.derived.dirty).toEqual(reqA);
+    expect(b!.derived.dirty).toEqual(reqB);
+    // The kept files are those of the run that finished last, written as one set.
+    const last = JSON.parse(await readFile(join(root, 'campus-a', 'elevation.json'), 'utf8')) as { dirty: unknown };
+    expect(JSON.parse(await readFile(join(root, 'campus-a', 'solve', 'residual_field.json'), 'utf8'))).toEqual(last.dirty);
+    expect((await readdir(join(root, 'campus-a'))).filter((f) => f.startsWith('.'))).toEqual([]);
+  });
+
+  it('a failing run leaves the earlier results as they were', async () => {
+    await mkdir(join(root, 'campus-a', 'solve'), { recursive: true });
+    await writeFile(join(root, 'campus-a', 'store.json'), STORE);
+    await writeFile(join(root, 'campus-a', 'dem.json'), '{}');
+    await writeFile(join(root, 'campus-a', 'elevation.json'), JSON.stringify(DERIVED));
+    await writeFile(join(root, 'campus-a', 'solve', 'corrected_dem.json'), 'old');
+    solver = async (args) => {
+      // Half way through: the derived file is written, then the solver dies.
+      await writeFile(args[args.indexOf('--derived-out') + 1]!, '{"half":');
+      await mkdir(args[args.indexOf('--out') + 1]!, { recursive: true });
+      await writeFile(join(args[args.indexOf('--out') + 1]!, 'corrected_dem.json'), 'half');
+      return { code: 1, output: 'MemoryError' };
+    };
+    expect((await recompute({ request: REQUEST, files: {} })).status).toBe(500);
+    expect(JSON.parse(await readFile(join(root, 'campus-a', 'elevation.json'), 'utf8'))).toEqual(DERIVED);
+    expect(await readFile(join(root, 'campus-a', 'solve', 'corrected_dem.json'), 'utf8')).toBe('old');
+  });
+
+  it('a solver that does not finish is stopped after the time limit: 504 with a clear message, and the next run goes ahead', async () => {
+    await new Promise((r) => server.close(r));
+    let stopped = 0;
+    const hang: RunSolver = (_args, opts) => new Promise((resolve) => {
+      opts?.signal?.addEventListener('abort', () => { stopped++; resolve({ code: -1, output: '' }); });
+    });
+    let run: RunSolver = hang;
+    const api = createElevationApi({ elevationDir: root, solverScript: 'solver.py', timeoutMs: 100, run: (a, o) => run(a, o) });
+    server = createServer((req, res) => void api(req, res, () => { res.statusCode = 404; res.end(); }));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    await writeFile(join(root, 'campus-a', 'store.json'), STORE);
+    await writeFile(join(root, 'campus-a', 'dem.json'), '{}');
+    const r = await recompute({ request: REQUEST, files: {} });
+    expect(r.status).toBe(504);
+    expect(((await r.json()) as { error: string }).error).toContain('시간');
+    expect(stopped).toBe(1);
+    run = async (args) => {
+      await writeFile(args[args.indexOf('--derived-out') + 1]!, JSON.stringify(DERIVED));
+      return { code: 0, output: 'ok' };
+    };
+    expect((await recompute({ request: REQUEST, files: {} })).status).toBe(200);
+  });
 });
+
+describe('pythonRunner', () => {
+  it('kills the child process when the signal aborts', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'campo-run-'));
+    try {
+      const script = join(dir, 'hang.js');
+      await writeFile(script, 'setInterval(() => {}, 1000); console.log("started");');
+      const ac = new AbortController();
+      const t0 = Date.now();
+      setTimeout(() => ac.abort(), 200);
+      const r = await pythonRunner({ file: process.execPath, args: [] }, script)([], { signal: ac.signal });
+      expect(Date.now() - t0).toBeLessThan(5000);
+      expect(r.code).not.toBe(0);
+      expect(r.output).toContain('started');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+

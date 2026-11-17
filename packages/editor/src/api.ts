@@ -55,15 +55,49 @@ export async function fetchSurveyFiles(): Promise<{ id: string; text: string }[]
 }
 
 /** Keep an imported survey under data/surveys/<id>/: survey.json and its photos (base64 by file name). */
-export async function saveSurvey(id: string, text: string, photos: Record<string, string>): Promise<string[]> {
+/**
+ * Keep an imported survey on this PC: survey.json first, then each photo in a request of its own as raw bytes (a walk's
+ * photos as one base64 JSON body ran the tab and the dev server out of memory). A photo that fails stops the save with
+ * an error that says how far it got; importing the same file again is a retry that sends the photos again.
+ */
+export async function saveSurvey(
+  id: string,
+  text: string,
+  photos: { names: readonly string[]; read: (name: string) => Uint8Array } = { names: [], read: () => new Uint8Array() },
+): Promise<string[]> {
   const res = await fetch(`/api/surveys/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, photos }),
+    body: JSON.stringify({ text, photos: {} }),
   });
-  const body = (await res.json()) as { written?: string[]; error?: string };
+  const body = (await res.json().catch(() => ({}))) as { written?: string[]; error?: string };
   if (!res.ok || !body.written) throw new Error(body.error ?? `현장 기록을 저장하지 못했습니다 (HTTP ${res.status}).`);
-  return body.written;
+  const written = [...body.written];
+  let done = 0;
+  const stopped = (why: string) => new Error(`${why} 사진 ${photos.names.length}장 중 ${done}장을 저장했습니다. 같은 파일을 다시 불러오면 이어서 저장합니다.`);
+  for (const name of photos.names) {
+    let bytes: Uint8Array;
+    try {
+      bytes = photos.read(name);
+    } catch (err) {
+      throw stopped(`사진 ${name}을(를) 파일에서 꺼내지 못했습니다(${(err as Error).message}).`);
+    }
+    let r: Response;
+    try {
+      r = await fetch(`/api/surveys/${encodeURIComponent(id)}/photos/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: new Blob([bytes as Uint8Array<ArrayBuffer>]),
+      });
+    } catch (err) {
+      throw stopped(`사진 ${name}을(를) 보내지 못했습니다(${(err as Error).message}).`);
+    }
+    const b = (await r.json().catch(() => ({}))) as { written?: string[]; error?: string };
+    if (!r.ok || !b.written) throw stopped(b.error ?? `사진 ${name}을(를) 저장하지 못했습니다 (HTTP ${r.status}).`);
+    written.push(...b.written);
+    done++;
+  }
+  return written;
 }
 
 /** Write changesets/<fileName>. */

@@ -16,7 +16,7 @@ import {
 } from '@campo/core';
 import { floorLabel, scopeOfNode } from '../model/scope.ts';
 import {
-  NOT_CONNECTED_NOTICE, SNAP_M, builder, isWalkPoint, nearestNode, nearestWhere, newElevatorId, walkNode, type Plan, type PlanInput,
+  NOT_CONNECTED_NOTICE, SNAP_M, builder, isWalkPoint, nearestNode, nearestWhere, newElevatorId, planFloorChange, walkNode, type Plan, type PlanInput,
 } from './plans.ts';
 
 export type VerticalPointKind = 'stairs' | 'elevator' | 'escalator';
@@ -148,6 +148,128 @@ export function verticalInfo(state: EditState, nodeId: string, escalatorSpots: R
     return { kind: 'escalator', linked: belts.flatMap((e) => placeOf(state, other(e, nodeId)) ?? []), flights: [], stepCount: undefined, flightList: [], belts: belts.map((e) => e.id) };
   }
   return null;
+}
+
+/** A floor of the point's building for the [여러 층 한 번에 연결] checklist. */
+export interface FloorChoice {
+  level: number;
+  label: string;
+  /** The floor the point itself is on (not a choice). */
+  here: boolean;
+  /** Already joined to this point (a flight from it, or a stop of its shaft). */
+  joined: boolean;
+}
+
+/** The floors of the building of a stair landing or elevator stop, lowest first; null for any other point. */
+export function multiFloorChoices(state: EditState, nodeId: string): FloorChoice[] | null {
+  const node = state.nodes[nodeId];
+  const type = node?.props.node_type;
+  if (!node || (type !== 'stair_landing' && type !== 'elevator_stop')) return null;
+  const scope = scopeOfNode(node);
+  if (scope.kind !== 'building') return null;
+  const building = buildingById(state, scope.buildingId);
+  if (!building) return null;
+  const joined = new Set<number>();
+  if (type === 'stair_landing') {
+    for (const e of at(state, nodeId, (x) => x.props.highway === 'steps' && !isEscalator(x.props))) {
+      const s = state.nodes[other(e, nodeId)];
+      if (s && scopeOfNode(s).kind === 'building') joined.add((scopeOfNode(s) as { level: number }).level);
+    }
+  } else {
+    for (const n of Object.values(state.nodes)) {
+      if (n.id !== nodeId && n.props.node_type === 'elevator_stop' && n.props.building_id === node.props.building_id
+        && n.props.elevator_id !== undefined && n.props.elevator_id === node.props.elevator_id && n.props.level !== null) joined.add(n.props.level);
+    }
+  }
+  return [...building.props.levels].sort((a, b) => a - b).map((level) => ({ level, label: floorLabel(level), here: level === scope.level, joined: joined.has(level) }));
+}
+
+export interface MultiLink {
+  /** Every hop in one history entry. */
+  action: Action;
+  /** The floors that were joined now, ascending. */
+  connected: number[];
+  /** Floors that were ticked but already joined (or the same stop already there), ascending. Nothing is made again for them. */
+  skipped: number[];
+}
+
+/**
+ * [여러 층 한 번에 연결]: join the stair landing or elevator stop `nodeId` to several floors of its building at once.
+ * Each hop is a planFloorChange (so nodes, edges and ids are made exactly as one-floor-at-a-time would), run on the state
+ * the hop before left, and all of them go into one action.
+ *
+ * - 계단: one flight per floor, as a chain from the landing up and/or down; the floors ticked must run on from the landing
+ *   without a gap (a stair goes one floor at a time), so a middle landing gets its own flight up and flight down, each
+ *   with its own step_count (flightList is read from the edges as before).
+ * - 엘리베이터: a stop of the same shaft on each ticked floor (an existing one is used, never a second), each joined to the
+ *   starting stop by a ride.
+ * The floor of the point itself is never a target, a floor ticked twice counts once, and what is already joined is skipped.
+ * Which floors are next to each other is read from the building's own list of floors, not from comparing numbers.
+ */
+export function planMultiFloorLink(env: Pick<PlanInput, 'state' | 'ctx' | 'source'>, nodeId: string, toLevels: readonly number[]): MultiLink | { error: string } {
+  const { ctx, source } = env;
+  const node = env.state.nodes[nodeId];
+  const type = node?.props.node_type;
+  if (!node || (type !== 'stair_landing' && type !== 'elevator_stop')) return { error: '계단 지점이나 엘리베이터 지점에서만 여러 층을 한 번에 연결할 수 있습니다.' };
+  const origin = scopeOfNode(node);
+  if (origin.kind !== 'building') return { error: `여러 층 연결은 ${NEED_FLOOR}` };
+  const building = buildingById(env.state, origin.buildingId);
+  if (!building) return { error: '건물을 찾을 수 없습니다.' };
+  const levels = [...building.props.levels].sort((a, b) => a - b);
+  const wanted = [...new Set(toLevels)].filter((l) => l !== origin.level).sort((a, b) => a - b);
+  if (wanted.length === 0) return { error: '이을 층을 하나 이상 골라 주세요. (지금 있는 층은 고를 수 없습니다.)' };
+  const unknown = wanted.find((l) => !levels.includes(l));
+  if (unknown !== undefined) return { error: `${floorLabel(unknown)}은(는) 이 건물에 없는 층입니다.` };
+
+  const kind = type === 'stair_landing' ? 'stairs' : 'elevator';
+  const at = levels.indexOf(origin.level);
+  // The order the floors are walked in: stairs chain away from the landing, an elevator rides from its start to each.
+  const hops: { from: number; to: number }[] = [];
+  if (kind === 'stairs') {
+    for (const dir of [1, -1] as const) {
+      const side = wanted.filter((l) => (dir === 1 ? levels.indexOf(l) > at : levels.indexOf(l) < at));
+      if (dir === -1) side.reverse();
+      let prev = origin.level;
+      for (const l of side) {
+        const expected = levels[levels.indexOf(prev) + dir]!;
+        if (l !== expected) return { error: `계단은 한 층씩 이어집니다. ${floorLabel(expected)}도 함께 골라 주세요.` };
+        hops.push({ from: prev, to: l });
+        prev = l;
+      }
+    }
+  } else {
+    for (const l of wanted) hops.push({ from: origin.level, to: l });
+  }
+
+  let state = env.state;
+  let current = nodeId;
+  const actions: Action[] = [];
+  const connected: number[] = [];
+  const skipped: number[] = [];
+  for (const hop of hops) {
+    // A chain on the other side of the landing starts again from the landing.
+    if (kind === 'stairs' && hop.from === origin.level) current = nodeId;
+    const from = state.nodes[current]!;
+    const plan = planFloorChange(
+      { state, ctx, scope: { kind: 'building', buildingId: origin.buildingId, level: hop.from }, coord: from.coord, anchorId: current, source },
+      { kind, toLevel: hop.to, ...(kind === 'stairs' ? { incline: hop.to > hop.from ? 'up' as const : 'down' as const } : {}) },
+    );
+    if ('error' in plan) return plan;
+    if (plan.action) {
+      actions.push(plan.action);
+      state = plan.action.apply(state);
+      connected.push(hop.to);
+    } else skipped.push(hop.to);
+    if (kind === 'stairs') current = plan.anchorId;
+  }
+  if (actions.length === 0) return { error: '고른 층은 모두 이미 이어져 있습니다.' };
+  const what = kind === 'stairs' ? '계단' : '엘리베이터';
+  const sort = (a: number[]) => a.sort((x, y) => x - y);
+  return {
+    action: compose(actions, `${what} ${floorLabel(origin.level)} → ${sort([...connected]).map(floorLabel).join(', ')} 한 번에 연결`),
+    connected: sort(connected),
+    skipped: sort(skipped),
+  };
 }
 
 /** 계단 칸 수 on the flights at a landing (null clears it), as one action; an error when there is nothing to change. */

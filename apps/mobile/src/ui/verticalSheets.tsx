@@ -3,7 +3,7 @@
 // stopwatch) and 계단 칸 수 — so they are there when the point is tapped, and out of the way otherwise.
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import type { VerticalInfo } from '../survey/vertical.ts';
+import type { FloorChoice, VerticalInfo } from '../survey/vertical.ts';
 import { PictoIcon } from './Pictogram.tsx';
 import { TOUCH, color, font, radius, space } from './theme.ts';
 
@@ -17,6 +17,10 @@ const LINK_HINT = {
 
 interface Props {
   info: VerticalInfo;
+  /** The floors of the building (stairs and elevators); without them, or without onLinkMany, there is no multi-floor button. */
+  floors?: FloorChoice[];
+  /** Join the point to all of these floors at once. */
+  onLinkMany?: (levels: number[]) => void;
   /** Start the trip from this point (the sheet closes; arriving is recorded from the menu). */
   onLink: () => void;
   /** Escalator with a belt: open the stopwatch on it. */
@@ -83,7 +87,57 @@ function StepCount({ title, value, enabled, onSave }: { title: string; value: nu
   );
 }
 
-export function VerticalSection({ info, onLink, onTime, onStepCount }: Props) {
+/** [여러 층 한 번에 연결]: tick the floors of the building, then join them in one go. */
+function MultiLink({ kind, floors, onLinkMany }: { kind: 'stairs' | 'elevator'; floors: FloorChoice[]; onLinkMany: (levels: number[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<number[]>([]);
+  const toggle = (level: number) => setPicked((p) => (p.includes(level) ? p.filter((l) => l !== level) : [...p, level]));
+  const choices = floors.filter((f) => !f.here);
+  if (choices.length === 0) return null;
+  if (!open) {
+    return <Action title="여러 층 한 번에 연결" hint={kind === 'stairs' ? '이어 갈 층을 모두 골라 계단을 한꺼번에 잇습니다' : '정차할 층을 모두 골라 한꺼번에 잇습니다'} onPress={() => setOpen(true)} />;
+  }
+  return (
+    <View style={styles.steps} accessibilityLabel="여러 층 한 번에 연결">
+      <Text style={styles.stepsTitle}>이을 층을 골라 주세요</Text>
+      <View style={styles.floorRow}>
+        {choices.map((f) => {
+          const on = picked.includes(f.level);
+          return (
+            <Pressable
+              key={f.level}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: on }}
+              accessibilityLabel={f.label}
+              onPress={() => toggle(f.level)}
+              style={({ pressed }) => [styles.floor, on && styles.floorOn, pressed && styles.pressed]}
+            >
+              <Text style={[styles.floorLabel, on && styles.onPrimary]}>{f.label}{f.joined ? ' ✓' : ''}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {kind === 'stairs' && <Text style={styles.soft}>계단은 한 층씩 이어서 골라 주세요. ✓는 이미 이어진 층입니다.</Text>}
+      <View style={styles.stepsActions}>
+        <Pressable
+          disabled={picked.length === 0}
+          onPress={() => onLinkMany([...picked])}
+          accessibilityRole="button"
+          accessibilityLabel={`${picked.length}개 층 연결하기`}
+          accessibilityState={{ disabled: picked.length === 0 }}
+          style={({ pressed }) => [styles.save, pressed && styles.pressed, picked.length === 0 && styles.disabled]}
+        >
+          <Text style={styles.saveLabel}>{picked.length}개 층 연결하기</Text>
+        </Pressable>
+        <Pressable onPress={() => { setOpen(false); setPicked([]); }} accessibilityRole="button" accessibilityLabel="닫기" style={({ pressed }) => [styles.clear, pressed && styles.pressed]}>
+          <Text style={styles.clearLabel}>닫기</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+export function VerticalSection({ info, floors, onLink, onLinkMany, onTime, onStepCount }: Props) {
   const name = NAME[info.kind];
   return (
     <View style={styles.box} accessibilityLabel={`${name} 연결`}>
@@ -105,6 +159,9 @@ export function VerticalSection({ info, onLink, onTime, onStepCount }: Props) {
           />
         )}
       </View>
+      {(info.kind === 'stairs' || info.kind === 'elevator') && onLinkMany && floors && (
+        <MultiLink key={info.linked.join(',')} kind={info.kind} floors={floors} onLinkMany={onLinkMany} />
+      )}
       {info.kind === 'stairs' && info.flightList.length === 0 && <StepCount title="계단 칸 수" value={undefined} enabled={false} onSave={() => {}} />}
       {info.kind === 'stairs' && info.flightList.map((f) => (
         // Keyed by the saved value too: a save (or an undo) resets the stepper to what is stored.
@@ -150,6 +207,10 @@ const styles = StyleSheet.create({
   clear: { minHeight: TOUCH, paddingHorizontal: space.lg, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: color.line },
   clearLabel: { fontSize: font.body, fontWeight: '700', color: color.inkSoft },
   soft: { fontSize: font.small, color: color.inkSoft },
+  floorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  floor: { minWidth: TOUCH + 8, height: TOUCH, paddingHorizontal: space.md, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center', backgroundColor: color.bg, borderWidth: 1.5, borderColor: color.line },
+  floorOn: { backgroundColor: color.primary, borderColor: color.primary },
+  floorLabel: { fontSize: font.body, fontWeight: '800', color: color.ink },
   pressed: { opacity: 0.7 },
   disabled: { opacity: 0.4 },
 });

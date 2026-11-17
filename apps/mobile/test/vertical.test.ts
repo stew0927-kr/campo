@@ -77,6 +77,39 @@ describe('계단 지점', () => {
   });
 });
 
+describe('계단 칸 수는 구간마다 따로 (QA: 2층 계단참이 위·아래 계단을 같이 덮어쓰던 문제)', () => {
+  it('a landing with a flight down and a flight up keeps one count per flight', () => {
+    const placed = ok(planStairPoint(input(floor('bldg_A', 1), [127.00065, 37.0005], null)));
+    const s1 = run(placed);
+    const low = s1.nodes[placed.featureId]!;
+    const up1 = ok(planFloorChange(input(floor('bldg_A', 1), low.coord, low.id, s1), { kind: 'stairs', toLevel: 2, incline: 'up' }));
+    const s2 = run(up1, s1);
+    const mid = up1.anchorId!;
+    expect(s2.nodes[mid]!.props.level).toBe(2);
+    const up2 = ok(planFloorChange(input(floor('bldg_A', 2), s2.nodes[mid]!.coord, mid, s2), { kind: 'stairs', toLevel: 3, incline: 'up' }));
+    const s3 = run(up2, s2);
+    const info = verticalInfo(s3, mid)!;
+    expect(info.kind).toBe('stairs');
+    expect(info.flightList.map((f) => f.to).sort()).toEqual(['1층', '3층']);
+
+    const down = info.flightList.find((f) => f.to === '1층')!;
+    const upper = info.flightList.find((f) => f.to === '3층')!;
+    const a = planStepCount(s3, [down.id], 18);
+    if ('error' in a) throw new Error(a.error);
+    const s4 = createHistory(s3).perform(a);
+    const b = planStepCount(s4, [upper.id], 22);
+    if ('error' in b) throw new Error(b.error);
+    const s5 = createHistory(s4).perform(b);
+    expect(s5.edges[down.id]!.props.step_count).toBe(18);
+    expect(s5.edges[upper.id]!.props.step_count).toBe(22);
+    const after = verticalInfo(s5, mid)!;
+    expect(after.flightList.find((f) => f.id === down.id)!.stepCount).toBe(18);
+    expect(after.flightList.find((f) => f.id === upper.id)!.stepCount).toBe(22);
+    // The counts disagree, so there is no single landing-wide value.
+    expect(after.stepCount).toBeUndefined();
+  });
+});
+
 describe('엘리베이터 지점', () => {
   it('a new shaft gets the next elevator_id and one stop on this floor', () => {
     const plan = ok(planElevatorPoint(input(floor('bldg_B', 1), [127.00125, 37.00035], null)));

@@ -1141,7 +1141,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
                   info={infoVertical}
                   onLink={() => linkFromPoint(infoNode.id, infoVertical.kind)}
                   onTime={infoVertical.belts.length > 0 ? () => startTimer(infoVertical.belts, false) : null}
-                  onStepCount={(count) => apply(planStepCount(state, infoVertical.flights, count), count === null ? '계단 칸 수를 지웠습니다.' : `계단 칸 수를 ${count}칸으로 저장했습니다.`)}
+                  onStepCount={(flightId, count) => apply(planStepCount(state, [flightId], count), count === null ? '계단 칸 수를 지웠습니다.' : `계단 칸 수를 ${count}칸으로 저장했습니다.`)}
                 />
               ) : undefined}
               title={pointTitle(infoNode)}

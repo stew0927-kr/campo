@@ -119,18 +119,30 @@ export function shortestTurn(from: number, to: number): number {
 
 /** A view that shows all of `points` with a margin, at the given turn; the campus centre at a walking scale when there are none. */
 export function fitView(points: readonly XY[], size: Size, marginPx = 48, rotation = 0): View {
-  const turn = rotation === 0 ? {} : { rotation: normalizeRotation(rotation) };
-  if (points.length === 0) return { x: 0, y: 0, scale: 4, ...turn };
+  // A point with a coordinate that is not a number (a damaged record), a turn that is not one, or a screen that is not
+  // laid out yet must never give a view of NaN: every later move from such a view is NaN too and the map is stuck.
+  const turnDeg = Number.isFinite(rotation) ? rotation : 0;
+  const turn = turnDeg === 0 ? {} : { rotation: normalizeRotation(turnDeg) };
+  const usable = points.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (usable.length === 0) return { x: 0, y: 0, scale: 4, ...turn };
   // Measure the points in the turned screen frame (u right, v up), then bring the middle back to map metres.
-  const t = rad(rotation);
+  // A loop, not Math.min(...xs): a campus of many thousands of points would overflow the call stack.
+  const t = rad(turnDeg);
   const [c, s] = [Math.cos(t), Math.sin(t)];
-  const us = points.map((p) => p[0] * c - p[1] * s);
-  const vs = points.map((p) => p[0] * s + p[1] * c);
-  const [minU, maxU, minV, maxV] = [Math.min(...us), Math.max(...us), Math.min(...vs), Math.max(...vs)];
+  let [minU, maxU, minV, maxV] = [Infinity, -Infinity, Infinity, -Infinity];
+  for (const p of usable) {
+    const u = p[0] * c - p[1] * s;
+    const v = p[0] * s + p[1] * c;
+    if (u < minU) minU = u;
+    if (u > maxU) maxU = u;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
+  }
   const fit = Math.min((size.width - 2 * marginPx) / Math.max(maxU - minU, 1), (size.height - 2 * marginPx) / Math.max(maxV - minV, 1));
   const [mu, mv] = [(minU + maxU) / 2, (minV + maxV) / 2];
   const centre = { x: mu * c + mv * s, y: -mu * s + mv * c };
-  return zoomed({ ...centre, scale: 1, ...turn }, Number.isFinite(fit) && fit > 0 ? fit : 4);
+  const view = zoomed({ ...centre, scale: 1, ...turn }, Number.isFinite(fit) && fit > 0 ? fit : 4);
+  return isFiniteView(view) ? view : { x: 0, y: 0, scale: 4, ...turn };
 }
 
 /** The side of a square that covers the screen at any turn (the tiles under a turned map are laid out on it). */

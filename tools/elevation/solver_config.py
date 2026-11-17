@@ -50,6 +50,10 @@ class ShoulderConfig:
     point_alpha: float = 1.0  # soft target weight of barometer points (1/m^2)
     cg_rtol: float = 1e-6
     cg_maxiter: int = 500
+    # drawn break lines with lowSide / dropM (retaining walls): pinned ring cells on both sides of the line
+    wall_high_share: float = 0.5  # 0..1: share of the drop the high side goes up (0 = only the low side goes down)
+    wall_tip_slope: float = 0.5  # the drop shrinks to 0 at the open ends of a line with this slope (0 = no taper)
+    wall_min_step_m: float = 0.001  # crossing links whose drop is at or below this keep no pin
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,14 @@ class BuildingConfig:
     entrance_ring_radius_m: float = 5.0  # ring cells within this distance of an entrance
     ratchet: bool = False  # lower bound ratchet mode
     bound_tol_m: float = 1e-9  # a variable within this of a bound is on the bound
+    # terraced pads (portal-based multi-level ground planes, docs/ELEVATION_SOLVER_V2.md "포탈 기준 다단 대지")
+    terrace_enabled: bool = True  # False: one pad plane per building (the behaviour before terraced pads)
+    terrace_tol_m: float = 0.6  # an upper level is a terrace only if |support - plane| <= this
+    terrace_min_cells: int = 4  # 4-connected terrace pieces under this many cells merge into a neighbour
+    terrace_max_levels: int = 3  # terraces per building, the base included
+    terrace_multiple_tol_m: float = 0.05  # terrace step farther than this from k x floor height -> warning
+    terrace_breakline: bool = True  # terrace boundaries (pad, apron, slope zone) cut the grid links like a break line
+    door_sill_tol_m: float = 0.25  # |door floor - terrain in front of the door| logged above this
 
 
 @dataclass(frozen=True)
@@ -225,6 +237,8 @@ def validate(cfg: SolverConfig) -> list[str]:
                     ("building.alpha_b", b.alpha_b), ("building.target_eps_m", b.target_eps_m),
                     ("building.step_max_m", b.step_max_m), ("building.max_reach_m", b.max_reach_m),
                     ("building.sigma_meas_m", b.sigma_meas_m), ("building.entrance_ring_radius_m", b.entrance_ring_radius_m),
+                    ("building.terrace_tol_m", b.terrace_tol_m), ("building.terrace_multiple_tol_m", b.terrace_multiple_tol_m),
+                    ("building.door_sill_tol_m", b.door_sill_tol_m),
                     ("wls.sigma_dem_m", w.sigma_dem_m), ("wls.sigma_stair_mid_m", w.sigma_stair_mid_m),
                     ("wls.cluster_corr_area_m2", w.cluster_corr_area_m2), ("wls.cluster_n_max", w.cluster_n_max),
                     ("wls.stair_sigma_base_m", w.stair_sigma_base_m), ("wls.stair_sigma_per_step_m", w.stair_sigma_per_step_m),
@@ -249,6 +263,10 @@ def validate(cfg: SolverConfig) -> list[str]:
         out.append("wls.riser_min_m < wls.riser_m < wls.riser_max_m must hold")
     if not 0.0 <= b.ref_percentile <= 100.0:
         out.append(f"building.ref_percentile must be within [0, 100] (got {b.ref_percentile!r})")
+    for name, v in (("building.terrace_min_cells", b.terrace_min_cells),
+                    ("building.terrace_max_levels", b.terrace_max_levels)):
+        if not (isinstance(v, int) and not isinstance(v, bool) and v >= 1):
+            out.append(f"{name} must be an integer >= 1 (got {v!r})")
     if not 0.0 <= i.fixed_ring_min_ratio <= 1.0:
         out.append(f"island.fixed_ring_min_ratio must be within [0, 1] (got {i.fixed_ring_min_ratio!r})")
     return out

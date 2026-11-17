@@ -18,7 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { HttpError, writeCampusFiles } from './campus-api.ts';
 import { findPython, outputTail, parseCommand, pythonCandidates, showCommand, type Probe, type PythonCommand } from './python.ts';
-import { readGridFile } from './terrain.ts';
+import { GridFormatError, readGridFile } from './terrain.ts';
 
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
@@ -205,7 +205,7 @@ export function createElevationApi(opts: ElevationApiOptions) {
       }
       throw new HttpError(405, `${req.method ?? ''} 요청은 지원하지 않습니다.`);
     } catch (err) {
-      const status = err instanceof HttpError ? err.status : err instanceof SyntaxError ? 400 : 500;
+      const status = err instanceof HttpError ? err.status : err instanceof GridFormatError ? 422 : err instanceof SyntaxError ? 400 : 500;
       return send(res, status, { error: (err as Error).message });
     }
   };

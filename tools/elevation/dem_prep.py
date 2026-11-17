@@ -101,6 +101,25 @@ def geom_bounds(geom: dict) -> tuple[float, float, float, float]:
     return min(xs), min(ys), max(xs), max(ys)
 
 
+EDITOR_CRS = "EPSG:5186"  # packages/editor/server/terrain.ts and model/terrain3d.ts convert this CRS only
+
+
+def check_dst_crs(dst_crs: str) -> None:
+    """
+    Output CRS contract: a projected CRS in metres (the grid cell size, --res and --buffer are metres, and the solver
+    measures distances on the grid). EPSG:5186 is the default and the only one the editor's 지형 3D reads; another
+    projected CRS still works for the solver (it projects WGS84 into the grid's CRS), so it is a warning, not an error.
+    """
+    crs = CRS.from_user_input(dst_crs)
+    unit = (crs.linear_units or "").lower()
+    if not crs.is_projected or unit not in ("metre", "meter", "m"):
+        raise SystemExit(f"--dst-crs {dst_crs}는 미터 단위 투영 좌표계가 아닙니다(단위: {crs.linear_units or '도'}). "
+                         f"격자 크기(--res)와 여유(--buffer)가 미터라 투영 좌표계가 필요합니다. 기본값 {EDITOR_CRS}를 쓰세요")
+    if crs != CRS.from_user_input(EDITOR_CRS):
+        print(f"경고: 출력 좌표계가 {crs.to_string()}입니다. 고도 솔버는 이 좌표계로도 풀지만, 편집기의 지형 3D는 "
+              f"{EDITOR_CRS} 격자만 읽습니다(편집기에서 쓰려면 --dst-crs {EDITOR_CRS}로 다시 만드세요).")
+
+
 def target_grid(geom: dict, res: float, buffer_m: float):
     """해상도 배수에 정렬(snap)된 목표 격자 — 재처리해도 셀 경계가 흔들리지 않게."""
     x0, y0, x1, y1 = geom_bounds(geom)
@@ -128,25 +147,49 @@ def boundary_mask(geom: dict, transform, w: int, h: int, buffer_m: float, res: f
 # ------------------------------------------------------------------ #
 
 def read_merged(srcs: list[str], src_crs: str | None):
+    """
+    Merge DEM sheets into one array (NaN = no data).
+    - nodata: rasterio.merge reads every sheet masked by that sheet's own nodata, so sheets with other nodata values
+      (-9999, 0, -32767 …) all end up NaN; the output fill is masked below, and so are values no ground has.
+    - CRS: without --src-crs every sheet must carry the same CRS (merge does not reproject). With --src-crs every sheet is
+      read as being in that CRS (a warped view with no reprojection), and each sheet whose own CRS said otherwise is named,
+      so a wrong override does not go unnoticed.
+    """
+    from rasterio.vrt import WarpedVRT
+
     dss = [rasterio.open(s) for s in srcs]
+    views = []
     try:
-        crs = dss[0].crs
         if src_crs:
             crs = CRS.from_user_input(src_crs)
-        elif crs is None:
-            raise SystemExit(f"{srcs[0]}에 좌표계 정보가 없습니다. --src-crs EPSG:5186(또는 5179/5174 등)을 지정하세요")
-        for d in dss[1:]:
-            if not src_crs and d.crs != dss[0].crs:
-                raise SystemExit("입력 도엽 간 좌표계가 다릅니다. 먼저 통일하거나 --src-crs로 강제하세요")
+            for s, d in zip(srcs, dss):
+                if d.crs is not None and d.crs != crs:
+                    print(f"경고: {s}의 좌표계 {d.crs.to_string()}를 --src-crs {crs.to_string()}로 덮어씁니다 "
+                          "(정말 그 좌표계의 자료인지 확인하세요)")
+            views = [WarpedVRT(d, src_crs=crs, crs=crs, transform=d.transform, width=d.width, height=d.height,
+                               nodata=d.nodata, resampling=Resampling.nearest) for d in dss]
+            sources = views
+        else:
+            crs = dss[0].crs
+            if crs is None:
+                raise SystemExit(f"{srcs[0]}에 좌표계 정보가 없습니다. --src-crs EPSG:5186(또는 5179/5174 등)을 지정하세요")
+            for s, d in zip(srcs[1:], dss[1:]):
+                if d.crs != crs:
+                    got = d.crs.to_string() if d.crs is not None else "없음"
+                    raise SystemExit(f"입력 도엽 간 좌표계가 다릅니다: {srcs[0]}은(는) {crs.to_string()}, {s}은(는) {got}. "
+                                     "먼저 한 좌표계로 통일하거나, 모두 같은 좌표계 자료라면 --src-crs로 지정하세요")
+            sources = dss
         nod = dss[0].nodata
-        arr, tr = merge(dss, nodata=nod if nod is not None else NODATA)
+        fill = nod if nod is not None else NODATA
+        arr, tr = merge(sources, nodata=fill)
         a = arr[0].astype("float64")
-        if nod is not None:
-            a[a == nod] = np.nan
+        a[a == fill] = np.nan
         # NGII 자료에 흔한 결측 표기(-9999, -99999 등)와 비현실적 값 정리
         a[(a < -500) | (a > 9000)] = np.nan
         return a, tr, crs, dss[0].res
     finally:
+        for v in views:
+            v.close()
         for d in dss:
             d.close()
 
@@ -452,7 +495,8 @@ def build_parser():
         p.add_argument("--bbox", nargs=4, type=float, metavar=("LON0", "LAT0", "LON1", "LAT1"))
         p.add_argument("--buffer", type=float, default=20.0, help="경계 바깥 여유(m)")
         p.add_argument("--res", type=float, default=1.0, help="출력 해상도(m) 0.5~1 권장")
-        p.add_argument("--dst-crs", default=DST_CRS_DEFAULT)
+        p.add_argument("--dst-crs", default=DST_CRS_DEFAULT,
+                       help=f"출력 좌표계(미터 단위 투영 좌표계, 기본 {DST_CRS_DEFAULT}; 편집기 지형 3D는 {DST_CRS_DEFAULT}만 읽음)")
         p.add_argument("--src-crs", help="입력 래스터에 좌표계가 없거나 틀릴 때 강제")
         p.add_argument("--grid-dtype", choices=["float32", "uint16"], default="float32",
                        help="uint16 = 1 cm 양자화(용량 절반)")
@@ -492,6 +536,8 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    if getattr(a, "dst_crs", None):
+        check_dst_crs(a.dst_crs)
     a.fn(a)
 
 

@@ -92,4 +92,19 @@ describe('elevation API (고도 다시 계산)', () => {
     expect((await put(STORE.replace('"edges":[]', '"edges":[],"x":{"meanPressureHpa":1003.2}'))).status).toBe(400);
     expect((await put('{"schemaVersion":2}')).status).toBe(400);
   });
+
+  it('terrain: a DEM in another CRS than EPSG:5186 is a 422 that says how to remake it (not a 500)', async () => {
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    const meta = { format: 'campo-grid/1', crs: 'EPSG:5179', origin_x: 950000, origin_y: 1950000, res: 1, width: 2, height: 1, dtype: 'float32', nodata: -9999, bin: 'dem.bin' };
+    await writeFile(join(root, 'campus-a', 'dem.json'), JSON.stringify(meta));
+    await writeFile(join(root, 'campus-a', 'dem.bin'), new Uint8Array(new Float32Array([1, 2]).buffer));
+    const r = await fetch(`${base}/api/elevation/campus-a/terrain`);
+    expect(r.status).toBe(422);
+    const error = ((await r.json()) as { error: string }).error;
+    expect(error).toContain('EPSG:5179');
+    expect(error).toContain('--dst-crs EPSG:5186');
+    await writeFile(join(root, 'campus-a', 'dem.json'), JSON.stringify({ ...meta, crs: 'EPSG:5186' }));
+    const ok = (await (await fetch(`${base}/api/elevation/campus-a/terrain`)).json()) as { grid: { z: number[] } };
+    expect(ok.grid.z).toEqual([1, 2]);
+  });
 });

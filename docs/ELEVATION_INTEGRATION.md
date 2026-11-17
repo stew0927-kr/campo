@@ -142,7 +142,8 @@ datum 없는 부분이 생길 수 있어서다(1층·4층 포탈 두 개로만 �
 
 ### 5.5 출력
 
-- `corrected_dem.*`, `residual_field.*`: 새 campo-grid 파일
+- `corrected_dem.*`, `residual_field.*`: 새 campo-grid 파일. 메타에 만든 DEM의 지문 `dem_sha256`(격자 모양·원점·셀 크기·값의
+  sha256)을 더 적는다(읽는 쪽은 모르는 키를 무시하므로 하위호환)
 - `store.solved.json`: 엣지 qc, `estimates`(op:/fp:만), `lastSolve`
 - `derived/elevation.json`(`--derived-out`, `--campus` 필요):
   ```json
@@ -161,7 +162,7 @@ datum 없는 부분이 생길 수 있어서다(1층·4층 포탈 두 개로만 �
 | 편집 | `markEditPatches(dirty, patches, state)` | 동작의 Immer 패치 경로(path[0] 컬렉션, path[1] 키)에서 솔버 입력이 바뀐 것만 표시. 지점: 좌표, node_type, building_id, level. 구간: 추가·삭제, 꺾은점, from, to, highway, edge_type, flat_exact, is_breakline, step_count, incline. 건물: levels, ground_levels, ext. 그 밖(이름, hours 등)과 재계산 결과 쓰기(`setEdgeElevation`)는 표시하지 않는다 |
 | 측정 | `markMeasurements(dirty, result, store)` | 새 엣지와 대체된 엣지의 양 끝 높이 변수 |
 | 요청 | `recomputeRequest(dirty, state)` | 지점 → 이어진 구간 → 그 양 끝으로 넓힌 정렬된 JSON(`campo-elevation-dirty/1`) |
-| 풀기 | `campo_height_solver.py --dirty req.json --previous-residual … --previous-derived …` | 요청에 닿는 성분만 다시 푼다(성분은 독립이라 결과가 전체 풀이와 같음). 잔차장은 그 성분 센터의 dirty 타일만 갱신, derived는 안 푼 성분 값을 그대로 둔다 |
+| 풀기 | `campo_height_solver.py --dirty req.json --previous-residual … --previous-derived …` | 요청에 닿는 성분만 다시 푼다(성분은 독립이라 결과가 전체 풀이와 같음). 잔차장은 그 성분 센터의 dirty 타일만 갱신, derived는 안 푼 성분 값을 그대로 둔다. `--previous-residual`의 격자(좌표계·셀 크기·모양·원점)나 `dem_sha256`이 지금 DEM과 다르면(DEM을 `--res`·`--buffer`·원본을 바꿔 다시 만든 뒤, 또는 지문이 없는 예전 파일) 지난 잔차장과 안 푼 성분 값을 버리고 전체를 다시 푼다(로그 `previous residual field not reused (…)`) |
 | 반영 | `applyDerivedElevation(state, derived, req)` | `setEdgeElevation` 한 번: cm 단위 Δh·σ(σ 최소 1 cm), 평면 길이 0.5 m 이상이면 0.1% 단위 grade_pct. 요청에 있었지만 결과에 없는 구간은 옛 값을 지움. 엘리베이터 제외 |
 | 정리 | `clearDirty(dirty, req)` | 요청에 들어간 것만 지움(요청 뒤에 생긴 표시는 남음) |
 

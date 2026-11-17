@@ -120,15 +120,26 @@ class WlsConfig:
 
 
 @dataclass(frozen=True)
+class PlazaConfig:
+    """평지(plaza, a drawn flat ground area): every solid cell is held at one height H_plaza (variable elimination)."""
+    ref_percentile: float = 50.0  # DEM_0 reference percentile of the plaza cells (when no node and no fixed_height_m)
+    min_cells: int = 4  # a plaza with fewer cells is skipped (logged)
+    erode_cells: int = 1  # the reference reads only cells this many cells inside the plaza edge
+    relief_warn_m: float = 3.0  # log a plaza whose DEM relief (max - min) is larger
+    node_tol_m: float = 0.1  # an outdoor node within this of the plaza edge counts as on the plaza
+
+
+@dataclass(frozen=True)
 class SolverConfig:
     raster: RasterConfig = field(default_factory=RasterConfig)
     island: IslandConfig = field(default_factory=IslandConfig)
     shoulder: ShoulderConfig = field(default_factory=ShoulderConfig)
     building: BuildingConfig = field(default_factory=BuildingConfig)
     wls: WlsConfig = field(default_factory=WlsConfig)
+    plaza: PlazaConfig = field(default_factory=PlazaConfig)
 
 
-_GROUPS = ("raster", "island", "shoulder", "building", "wls")
+_GROUPS = ("raster", "island", "shoulder", "building", "wls", "plaza")
 
 
 def config_to_dict(cfg: SolverConfig) -> dict[str, Any]:
@@ -267,6 +278,15 @@ def validate(cfg: SolverConfig) -> list[str]:
                     ("building.terrace_max_levels", b.terrace_max_levels)):
         if not (isinstance(v, int) and not isinstance(v, bool) and v >= 1):
             out.append(f"{name} must be an integer >= 1 (got {v!r})")
+    pz = cfg.plaza
+    if not 0.0 <= pz.ref_percentile <= 100.0:
+        out.append(f"plaza.ref_percentile must be within [0, 100] (got {pz.ref_percentile!r})")
+    for name, v in (("plaza.min_cells", pz.min_cells), ("plaza.erode_cells", pz.erode_cells)):
+        if not (isinstance(v, int) and not isinstance(v, bool) and v >= 0):
+            out.append(f"{name} must be an integer >= 0 (got {v!r})")
+    for name, v in (("plaza.relief_warn_m", pz.relief_warn_m), ("plaza.node_tol_m", pz.node_tol_m)):
+        if not (isinstance(v, (int, float)) and math.isfinite(v) and v >= 0):
+            out.append(f"{name} must be >= 0 (got {v!r})")
     if not 0.0 <= i.fixed_ring_min_ratio <= 1.0:
         out.append(f"island.fixed_ring_min_ratio must be within [0, 1] (got {i.fixed_ring_min_ratio!r})")
     return out

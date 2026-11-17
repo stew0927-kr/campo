@@ -23,10 +23,10 @@ from scipy.sparse.linalg import cg, splu
 
 try:  # same folder modules
     from campo_grid import Grid
-    from solver_config import BuildingConfig, IslandConfig, RasterConfig, ShoulderConfig, SolverConfig
+    from solver_config import BuildingConfig, IslandConfig, PlazaConfig, RasterConfig, ShoulderConfig, SolverConfig
 except ImportError:  # pragma: no cover
     from .campo_grid import Grid  # type: ignore
-    from .solver_config import BuildingConfig, IslandConfig, RasterConfig, ShoulderConfig, SolverConfig  # type: ignore
+    from .solver_config import BuildingConfig, IslandConfig, PlazaConfig, RasterConfig, ShoulderConfig, SolverConfig  # type: ignore
 
 _CROSS = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], bool)  # 4-connectivity
 _SQUARE = np.ones((3, 3), bool)  # 8-connectivity
@@ -100,6 +100,26 @@ class DropWall:
     drop_m: float  # > 0
 
 
+@dataclass(frozen=True)
+class Plaza:
+    """평지 (a drawn flat ground area): every solid cell is held at one height (docs/ELEVATION_SOLVER_V2.md, 평지)."""
+    plaza_id: str
+    rings: tuple[np.ndarray, ...]  # grid CRS m, rings[0] outer, the rest holes (even-odd)
+    h: Optional[float] = None  # fixed_height_m or the WLS value; None: the DEM_0 reference rule
+    h_source: str = "dem_median"  # 'fixed' | 'wls' | 'dem_median'
+    name: str = ""
+    nodes: int = 0  # outdoor nodes on the plaza (merged into one WLS variable), report only
+
+
+@dataclass
+class PlazaRaster:
+    id: np.ndarray  # (H, W) int32: index into h, -1 off every plaza
+    h: np.ndarray  # (n,) held height of each rasterised plaza
+    hole: np.ndarray  # (H, W) bool: inside a plaza hole (not solid)
+    report: list[dict]  # one per rasterised plaza (index = id), measure_plazas fills the cut / fill keys
+    log: list[str]
+
+
 @dataclass
 class RoadRaster:
     road: np.ndarray  # (H, W) bool: d <= half_width
@@ -141,6 +161,8 @@ class GridResult:
     terraces: list[dict] = field(default_factory=list)  # per terrace: building_id, level, plane_m, cells, boundary_step_m
     wall_segments: Optional[np.ndarray] = None  # (K, 2, 2) terrace boundary (retaining wall) segments, grid CRS m
     wall_report: list = field(default_factory=list)  # per drawn drop wall: id, drop_m, links, conflicts, measured_*_m
+    plaza_id: Optional[np.ndarray] = None  # (H, W) int32 plaza of each held cell, -1 elsewhere (None without plazas)
+    plaza_report: list = field(default_factory=list)  # per plaza: id, name, h_m, h_source, cells, cut / fill, ...
 
 
 # ------------------------------------------------------------------ #
@@ -660,13 +682,172 @@ def _matrix(n: int, off, diag: np.ndarray) -> sp.csr_matrix:
 
 
 # ------------------------------------------------------------------ #
+# 3b. plazas (평지)
+# ------------------------------------------------------------------ #
+
+
+def plaza_reference(grid: Grid, mask: np.ndarray, cfg: PlazaConfig) -> Optional[float]:
+    """DEM_0 ref_percentile of the plaza cells erode_cells inside its edge (all of them when erosion leaves none)."""
+    m = mask
+    if cfg.erode_cells > 0:
+        er = ndimage.binary_erosion(mask, structure=_CROSS, iterations=cfg.erode_cells)
+        if er.any():
+            m = er
+    v = np.asarray(grid.data, float)[m]
+    v = v[np.isfinite(v)]
+    return float(np.percentile(v, cfg.ref_percentile)) if v.size else None
+
+
+def rasterize_plazas(grid: Grid, plazas: Sequence[Plaza], pad_mask: np.ndarray, cfg: PlazaConfig) -> PlazaRaster:
+    """
+    Solid cells of every plaza (even-odd over its rings, so holes are left out), minus building pad cells (a building
+    pad wins) and cells an earlier plaza took. Under min_cells cells: skipped. Height: Plaza.h, else plaza_reference.
+    """
+    H, W = grid.height, grid.width
+    pid = np.full((H, W), -1, np.int32)
+    hole = np.zeros((H, W), bool)
+    hs: list[float] = []
+    report: list[dict] = []
+    log: list[str] = []
+    dem = np.asarray(grid.data, float)
+    for p in plazas:
+        rings = [np.asarray(r, float) for r in p.rings]
+        solid = rasterize_polygon(grid, rings)
+        outer = rasterize_polygon(grid, rings[:1])
+        p_hole = outer & ~solid & ~pad_mask
+        overlap_pad = int((solid & pad_mask).sum())
+        cells = solid & ~pad_mask & (pid < 0)
+        n = int(cells.sum())
+        if n < cfg.min_cells:
+            log.append(f"plaza {p.plaza_id}: {n} cell(s) < min_cells {cfg.min_cells} -> skipped")
+            continue
+        h, src = (float(p.h), p.h_source) if p.h is not None and math.isfinite(p.h) else (plaza_reference(grid, cells, cfg), "dem_median")
+        if h is None:
+            log.append(f"plaza {p.plaza_id}: no DEM under the plaza and no height -> skipped")
+            continue
+        vals = dem[cells]
+        vals = vals[np.isfinite(vals)]
+        relief = float(vals.max() - vals.min()) if vals.size else 0.0
+        if relief > cfg.relief_warn_m:
+            log.append(f"plaza {p.plaza_id}: DEM relief {relief:.2f} m over {cfg.relief_warn_m:g} m under the plaza (H {h:.2f} m)")
+        if overlap_pad:
+            log.append(f"plaza {p.plaza_id}: {overlap_pad} cell(s) under building pads keep the pad height")
+        k = len(hs)
+        pid[cells] = k
+        hole |= p_hole
+        hs.append(h)
+        allp = np.concatenate(rings)
+        report.append({"id": p.plaza_id, "name": p.name, "h_m": h, "h_source": src, "cells": n,
+                       "hole_cells": int(p_hole.sum()), "area_m2": n * grid.res ** 2, "nodes": int(p.nodes),
+                       "overlap_pad_cells": overlap_pad, "relief_m": relief,
+                       "bbox_xy": [float(allp[:, 0].min()), float(allp[:, 1].min()), float(allp[:, 0].max()), float(allp[:, 1].max())]})
+    return PlazaRaster(pid, np.asarray(hs, float), hole, report, log)
+
+
+def _point_in_rings(rings: Sequence[np.ndarray], x: float, y: float) -> bool:
+    inside = False
+    for r in rings:
+        xs, ys = r[:, 0], r[:, 1]
+        x2, y2 = np.roll(xs, -1), np.roll(ys, -1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cond = (ys > y) != (y2 > y)
+            xint = (x2 - xs) * (y - ys) / (y2 - ys) + xs
+        inside ^= bool(np.count_nonzero(cond & (x < xint)) % 2)
+    return inside
+
+
+def _ring_params(p0: np.ndarray, p1: np.ndarray, rings: Sequence[np.ndarray]) -> list[float]:
+    """Parameters t in (0, 1) where the segment p0 -> p1 crosses a ring edge."""
+    r = p1 - p0
+    out: list[float] = []
+    for ring in rings:
+        a = ring
+        b = np.roll(ring, -1, axis=0)
+        s = b - a
+        den = r[0] * s[:, 1] - r[1] * s[:, 0]
+        ca = a - p0
+        ok = np.abs(den) > 1e-12
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = (ca[:, 0] * s[:, 1] - ca[:, 1] * s[:, 0]) / den
+            u = (ca[:, 0] * r[1] - ca[:, 1] * r[0]) / den
+        hit = ok & (t > 1e-9) & (t < 1 - 1e-9) & (u >= -1e-9) & (u <= 1 + 1e-9)
+        out += [float(v) for v in t[hit]]
+    return sorted(set(out))
+
+
+def clip_corridors_to_plazas(corridors: Corridors, plazas: Sequence[Plaza], plaza_h: Sequence[float]) -> Corridors:
+    """
+    Cut the parts of the corridor segments inside a plaza's solid area (the plaza holds those cells). The parts left
+    start at H where they leave the plaza: z is re-interpolated from H at the plaza edge to the old z at the far end.
+    Parts inside a hole stay (both ends at H). plaza_h[k] is the height of plazas[k].
+    """
+    xy, z, tr, st, ids = list(corridors.xy), list(corridors.z), list(corridors.t_range), list(corridors.steps), list(corridors.edge_ids)
+    for p, H in zip(plazas, plaza_h):
+        if H is None or not math.isfinite(H):
+            continue
+        rings = [np.asarray(r, float)[:, :2] for r in p.rings if len(r) >= 3]
+        if not rings:
+            continue
+        nxy, nz, ntr, nst, nids = [], [], [], [], []
+        for s in range(len(ids)):
+            p0, p1 = np.asarray(xy[s][0], float), np.asarray(xy[s][1], float)
+            z0, z1 = float(z[s][0]), float(z[s][1])
+            ts = _ring_params(p0, p1, rings)
+            if not ts:
+                mid = 0.5 * (p0 + p1)
+                if _point_in_rings(rings, float(mid[0]), float(mid[1])):
+                    continue  # wholly inside the solid area
+                nxy.append(xy[s]); nz.append(z[s]); ntr.append(tr[s]); nst.append(st[s]); nids.append(ids[s])
+                continue
+            cuts = [0.0, *ts, 1.0]
+            t0, t1 = float(tr[s][0]), float(tr[s][1])
+            for a, b in zip(cuts[:-1], cuts[1:]):
+                if b - a <= 1e-12:
+                    continue
+                m = p0 + 0.5 * (a + b) * (p1 - p0)
+                if _point_in_rings(rings, float(m[0]), float(m[1])):
+                    continue
+                za = H if a > 0.0 else z0
+                zb = H if b < 1.0 else z1
+                nxy.append(np.array([p0 + a * (p1 - p0), p0 + b * (p1 - p0)]))
+                nz.append(np.array([za, zb]))
+                ntr.append(np.array([t0 + a * (t1 - t0), t0 + b * (t1 - t0)]))
+                nst.append(st[s])
+                nids.append(ids[s])
+        xy, z, tr, st, ids = nxy, nz, ntr, nst, nids
+    if not ids:
+        return Corridors.empty()
+    return Corridors(np.asarray(xy, float).reshape(-1, 2, 2), np.asarray(z, float).reshape(-1, 2),
+                     np.asarray(tr, float).reshape(-1, 2), np.asarray(st, np.int32), tuple(ids))
+
+
+def measure_plazas(plaza_raster: PlazaRaster, h: np.ndarray, dem: np.ndarray, res: float) -> list[dict]:
+    """The report rows with cut / fill volumes (m3), the largest cut and fill (m) and the flatness error |h - H| (m)."""
+    out = []
+    for k, row in enumerate(plaza_raster.report):
+        cells = (plaza_raster.id == k) & np.isfinite(dem) & np.isfinite(h)
+        dh = h[cells] - dem[cells]
+        H = float(plaza_raster.h[k])
+        out.append({**row,
+                    "cut_m3": float(np.clip(-dh, 0, None).sum() * res * res),
+                    "fill_m3": float(np.clip(dh, 0, None).sum() * res * res),
+                    "max_cut_m": float(np.clip(-dh, 0, None).max()) if dh.size else 0.0,
+                    "max_fill_m": float(np.clip(dh, 0, None).max()) if dh.size else 0.0,
+                    "flat_error_m": float(np.abs(h[cells] - H).max()) if dh.size else 0.0})
+    return out
+
+
+# ------------------------------------------------------------------ #
 # 4. islands
 # ------------------------------------------------------------------ #
 
 
 def find_islands(fixed: np.ndarray, valid: np.ndarray, res: float, cfg: IslandConfig,
-                 exclude: Optional[np.ndarray] = None) -> tuple[np.ndarray, np.ndarray]:
-    """(island, mid): enclosed free regions (4-connected, not touching the grid edge or missing DEM)."""
+                 exclude: Optional[np.ndarray] = None, keep_free: Optional[np.ndarray] = None) -> tuple[np.ndarray, np.ndarray]:
+    """
+    (island, mid): enclosed free regions (4-connected, not touching the grid edge or missing DEM). A region with a
+    keep_free cell (a plaza hole) is neither: the shoulder solves it, so it follows the DEM instead of being filled.
+    """
     free = ~fixed & valid
     lab, n = ndimage.label(free, structure=_CROSS)
     empty = np.zeros_like(fixed, bool)
@@ -689,6 +870,9 @@ def find_islands(fixed: np.ndarray, valid: np.ndarray, res: float, cfg: IslandCo
             ring = ndimage.binary_dilation(comp, structure=_CROSS) & ~comp
             if ring.any() and fixed[ring].mean() < cfg.fixed_ring_min_ratio:
                 is_island[k] = is_mid[k] = False
+    if keep_free is not None and keep_free.any():
+        kept = np.unique(lab[keep_free & free])
+        is_island[kept] = is_mid[kept] = False
     is_island[0] = is_mid[0] = False
     return is_island[lab], is_mid[lab]
 
@@ -1149,7 +1333,7 @@ def _max_slope(h: np.ndarray, mask: np.ndarray, res: float) -> float:
 def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: SolverConfig, *,
                breaklines: Optional[np.ndarray] = None, breakline_attenuation: float = 0.0,
                soft_points: Sequence[SoftPoint] = (), exclude: Optional[np.ndarray] = None,
-               drop_walls: Sequence[DropWall] = ()) -> GridResult:
+               drop_walls: Sequence[DropWall] = (), plazas: Sequence[Plaza] = ()) -> GridResult:
     T0 = time.perf_counter()
     _wall_settings(cfg.shoulder)
     log: list[str] = []
@@ -1157,8 +1341,15 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
     valid = np.isfinite(dem)
     res = grid.res
 
-    # 2. corridors
+    # 2. corridors (with plazas: the parts inside a plaza are cut, the rest starts at H on the plaza edge)
     t = time.perf_counter()
+    pz: Optional[PlazaRaster] = None
+    if plazas:
+        pad0 = rasterize_pads(grid, [p for p in pads if np.isfinite(p.h)], cfg.building).pad_id >= 0
+        pz = rasterize_plazas(grid, plazas, pad0, cfg.plaza)
+        log += pz.log
+        by_id = {r["id"]: r["h_m"] for r in pz.report}
+        corridors = clip_corridors_to_plazas(corridors, plazas, [by_id.get(p.plaza_id) for p in plazas])
     road = rasterize_corridors(grid, corridors, cfg.raster)
     t_raster = time.perf_counter() - t
 
@@ -1178,6 +1369,11 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
     h_fixed[sel] = road.z[sel]
     h_fixed[pad] = pr.terrace_h[pr.terrace_of[pad]]  # one plane per terrace (the pad plane when there are no terraces)
     fixed = (pad | road.road | apron) & valid
+    plaza_cells = np.zeros_like(valid)
+    if pz is not None:  # priority: building pad > plaza > road > apron (pad cells were never plaza cells)
+        plaza_cells = (pz.id >= 0) & ~pad
+        h_fixed[plaza_cells] = pz.h[pz.id[plaza_cells]]
+        fixed |= plaza_cells & valid
     owner = np.where(pad, pr.terrace_of, owner)
     wall_e, wall_s = terrace_walls(owner, pr.terrace_pad)
     n_steps, max_step, worst = _vertical_steps(h_fixed, fixed, grid, cfg.building.step_max_m, (~wall_e, ~wall_s))
@@ -1212,7 +1408,7 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
     if len(walls):  # terrace boundaries always cut the links fully (attenuation 0), whatever the drawn lines use
         we, ws = breakline_links(grid, walls, 0.0)
         link_e, link_s = np.minimum(link_e, we), np.minimum(link_s, ws)
-    island, mid = find_islands(fixed, valid, res, cfg.island, exclude)
+    island, mid = find_islands(fixed, valid, res, cfg.island, exclude, keep_free=pz.hole if pz is not None else None)
     h_fixed = fill_islands(dem, h_fixed, fixed, island, res, cfg.island, link_e, link_s)
     fixed2 = fixed | island
     t_island = time.perf_counter() - t
@@ -1250,6 +1446,9 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
         log.append(f"shoulder CG did not converge in {int(info['cg_iterations'])} iteration(s)")
     h = dem + d
     h[fixed2] = h_fixed[fixed2]
+    if pz is not None:  # held exactly (variable elimination): the same bits in every plaza cell
+        hold = plaza_cells & valid
+        h[hold] = pz.h[pz.id[hold]]
     h[~valid] = np.nan
     residual = np.where(valid, h - dem, 0.0)
     total = time.perf_counter() - T0
@@ -1279,7 +1478,14 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
         stats.update(drop_walls=float(len(used)), drop_wall_links=float(sum(e["links"] for e in used)),
                      drop_wall_pins=float(n_pins),
                      max_drop_wall_error_m=max([e["max_error_m"] for e in used if e["max_error_m"] is not None], default=0.0))
+    plaza_report: list[dict] = []
+    plaza_id = None
+    if pz is not None:  # only with plazas, so the stats of a run without them stay as they were
+        plaza_report = measure_plazas(pz, h, dem, res)
+        plaza_id = np.where(plaza_cells, pz.id, -1).astype(np.int32)
+        stats.update(plazas=float(len(pz.report)), plaza_cells=float(plaza_cells.sum()))
     timings = {"rasterize": t_raster, "buildings": t_build, "islands": t_island, "assemble": info["assemble"],
                "cg": info["cg"], "total": total}
     return GridResult(h, residual, road.road, pr.pad_id, apron & ~pad, island, mid, unknown, stats, timings, log,
-                      pr.terrace_of, pr.terrace_h, t_info, walls if len(walls) else None, wall_report)
+                      pr.terrace_of, pr.terrace_h, t_info, walls if len(walls) else None, wall_report,
+                      plaza_id, plaza_report)

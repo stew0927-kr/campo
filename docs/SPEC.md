@@ -64,6 +64,7 @@ v0.1은 아래가 모두 되면 끝이다.
 | `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m`, `ext.plinth_floors`(기반층, 아래 참고), `floor_outlines`(층별 외곽선, 아래 참고) |
 | `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check`, `hours`, `closed_period`, `access_condition`, `sync_group` |
 | `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check`, `flat_exact`, `is_breakline`, `elev_diff_m`, `elev_sigma_m`, `grade_pct` |
+| `plaza` | Polygon `[바깥, ...구멍]` | (공통 속성만) | `name`, `surface`(표시 전용), `fixed_height_m`, `needs_check`. 평지(완전 평지 영역), 자세한 규칙은 docs/v0.2/SPEC-v0.2.md 2.8 |
 
 지점의 출입 정보와 층 연동(모두 선택 속성, 없는 예전 파일도 그대로 읽는다)
 
@@ -127,7 +128,7 @@ v0.1은 아래가 모두 되면 끝이다.
 ```
 data/campuses/hanyang-seoul/
 ├─ campus.json                 # id, name, center([경도, 위도]), bbox([서, 남, 동, 북]), map_limits(선택: 편집기 지도 이동 범위)
-├─ outdoor.geojson             # 바깥 node·edge, poi
+├─ outdoor.geojson             # 바깥 node·edge, poi, 평지(plaza)
 ├─ connections.geojson         # 포탈 edge, 연결통로(bridge) edge
 └─ buildings/
    └─ {code}/

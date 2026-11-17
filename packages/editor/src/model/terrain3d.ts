@@ -2,7 +2,10 @@
 // conversion from EPSG:5186 (the grid files of tools/elevation), the terrain mesh, paths draped on it, and the heights of
 // the floors, the indoor points and the vertical links between floors. Display only: nothing here changes the data, and
 // routing never reads a height.
-import { edgeCoords, outlineOfLevel, stackLayout, type EditBuilding, type StackMode, type EditState, type Level, type Position } from '@campo/core';
+import {
+  edgeCoords, framePlaza, localFrame, locateXY, outlineOfLevel, stackLayout, type EditBuilding, type StackMode, type EditState, type Level,
+  type Position, type XY,
+} from '@campo/core';
 
 // EPSG:5186 lives in korea2000.ts (no imports, so the dev server reads it too).
 export { fromKorea2000, toKorea2000 } from './korea2000.ts';
@@ -106,17 +109,123 @@ export interface TerrainCell {
   z: number;
 }
 
+// ---- 평지(plaza): one flat plane, drawn as its own exact mesh (map/deck3d.ts) ----
+
+/** A plaza as 지형 3D gets it: its rings and the height the solver held it at (null: not solved yet). */
+export interface PlazaSurface {
+  id: string;
+  rings: Position[][];
+  h: number | null;
+}
+
+/** A plaza ready to draw: its plane at z = (H − the grid's lowest height) × 높이 과장. */
+export interface PlazaFlat {
+  id: string;
+  rings: Position[][];
+  z: number;
+}
+
+/** H of a plaza: the solver's value, else the median of the relief sampled at the grid cell centres inside it (its corners when none). */
+export function plazaHeight(grid: TerrainGrid | null, p: PlazaSurface): number | null {
+  if (p.h !== null && Number.isFinite(p.h)) return p.h;
+  if (!grid || p.rings.length === 0) return null;
+  const framed = framePlaza(p.rings);
+  const xs = p.rings[0]!.map((q) => toKorea2000(q));
+  const [x0, x1] = [Math.min(...xs.map((q) => q[0])), Math.max(...xs.map((q) => q[0]))];
+  const [y0, y1] = [Math.min(...xs.map((q) => q[1])), Math.max(...xs.map((q) => q[1]))];
+  const values: number[] = [];
+  const c0 = Math.max(0, Math.floor((x0 - grid.originX) / grid.res));
+  const c1 = Math.min(grid.width - 1, Math.ceil((x1 - grid.originX) / grid.res));
+  const r0 = Math.max(0, Math.floor((grid.originY - y1) / grid.res));
+  const r1 = Math.min(grid.height - 1, Math.ceil((grid.originY - y0) / grid.res));
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      const h = grid.z[r * grid.width + c];
+      if (h === null || h === undefined) continue;
+      const at = fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res);
+      if (locateXY(framed.rings, framed.frame.toXY(at)) === 'solid') values.push(h);
+    }
+  }
+  if (values.length === 0) for (const q of p.rings[0]!) {
+    const h = sampleTerrain(grid, q);
+    if (h !== null) values.push(h);
+  }
+  if (values.length === 0) return null;
+  values.sort((a, b) => a - b);
+  const m = values.length >> 1;
+  return values.length % 2 ? values[m]! : (values[m - 1]! + values[m]!) / 2;
+}
+
+interface FramedFlat {
+  flat: PlazaFlat;
+  rings: XY[][];
+  toXY: (p: Position) => XY;
+}
+
+const frameFlats = (flats: readonly PlazaFlat[]): FramedFlat[] => flats.filter((f) => f.rings.length > 0).map((flat) => {
+  const framed = framePlaza(flat.rings);
+  return { flat, rings: framed.rings, toXY: framed.frame.toXY };
+});
+
+/** The ground with the plazas on it: inside a plaza's solid area its plane, elsewhere (a hole too) the relief. */
+export function plazaGround(ground: Ground, flats: readonly PlazaFlat[]): Ground {
+  const framed = frameFlats(flats);
+  if (framed.length === 0) return ground;
+  return (p) => {
+    for (const f of framed) if (locateXY(f.rings, f.toXY(p)) === 'solid') return f.flat.z;
+    return ground(p);
+  };
+}
+
+/**
+ * The plaza a grid vertex belongs to: `clamp` when the vertex is inside the solid area grown by 0.75 cell (its height is
+ * set to the plane, so the relief meets the plaza's edge), `inside` when it is in the solid area itself.
+ */
+function flatOf(framed: readonly FramedFlat[], at: Position, grow: number): { index: number; inside: boolean } | null {
+  for (let i = 0; i < framed.length; i++) {
+    const f = framed[i]!;
+    const xy = f.toXY(at);
+    if (locateXY(f.rings, xy, grow) !== 'solid') continue;
+    return { index: i, inside: locateXY(f.rings, xy) === 'solid' };
+  }
+  return null;
+}
+
 /**
  * The surface as triangles (two per cell between cell centres, every `step` cells), z above the grid's lowest point (× k).
  * `skip`: cells (row × width + col of their north-west centre) left out, where a wall's section is drawn instead (wallCells).
+ * `flat`: 평지. A cell centre inside a plaza grown by 0.75 cell takes the plaza's plane; a triangle whose three corners are
+ * inside one plaza's solid area (and its middle too) is left out, as the plaza's own exact mesh is drawn there. Without
+ * `flat` the mesh is as before.
  */
-export function terrainMesh(grid: TerrainGrid, step = 1, k = 1, skip?: ReadonlySet<number>): TerrainCell[] {
+export function terrainMesh(grid: TerrainGrid, step = 1, k = 1, skip?: ReadonlySet<number>, flat?: readonly PlazaFlat[]): TerrainCell[] {
   const base = terrainBase(grid);
+  const framed = flat && flat.length > 0 ? frameFlats(flat) : [];
+  const owner = new Map<number, { index: number; inside: boolean } | null>();
+  const vertexOwner = (r: number, c: number, at: Position) => {
+    const key = r * grid.width + c;
+    if (!owner.has(key)) owner.set(key, flatOf(framed, at, 0.75 * grid.res));
+    return owner.get(key)!;
+  };
   const vertex = (r: number, c: number): [number, number, number] | null => {
     const h = grid.z[r * grid.width + c];
     if (h === null || h === undefined) return null;
     const [lng, lat] = fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res);
+    if (framed.length > 0) {
+      const o = vertexOwner(r, c, [lng, lat]);
+      if (o) return [lng, lat, framed[o.index]!.flat.z];
+    }
     return [lng, lat, (h - base) * k];
+  };
+  const coveredByPlaza = (corners: [number, number][]): boolean => {
+    if (framed.length === 0) return false;
+    const owners = corners.map(([r, c]) => owner.get(r * grid.width + c) ?? null);
+    const first = owners[0];
+    if (!first || !owners.every((o) => o && o.inside && o.index === first.index)) return false;
+    const pts = corners.map(([r, c]) => fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res));
+    const mid: Position = [(pts[0]![0] + pts[1]![0] + pts[2]![0]) / 3, (pts[0]![1] + pts[1]![1] + pts[2]![1]) / 3];
+    const f = framed[first.index]!;
+    return locateXY(f.rings, f.toXY(mid)) === 'solid';
   };
   const skipped = (r: number, c: number): boolean => {
     if (!skip || skip.size === 0) return false;
@@ -128,7 +237,10 @@ export function terrainMesh(grid: TerrainGrid, step = 1, k = 1, skip?: ReadonlyS
     for (let c = 0; c + step < grid.width; c += step) {
       if (skipped(r, c)) continue;
       const [a, b, d, e] = [vertex(r, c), vertex(r, c + step), vertex(r + step, c), vertex(r + step, c + step)];
-      for (const tri of [[a, b, e], [a, e, d]]) {
+      const at: [number, number][] = [[r, c], [r, c + step], [r + step, c], [r + step, c + step]];
+      const tris: [([number, number, number] | null)[], number[]][] = [[[a, b, e], [0, 1, 3]], [[a, e, d], [0, 3, 2]]];
+      for (const [tri, idx] of tris) {
+        if (coveredByPlaza(idx.map((i) => at[i]!))) continue;
         if (tri.every((v) => v !== null)) {
           const pts = tri as [number, number, number][];
           cells.push({ polygon: pts, z: (pts[0]![2] + pts[1]![2] + pts[2]![2]) / 3 });
@@ -376,13 +488,27 @@ export function buildingSegments(state: EditState, buildingId: string, level: Le
  * Light lines along every `every`-th row and column of the grid (z above its lowest point): the bend of a line shows the
  * slope. A line breaks along the cells in `skip` (where a wall's section is drawn instead).
  */
-export function terrainWire(grid: TerrainGrid, every: number, k = 1, skip?: ReadonlySet<number>): [number, number, number][][] {
+export function terrainWire(grid: TerrainGrid, every: number, k = 1, skip?: ReadonlySet<number>, flat?: readonly PlazaFlat[]): [number, number, number][][] {
   const base = terrainBase(grid);
+  const framed = flat && flat.length > 0 ? frameFlats(flat) : [];
+  const owners = new Map<number, { index: number; inside: boolean } | null>();
+  const ownerOf = (r: number, c: number) => {
+    const key = r * grid.width + c;
+    if (!owners.has(key)) owners.set(key, flatOf(framed, fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res), 0.75 * grid.res));
+    return owners.get(key)!;
+  };
   const vertex = (r: number, c: number): [number, number, number] | null => {
     const h = grid.z[r * grid.width + c];
     if (h === null || h === undefined) return null;
     const [lng, lat] = fromKorea2000(grid.originX + (c + 0.5) * grid.res, grid.originY - (r + 0.5) * grid.res);
-    return [lng, lat, (h - base) * k + 0.05];
+    const o = framed.length > 0 ? ownerOf(r, c) : null;
+    return [lng, lat, (o ? framed[o.index]!.flat.z : (h - base) * k) + 0.05];
+  };
+  /** Both ends inside one plaza's solid area: the plaza is drawn there, so the wire breaks (no line shows through it). */
+  const onPlaza = (r0: number, c0: number, r1: number, c1: number): boolean => {
+    if (framed.length === 0) return false;
+    const [a, b] = [ownerOf(r0, c0), ownerOf(r1, c1)];
+    return !!a && !!b && a.inside && b.inside && a.index === b.index;
   };
   const cut = (r: number, c: number) => skip !== undefined && r >= 0 && c >= 0 && skip.has(r * grid.width + c);
   const lines: [number, number, number][][] = [];
@@ -394,7 +520,7 @@ export function terrainWire(grid: TerrainGrid, every: number, k = 1, skip?: Read
     for (let c = 0; c < grid.width; c++) {
       const v = vertex(r, c);
       // The piece (r, c - 1) → (r, c) lies on the cells above and below it.
-      if (c > 0 && (cut(r - 1, c - 1) || cut(r, c - 1))) { flush(run); run = []; }
+      if (c > 0 && (cut(r - 1, c - 1) || cut(r, c - 1) || onPlaza(r, c - 1, r, c))) { flush(run); run = []; }
       if (v) run.push(v);
       else { flush(run); run = []; }
     }
@@ -404,7 +530,7 @@ export function terrainWire(grid: TerrainGrid, every: number, k = 1, skip?: Read
     let run: [number, number, number][] = [];
     for (let r = 0; r < grid.height; r++) {
       const v = vertex(r, c);
-      if (r > 0 && (cut(r - 1, c - 1) || cut(r - 1, c))) { flush(run); run = []; }
+      if (r > 0 && (cut(r - 1, c - 1) || cut(r - 1, c) || onPlaza(r - 1, c, r, c))) { flush(run); run = []; }
       if (v) run.push(v);
       else { flush(run); run = []; }
     }
@@ -496,4 +622,46 @@ export function pickSurface(rayAt: (z: number) => Position, ground: Ground, top:
     hi = lo;
   }
   return flat;
+}
+
+/**
+ * The plaza's cliff (절벽 스커트) where the ground outside it is lower (fill): upright quads along every ring (outer and
+ * holes), from the plane down to the ground a little past it − `extraM`. Each ring is cut into pieces of at most `stepM`;
+ * a piece gets a quad only where the ground `probeM` out from it (away from the solid area) is more than 2 cm under the
+ * plane. Where the ground is higher (cut) there is none: the clamped relief meets the plane there. `ground` is the bare
+ * relief (not plazaGround).
+ */
+export function plazaSkirt(
+  flat: PlazaFlat, ground: Ground, opts: { stepM?: number; probeM?: number; extraM?: number } = {},
+): { polygon: [number, number, number][]; z: number }[] {
+  const stepM = opts.stepM ?? 1;
+  const probeM = opts.probeM ?? 0.6;
+  const extraM = opts.extraM ?? 0.2;
+  if (flat.rings.length === 0) return [];
+  const { rings, positions } = framePlaza(flat.rings);
+  const frame = localFrame(positions[0]![0]!);
+  const out: { polygon: [number, number, number][]; z: number }[] = [];
+  for (const ring of rings) {
+    for (let i = 0; i + 1 < ring.length; i++) {
+      const [a, b] = [ring[i]!, ring[i + 1]!];
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (len === 0) continue;
+      // The solid area is on the left of the way the normalized ring runs, so out is to the right.
+      const n: XY = [(b[1] - a[1]) / len, -(b[0] - a[0]) / len];
+      const pieces = Math.max(1, Math.ceil(len / stepM));
+      for (let j = 0; j < pieces; j++) {
+        const t0 = j / pieces;
+        const t1 = (j + 1) / pieces;
+        const p0: XY = [a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0];
+        const p1: XY = [a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1];
+        const mid: XY = [(p0[0] + p1[0]) / 2 + n[0] * probeM, (p0[1] + p1[1]) / 2 + n[1] * probeM];
+        if (!(ground(frame.toPos(mid[0], mid[1])) < flat.z - 0.02)) continue;
+        const g0 = Math.min(flat.z, ground(frame.toPos(p0[0] + n[0] * probeM, p0[1] + n[1] * probeM))) - extraM;
+        const g1 = Math.min(flat.z, ground(frame.toPos(p1[0] + n[0] * probeM, p1[1] + n[1] * probeM))) - extraM;
+        const [q0, q1] = [frame.toPos(p0[0], p0[1]), frame.toPos(p1[0], p1[1])];
+        out.push({ polygon: [[q0[0], q0[1], flat.z], [q1[0], q1[1], flat.z], [q1[0], q1[1], g1], [q0[0], q0[1], g0]], z: flat.z });
+      }
+    }
+  }
+  return out;
 }

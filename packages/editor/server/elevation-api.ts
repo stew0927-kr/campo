@@ -152,8 +152,10 @@ export function createElevationApi(opts: ElevationApiOptions) {
         const corrected = join(paths.solve, 'corrected_dem.json');
         // The walls come from the store's drawn lines; a store that cannot be read gives none, the relief still comes.
         const store = await readIfExists(paths.store).catch(() => null);
-        if (await exists(corrected)) return send(res, 200, await readTerrain(corrected, 'corrected', store));
-        if (await exists(paths.dem)) return send(res, 200, await readTerrain(paths.dem, 'dem', store));
+        // 평지 heights come from the solver's report; a report that cannot be read gives none, the relief still comes.
+        const report = await readIfExists(join(paths.solve, 'solve_report.json')).catch(() => null);
+        if (await exists(corrected)) return send(res, 200, await readTerrain(corrected, 'corrected', store, undefined, report));
+        if (await exists(paths.dem)) return send(res, 200, await readTerrain(paths.dem, 'dem', store, undefined, report));
         return send(res, 200, { grid: null, walls: [] });
       }
       if (m[2] === '/store' && req.method === 'PUT') {

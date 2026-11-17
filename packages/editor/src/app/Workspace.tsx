@@ -126,6 +126,8 @@ export function Workspace({ session }: { session: Session }) {
   const [terrainGrid, setTerrainGrid] = useState<TerrainGrid | null | undefined>(undefined);
   /** 옹벽: the 1 m sections across the drawn walls that came with the grid (none with the sample relief). */
   const [terrainWalls, setTerrainWalls] = useState<TerrainWall[]>([]);
+  /** 평지: the height the solver held each plaza at (/terrain plazaHeights; none before a recompute). */
+  const [plazaHeights, setPlazaHeights] = useState<Record<string, number>>({});
   /** The grid has been asked for (refs: the reload runs from callbacks made in earlier renders), and the latest request. */
   const terrainAsked = useRef(false);
   const terrainSeq = useRef(0);
@@ -141,10 +143,11 @@ export function Workspace({ session }: { session: Session }) {
     terrainAsked.current = true;
     const seq = ++terrainSeq.current;
     fetchTerrain(session.campusId).then(
-      ({ grid, walls }) => {
+      ({ grid, walls, plazaHeights: heights }) => {
         if (seq !== terrainSeq.current) return;
         setTerrainGrid(grid ?? sampleTerrainGrid(session.meta.center));
         setTerrainWalls(grid ? walls : []);
+        setPlazaHeights(grid ? heights : {});
         info(grid
           ? `${grid.source === 'corrected' ? '보정한 고도 그리드' : 'DEM(보정 전)'}로 지형을 그렸습니다. 바깥 길과 건물 1층 외곽선이 지형 높이에 올라갑니다.${walls.length > 0 ? ` 옹벽 ${walls.length}개는 1 m 단면으로 그립니다.` : ''}`
           : '보정 고도 그리드도 DEM도 없어 샘플 지형(실제 고도가 아님)을 보여 줍니다. derived/<캠퍼스>/에 DEM을 두고 고도 다시 계산을 돌리면 실제 지형이 나옵니다.');
@@ -166,10 +169,11 @@ export function Workspace({ session }: { session: Session }) {
     if (!terrainAsked.current) return;
     const seq = ++terrainSeq.current;
     fetchTerrain(session.campusId).then(
-      ({ grid, walls }) => {
+      ({ grid, walls, plazaHeights: heights }) => {
         if (seq !== terrainSeq.current || !grid) return;
         setTerrainGrid(grid);
         setTerrainWalls(walls);
+        setPlazaHeights(heights);
       },
       () => {
         if (seq === terrainSeq.current) info('다시 계산한 지형을 불러오지 못했습니다. 지형 3D를 껐다 켜 보세요.');
@@ -779,8 +783,9 @@ export function Workspace({ session }: { session: Session }) {
       state, scope: ui.scope, grid: terrainGrid ?? null, walls: terrainWalls, terrain: terrain3d, buildings: view3d,
       measured: (id) => measuredFloorLevels(elevation.estimates, id),
       exaggeration, routes: routeLines, slopes: elevation.slopes,
+      plazas: Object.values(state.plazas).map((p) => ({ id: p.id, rings: p.polygon })), plazaHeights,
     }) : []),
-    [view3d, terrain3d, terrainGrid, terrainWalls, state, ui.scope, elevation.estimates, exaggeration, routeLines, elevation.slopes],
+    [view3d, terrain3d, terrainGrid, terrainWalls, state, ui.scope, elevation.estimates, exaggeration, routeLines, elevation.slopes, plazaHeights],
   );
   /** 지형 3D: the relief as drawn, so clicks and drawing land where the cursor is seen on it. */
   const surface = useMemo(

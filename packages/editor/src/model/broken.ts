@@ -3,9 +3,14 @@
 //   island    a group of joined points that is not joined to the main network (the largest group)
 //   near      a point within NEAR_M of another point or way of its own floor (or of the outdoors) that it is neither
 //             joined to directly nor reaches by a short walk: the two were drawn side by side and never joined
+// A plaza (평지) joins whatever meets it, as routing does (core routing/plaza.ts): outdoor points on it or within
+// PLAZA_NODE_TOL_M of its boundary, and both ends of every outdoor way that crosses its rings. Linked plazas
+// (plazaClusters) join as one. A plaza that meets nothing joins nothing.
 // Reading only; the one fix offered ("가까운 길에 자동 연결") is a Plan of core actions. Floors are told apart by scope
 // (building + level) only to decide what lies side by side; nothing here compares floor numbers.
-import { addedKeys, edgeCoords, scopeOfNode, splitEdgeAt, type EditContext, type EditEdge, type EditNode, type EditState, type Position } from '@campo/core';
+import {
+  addedKeys, edgeCoords, plazaJoins, plazaProblem, scopeOfNode, splitEdgeAt, type EditContext, type EditEdge, type EditNode, type EditState, type Position,
+} from '@campo/core';
 import type { PlanResult, Step } from './plan.ts';
 import { nodeInScope, type Scope } from './scope.ts';
 import { planConnect } from './tools.ts';
@@ -55,10 +60,32 @@ function toSegment(p: [number, number], a: [number, number], b: [number, number]
 
 interface Net {
   xy: Map<string, [number, number]>;
-  /** Every edge at a node, with its length. */
+  /** Every edge at a node, with its length; points joined by a plaza are linked at length 0. */
   links: Map<string, { to: string; len: number }[]>;
   /** Nodes and same-scope edges by scope. */
   scopes: Map<string, { nodes: EditNode[]; edges: { edge: EditEdge; line: [number, number][] }[] }>;
+}
+
+/** Per state: the points each plaza (or each cluster of linked plazas) joins. A state is never changed in place. */
+const plazaCache = new WeakMap<EditState, string[][]>();
+
+/**
+ * The groups of points joined through plazas (core plazaJoins): per cluster of linked plazas, the outdoor points on it
+ * (within PLAZA_NODE_TOL_M of its boundary included) and both ends of every outdoor, walkable way crossing its rings.
+ */
+export function plazaJoinsOf(state: EditState): string[][] {
+  const hit = plazaCache.get(state);
+  if (hit) return hit;
+  const plazas = Object.values(state.plazas);
+  const out = plazas.length === 0 ? [] : plazaJoins(
+    plazas.filter((p) => !plazaProblem(p.polygon)),
+    Object.values(state.nodes).map((n) => ({ id: n.id, coord: n.coord, outdoor: n.props.building_id === null })),
+    Object.values(state.edges).flatMap((e) => (
+      e.props.edge_type === 'indoor' || e.props.highway === 'elevator' || !state.nodes[e.props.from] || !state.nodes[e.props.to]
+        ? [] : [{ from: e.props.from, to: e.props.to, line: edgeCoords(state, e) }])),
+  );
+  plazaCache.set(state, out);
+  return out;
 }
 
 function network(state: EditState): Net {
@@ -81,6 +108,13 @@ function network(state: EditState): Net {
     links.get(a.id)!.push({ to: b.id, len });
     links.get(b.id)!.push({ to: a.id, len });
     if (scopeOfNode(a) === scopeOfNode(b)) bucket(scopeOfNode(a)).edges.push({ edge: e, line: edgeCoords(state, e).map(project) });
+  }
+  // A plaza joins its points as one place: a chain of 0 m links, so a short walk reaches all of them.
+  for (const group of plazaJoinsOf(state)) {
+    for (let i = 0; i + 1 < group.length; i++) {
+      links.get(group[i]!)!.push({ to: group[i + 1]!, len: 0 });
+      links.get(group[i + 1]!)!.push({ to: group[i]!, len: 0 });
+    }
   }
   return { xy, links, scopes };
 }

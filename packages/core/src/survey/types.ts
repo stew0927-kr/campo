@@ -13,6 +13,27 @@ export const SURVEY_VERSION = 1;
 export interface PhotoMeta {
   /** Direction the photo looks, degrees clockwise from north, 0 up to 360. */
   heading_deg?: number;
+  /** How heading_deg was set: the sensor value as taken, checked on the dial, or set by hand without a sensor value. */
+  heading_source?: 'sensor' | 'dial' | 'manual';
+  /** The compass value when the photo was taken, before any dial correction (for measuring the compass error). */
+  heading_sensor_deg?: number;
+  /** Compass accuracy class when the photo was taken (expo-location: 3 best, 0 unreliable). */
+  heading_accuracy?: 0 | 1 | 2 | 3;
+  /** Whether heading_sensor_deg was against true or magnetic north. Left out when not known. */
+  heading_ref?: 'true' | 'magnetic';
+  /** ISO 8601 with offset: when this photo was taken (the attachment's recorded_at is the record's). */
+  captured_at?: string;
+  /** EXIF FocalLength (mm). */
+  focal_length_mm?: number;
+  /** EXIF FocalLenIn35mmFilm (mm, 35 mm equivalent). */
+  focal_length_35mm?: number;
+  /** Horizontal field of view (degrees) worked out from the focal length and the photo's shape. */
+  hfov_deg?: number;
+  /** Size of the photo as taken, in pixels (portrait when height_px > width_px). */
+  width_px?: number;
+  height_px?: number;
+  /** What to look for in the photo, e.g. "사진 오른쪽 두 번째 문". */
+  direction_hint?: string;
 }
 
 /** Photos and readings taken at one Feature. */

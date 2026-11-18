@@ -74,7 +74,18 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "heading_deg": { "description": "Direction the photo looks, degrees clockwise from north, 0 up to 360 (set on the compass dial, starting from the sensor).", "type": "number", "minimum": 0, "exclusiveMaximum": 360 }
+              "heading_deg": { "description": "Direction the photo looks, degrees clockwise from north, 0 up to 360 (set on the compass dial, starting from the sensor).", "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+              "heading_source": { "description": "How heading_deg was set: sensor value as taken, checked on the dial, or by hand without a sensor value.", "enum": ["sensor", "dial", "manual"] },
+              "heading_sensor_deg": { "description": "Compass value when the photo was taken, before any dial correction.", "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+              "heading_accuracy": { "description": "Compass accuracy class when the photo was taken (3 best, 0 unreliable).", "enum": [0, 1, 2, 3] },
+              "heading_ref": { "description": "Whether heading_sensor_deg was against true or magnetic north.", "enum": ["true", "magnetic"] },
+              "captured_at": { "description": "When this photo was taken.", "$ref": "#/$defs/dateTime" },
+              "focal_length_mm": { "description": "EXIF FocalLength (mm).", "type": "number", "exclusiveMinimum": 0 },
+              "focal_length_35mm": { "description": "EXIF FocalLenIn35mmFilm (mm).", "type": "number", "exclusiveMinimum": 0 },
+              "hfov_deg": { "description": "Horizontal field of view worked out from the focal length and the photo's shape.", "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 180 },
+              "width_px": { "type": "integer", "minimum": 1 },
+              "height_px": { "type": "integer", "minimum": 1 },
+              "direction_hint": { "description": "What to look for in the photo, e.g. 사진 오른쪽 두 번째 문.", "type": "string", "minLength": 1 }
             }
           }
         },

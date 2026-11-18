@@ -67,6 +67,17 @@ export {
   type UncertainSegment,
 } from './route.ts';
 export type { RouteStep, RouteStepKind } from './route-text.ts';
+export {
+  LOOKAHEAD_M,
+  MIN_SEGMENT_M,
+  bearingAlong,
+  computeStepBearings,
+  initialBearingDeg,
+  signedDiffDeg,
+  type FloorChangeKind,
+  type LngLat,
+  type StepBearing,
+} from './route/bearing.ts';
 export { STEEP_NOTE } from './route-text.ts';
 export * from './edit/index.ts';
 export {

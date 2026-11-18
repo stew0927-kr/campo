@@ -19,7 +19,9 @@
 | 잇기 | 이어 가던 지점(없으면 십자선 자리에 첫 지점만)과 십자선 자리의 지점(2m 안의 기존 지점, 없으면 새 지점)을 잇는 구간. 건물 안은 `corridor` 또는 경사로(`ramp`), 바깥은 `footway`. [끊고 새로 시작]으로 이어 가던 지점을 놓는다. 새 복도는 그 층에서 복도를 기다리던 문·화장실·엘리베이터 정차 지점을 같은 동작 안에서 잇는다(편집기의 "작업 순서와 상관없이 잇기") |
 | 외부 길 | 바깥으로 바꾼 뒤 잇기와 같이 찍는다. 구간 종류는 길(`footway`) / 계단(`steps`, `step_free: false`) / 경사로(`ramp`) |
 | 문/강의실 번호 | `door` 지점(`room_ref`) + 가까운 복도에 연결(`attachDoor`) |
-| 화장실 | estroom 지점(estroom_gender, wheelchair(기본 unknown), changing_table) + 가까운 복도에 연결(편집기와 같은 ddNode + ttachDoorAction) |
+| 화장실 | 
+estroom 지점(
+estroom_gender, wheelchair(기본 unknown), changing_table) + 가까운 복도에 연결(편집기와 같은 ddNode + ttachDoorAction) |
 | 호실 연속 | 시작 번호와 간격(1 또는 2)을 한 번 적고, 문마다 [문 찍기]를 누르면 번호가 저절로 올라간다(core `refAfter`). [뒷문]은 직전 호실의 뒷문 |
 | 계단 · 엘리베이터 · 에스컬레이터 | 메뉴에서 각각 따로 누르면 십자선 자리에 지점만 찍는다(`stair_landing`, `elevator_stop`, 에스컬레이터는 타는 곳의 걷는 지점). 그 지점을 누르면 뜨는 시트의 [다른 층과 연결]이 예전의 층 이동 기록(양쪽 층 지점 + `steps` / `elevator` / 에스컬레이터 구간, 출발과 도착의 기압으로 높이)이고, [시간 재기](에스컬레이터 스톱워치)와 계단 칸 수(`step_count`)도 그 시트에 있다 |
 | 에스컬레이터 | 탄 곳에서 [출발](탄 방향 올라감/내려감, 도착 층, 이 방향만 / 상행+하행 한 쌍 / 방향 전환), 내린 곳에서 [도착]. 양 끝은 복도·바깥 지점, 구간은 `highway: steps` + `conveying`이고 아래 끝 → 위 끝으로 그린다(SPEC-v0.2 2.7). 어느 끝이 아래인지는 사람이 고른 탄 방향으로 정하고 층 번호를 비교하지 않는다. 이미 있는 에스컬레이터면 따라 이동만 한다 |
@@ -112,7 +114,7 @@ ull(안 봄)이다. 터치 대상은 모두 38dp 이상이다(앱이 한 손·�
 ```
 
 - `changeset`: 앱에 실어 둔 캠퍼스 데이터(기준 상태)와 조사 뒤 상태의 차이다. 기존 changeset과 형식이 같아서 충돌 검사(`rev_mismatch` 등)와 `applyChangeset`을 그대로 쓴다. 지도를 바꾸지 않고 사진만 붙였으면 없다.
-- `attachments`: Feature id별 사진·방향·기압·메모(`photo_meta`: 사진 경로별 `heading_deg`, 0 이상 360 미만, 선택. 없는 예전 파일도 그대로 읽힌다), 그리고 현장에서 적은 `hours`·`closed_period`·`access_condition`·`sync_group`(선택). 사진 경로는 기록 폴더 안의 `photos/…`만 허용한다.
+- `attachments`: Feature id별 사진·방향·기압·메모(`photo_meta`: 사진 경로별 `heading_deg`, 0 이상 360 미만, 선택. 없는 예전 파일도 그대로 읽힌다. 선택 필드로 `heading_source`(sensor·dial·manual), 다이얼 보정 전 센서 값 `heading_sensor_deg`, `heading_accuracy`(0~3), `heading_ref`(true·magnetic), 사진별 `captured_at`, EXIF에서 읽은 `focal_length_mm`·`focal_length_35mm`·`width_px`·`height_px`와 계산한 수평 화각 `hfov_deg`, `direction_hint`도 남길 수 있다), 그리고 현장에서 적은 `hours`·`closed_period`·`access_condition`·`sync_group`(선택). 사진 경로는 기록 폴더 안의 `photos/…`만 허용한다.
 - `vertical`: 구간별 기압 측정. `height_m`은 구간의 `from`에서 `to`로 올라간 높이이고 내려가면 음수다.
 - `timings`(선택): 스톱워치로 잰 에스컬레이터 탑승 시간. `{ "target": "edge:<id>", "duration_sec": 21.4, "direction": "backward"(그린 방향과 반대로 탔을 때만), "measured_at": "…" }`. observations/*.jsonl 한 줄에서 `source`만 뺀 모양이고, core `surveyObservations`가 `source: "field"`로 바꿔 보정(SPEC-v0.2 3.9)에 그대로 쓸 수 있게 한다. 잴 때마다 하나씩 쌓이고, 없으면 필드가 빠지며, 되돌린 구간의 것은 내보낼 때 빠진다. 편집기 불러오기는 아직 이 값을 observations에 옮기지 않는다(후속).
 - 누가, 어느 기기로, 어떤 경로로 걸었는지는 필드가 없다. 스키마가 모르는 필드를 모든 단계에서 막는다.

@@ -75,3 +75,64 @@ describe('route ends on a plaza', () => {
     expect(stops.coordinates).toEqual([P(1, 1), P(2, 2)]);
   });
 });
+
+describe('a plaza crossed in the middle of a route (길 A → 평지 → 길 B)', () => {
+  /** The fixture plus road B east of 분수 광장 that meets nothing but the plaza (its west end on the east side, x = 40.04). */
+  function crossing() {
+    const session = createSession('fixture-plaza', readFolder(PLAZA), 1);
+    const east = F.toXY([127.000450428, 37])[0]; // the east side of 분수 광장 in metres
+    const base = session.history.current();
+    const state = {
+      ...base,
+      nodes: {
+        ...base.nodes,
+        n_b1: { id: 'n_b1', coord: P(east, 25), props: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: 'estimate', rev: 1 } },
+        n_b2: { id: 'n_b2', coord: P(east + 20, 25), props: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: 'estimate', rev: 1 } },
+      },
+      edges: {
+        ...base.edges,
+        e_b: {
+          id: 'e_b', vertices: [],
+          props: { kind: 'edge', highway: 'footway', edge_type: 'outdoor', from: 'n_b1', to: 'n_b2', bidirectional: true, step_free: true, source: 'estimate', rev: 1 },
+        },
+      },
+    } as typeof base;
+    const g = buildGraph(stateToCampus(state, session.meta, session.passthrough, session.extras), { overrides: [], calibration: {} });
+    return { state, g };
+  }
+
+  it('the route crosses the plaza, and the line runs start → crossing → end without repeats', () => {
+    const { state, g } = crossing();
+    const r = findRouteBetween(g, { nodeId: 'n_b2' }, { nodeId: 'n_out_w' }, 'shortest') as PointRoute;
+    expect(r.found).toBe(true);
+    expect(r.viaPlazas).toHaveLength(1);
+    const via = r.viaPlazas![0]!;
+    expect(via.plazaId).toBe('plaza_ring');
+    const nodeAt = (id: string) => state.nodes[id]?.coord;
+    const { coordinates, refs } = routeStops(r, nodeAt, { scope: OUT }, { scope: OUT });
+    expect(coordinates[0]).toEqual(nodeAt('n_b2'));
+    expect(coordinates.at(-1)).toEqual(nodeAt('n_out_w'));
+    for (let i = 1; i < coordinates.length; i++) expect(coordinates[i]).not.toEqual(coordinates[i - 1]);
+    expect(refs).toHaveLength(coordinates.length);
+    // Every point of the walk across the plaza is on the line, in order.
+    const at = via.path.map((p) => coordinates.findIndex((c) => c[0] === p[0] && c[1] === p[1]));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(plazaWalks(r)).toEqual([via]);
+    expect(plazaLines(r, (id) => (id === 'plaza_ring' ? '분수 광장' : id))).toEqual([`평지 '분수 광장'을 가로질러 지나갑니다: ${Math.round(via.lengthM)} m (직선)`]);
+    expect(r.steps.some((s) => s.text.startsWith("평지 '분수 광장'을 가로질러"))).toBe(true);
+  });
+
+  it('a plaza start, a crossing and a plaza end in one route are drawn in walking order', () => {
+    const { state, g } = crossing();
+    const from = pointEnd(g, state, { at: P(5, 5), scope: OUT })!.end;
+    const r = findRouteBetween(g, from, { nodeId: 'n_b2' }, 'shortest') as PointRoute;
+    expect(r.found).toBe(true);
+    const walks = plazaWalks(r);
+    expect(walks[0]).toBe(r.startPlaza);
+    const { coordinates } = routeStops(r, (id) => state.nodes[id]?.coord, { scope: OUT }, { scope: OUT });
+    expect(coordinates[0]).toEqual(P(5, 5));
+    expect(coordinates.at(-1)).toEqual(state.nodes['n_b2']!.coord);
+    for (let i = 1; i < coordinates.length; i++) expect(coordinates[i]).not.toEqual(coordinates[i - 1]);
+  });
+});

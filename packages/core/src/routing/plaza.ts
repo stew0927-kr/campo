@@ -1,7 +1,8 @@
 // 평지 위의 점에서 길망까지: 평지가 길과 닿는 접점, 구멍을 돌아가는 가시성 그래프, 접점까지의 최단 직선 경로.
 // 맞닿거나 겹친 평지(이어진 평지, SPEC-v0.2 2.8)는 한 묶음으로 봅니다: 묶음의 고체 영역 합집합 안을 곧게 걸어 건너가고,
 // 묶음의 어느 평지에 있는 접점이든 씁니다(평지 A → A·B 공유 경계 → 평지 B → B의 접점 → 길). 층 번호·높이는 읽지 않습니다.
-import type { CampusGraph } from '../graph.ts';
+import { PROFILES, WALK_SPEED_MPS, perProfile } from '../costs.ts';
+import type { CampusGraph, PartialWalk, PlazaCrossing, PlazaLinkData, WalkLinkData } from '../graph.ts';
 import {
   PLAZA_EPS_M,
   PLAZA_LINK_TOL_M,
@@ -16,9 +17,10 @@ import {
   type LocalFrame,
   type XY,
 } from '../plaza/geometry.ts';
+import { PLAZA_JOIN_TOL_M } from '../plaza/joins.ts';
 import type { PlazaFeature, Position } from '../types.ts';
 
-export const PLAZA_NODE_TOL_M = 0.3;
+export const PLAZA_NODE_TOL_M = PLAZA_JOIN_TOL_M;
 export const PLAZA_CONTACT_MERGE_M = 0.05;
 
 export interface PlazaPoint {
@@ -59,6 +61,8 @@ interface ClusterData {
   vis: VisNode[];
   /** vis 사이의 보이는 쌍과 길이. */
   adj: { to: number; w: number }[][];
+  /** segmentPlazas results, by segment. */
+  segmentMemo?: Map<string, string[]>;
 }
 
 interface GraphPlazas {
@@ -108,9 +112,17 @@ function plazaContactsOn(g: CampusGraph, frame: LocalFrame, rings: XY[][]): { no
     const inside = locateXY(rings, p) === 'solid';
     return { c: { kind: 'node', nodeId, at }, xy: inside ? p : closestOnRings(rings, p) };
   };
+  // Only what comes near the plaza can meet it (a campus has many ways, a plaza few).
+  let [bx0, by0, bx1, by1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const r of rings) for (const [x, y] of r) {
+    bx0 = Math.min(bx0, x); by0 = Math.min(by0, y); bx1 = Math.max(bx1, x); by1 = Math.max(by1, y);
+  }
+  [bx0, by0, bx1, by1] = [bx0 - PLAZA_NODE_TOL_M, by0 - PLAZA_NODE_TOL_M, bx1 + PLAZA_NODE_TOL_M, by1 + PLAZA_NODE_TOL_M];
   for (const [id, n] of g.nodes) {
     if (n.properties.building_id !== null) continue;
-    if (locateXY(rings, frame.toXY(n.geometry.coordinates), PLAZA_NODE_TOL_M) !== 'solid') continue;
+    const q = frame.toXY(n.geometry.coordinates);
+    if (q[0] < bx0 || q[0] > bx1 || q[1] < by0 || q[1] > by1) continue;
+    if (locateXY(rings, q, PLAZA_NODE_TOL_M) !== 'solid') continue;
     const c = asNode(id);
     if (c) nodeContacts.push(c);
   }
@@ -125,6 +137,7 @@ function plazaContactsOn(g: CampusGraph, frame: LocalFrame, rings: XY[][]): { no
     if (edge.properties.edge_type === 'indoor') return;
     const pts = edge.geometry.coordinates.map((p) => frame.toXY(p));
     if (pts.length < 2) return;
+    if (pts.every((p) => p[0] < bx0) || pts.every((p) => p[0] > bx1) || pts.every((p) => p[1] < by0) || pts.every((p) => p[1] > by1)) return;
     const seg = pts.slice(1).map((p, i) => hyp(pts[i]!, p));
     const total = seg.reduce((s, x) => s + x, 0);
     const fromXY = g.nodes.get(edge.properties.from) ? frame.toXY(g.nodes.get(edge.properties.from)!.geometry.coordinates) : pts[0]!;
@@ -279,15 +292,24 @@ function dataOf(g: CampusGraph, plazaId: string): ClusterData | null {
   return data;
 }
 
-/** The plaza whose solid area holds `point` (boundary included), else one whose hole holds it, else null. */
+/**
+ * The plaza whose solid area holds `point` (boundary included), else one whose hole holds it, else null. A point up to
+ * PLAZA_NODE_TOL_M outside a boundary (a corner snapped by the magnet and rounded) is on that plaza, like a contact node.
+ * Deterministic: a plaza whose solid area holds the point exactly comes first, then one within the tolerance, by id.
+ */
 export function plazaAt(g: CampusGraph, point: Position): { plaza: PlazaFeature; hit: 'solid' | 'hole' } | null {
   let hole: PlazaFeature | null = null;
+  let near: PlazaFeature | null = null;
   for (const id of [...g.plazas.keys()].sort()) {
     const d = dataOf(g, id)!;
-    const where = locateXY(d.domains[d.ids.indexOf(id)]!, d.frame.toXY(point));
+    const rings = d.domains[d.ids.indexOf(id)]!;
+    const p = d.frame.toXY(point);
+    const where = locateXY(rings, p);
     if (where === 'solid') return { plaza: g.plazas.get(id)!, hit: 'solid' };
+    if (!near && locateXY(rings, p, PLAZA_NODE_TOL_M) === 'solid') near = g.plazas.get(id)!;
     if (where === 'hole') hole ??= g.plazas.get(id)!;
   }
+  if (near) return { plaza: near, hit: 'solid' };
   // A point in one plaza's hole that another plaza covers is on that plaza (found above); only an uncovered hole is a hole.
   return hole ? { plaza: hole, hit: 'hole' } : null;
 }
@@ -344,31 +366,58 @@ const copy = (p: Position): Position => [p[0], p[1]];
 function crossedPlazas(d: ClusterData, path: Position[], first: string): string[] {
   const out = [first];
   if (d.ids.length === 1) return out;
-  const add = (p: XY) => {
-    d.domains.forEach((rings, k) => {
-      const id = d.ids[k]!;
-      if (!out.includes(id) && locateXY(rings, p, d.tolM) === 'solid' && ringDistance(p, rings) > d.tolM) out.push(id);
-    });
-  };
   const pts = path.map((p) => d.frame.toXY(p));
   for (let i = 0; i + 1 < pts.length; i++) {
-    const [a, b] = [pts[i]!, pts[i + 1]!];
-    const ts = [0, 1];
-    for (const ring of d.domains.flat()) for (let j = 0; j + 1 < ring.length; j++) for (const hit of segmentIntersections(a, b, ring[j]!, ring[j + 1]!)) ts.push(hit.t);
-    ts.sort((x, y) => x - y);
-    for (let k = 0; k + 1 < ts.length; k++) {
-      if (ts[k + 1]! - ts[k]! <= 1e-9) continue;
-      const m = (ts[k]! + ts[k + 1]!) / 2;
-      add([a[0] + m * (b[0] - a[0]), a[1] + m * (b[1] - a[1])]);
-    }
+    for (const id of segmentPlazas(d, pts[i]!, pts[i + 1]!)) if (!out.includes(id)) out.push(id);
   }
   return out;
 }
 
-/** Whether `point` is on the solid area of the plaza `plazaId` of the cluster. */
-function onPlaza(d: ClusterData, plazaId: string, p: XY): boolean {
+/**
+ * The plazas a straight walk from `a` to `b` is inside of, in the order it meets them (each once). Memoized per
+ * cluster: the walks between contacts share their legs between the same bends.
+ */
+function segmentPlazas(d: ClusterData, a: XY, b: XY): string[] {
+  const key = `${a[0]},${a[1]};${b[0]},${b[1]}`;
+  const memo = (d.segmentMemo ??= new Map());
+  const hit = memo.get(key);
+  if (hit) return hit;
+  const out: string[] = [];
+  const ts = [0, 1];
+  const [x0, x1, y0, y1] = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1])];
+  for (const ring of d.domains.flat()) {
+    for (let j = 0; j + 1 < ring.length; j++) {
+      const [c, e] = [ring[j]!, ring[j + 1]!];
+      if (Math.max(c[0], e[0]) < x0 || Math.min(c[0], e[0]) > x1 || Math.max(c[1], e[1]) < y0 || Math.min(c[1], e[1]) > y1) continue;
+      for (const h of segmentIntersections(a, b, c, e)) ts.push(h.t);
+    }
+  }
+  ts.sort((x, y) => x - y);
+  for (let k = 0; k + 1 < ts.length; k++) {
+    if (ts[k + 1]! - ts[k]! <= 1e-9) continue;
+    const m = (ts[k]! + ts[k + 1]!) / 2;
+    const p: XY = [a[0] + m * (b[0] - a[0]), a[1] + m * (b[1] - a[1])];
+    d.domains.forEach((rings, n) => {
+      const id = d.ids[n]!;
+      if (!out.includes(id) && locateXY(rings, p, d.tolM) === 'solid' && ringDistance(p, rings) > d.tolM) out.push(id);
+    });
+  }
+  memo.set(key, out);
+  return out;
+}
+
+/**
+ * Where a walk from `p` starts on the plaza `plazaId` of the cluster: `p` itself on its solid area, the nearest point of
+ * its boundary when `p` is at most PLAZA_NODE_TOL_M outside (`stub` metres away), else null.
+ */
+function entryOf(d: ClusterData, plazaId: string, p: XY): { inner: XY; stub: number } | null {
   const k = d.ids.indexOf(plazaId);
-  return k >= 0 && locateXY(d.domains[k]!, p) === 'solid';
+  if (k < 0) return null;
+  const rings = d.domains[k]!;
+  if (locateXY(rings, p) === 'solid') return { inner: p, stub: 0 };
+  if (locateXY(rings, p, PLAZA_NODE_TOL_M) !== 'solid') return null;
+  const inner = closestOnRings(rings, p);
+  return { inner, stub: hyp(inner, p) };
 }
 
 /**
@@ -378,18 +427,19 @@ function onPlaza(d: ClusterData, plazaId: string, p: XY): boolean {
 export function plazaGeodesics(g: CampusGraph, p: PlazaPoint): { contact: PlazaContact; geodesic: PlazaGeodesic }[] {
   const d = dataOf(g, p.plazaId);
   if (!d) return [];
-  const start = d.frame.toXY(p.point);
-  if (!onPlaza(d, p.plazaId, start)) return [];
-  const { dist, prev } = shortest(d, start);
+  const entry = entryOf(d, p.plazaId, d.frame.toXY(p.point));
+  if (!entry) return [];
+  const { dist, prev } = shortest(d, entry.inner);
+  const lead: Position[] = entry.stub > 0 ? [copy(p.point), d.frame.toPos(entry.inner[0], entry.inner[1])] : [copy(p.point)];
   const out: { contact: PlazaContact; geodesic: PlazaGeodesic }[] = [];
   d.vis.forEach((v, i) => {
     if (v.contact === undefined || dist[i] === Infinity) return;
     const contact = d.contacts[v.contact]!;
     const inner = d.contactXY[v.contact]!;
-    const path = [copy(p.point), ...pathTo(d, prev, i).map(copy)];
+    const path = dedupe([...lead, ...pathTo(d, prev, i).map(copy)]);
     const stub = hyp(inner, d.frame.toXY(contact.at));
     if (stub > 0) path.push(copy(contact.at));
-    out.push({ contact, geodesic: { lengthM: dist[i]! + stub, path, plazaIds: crossedPlazas(d, path, p.plazaId) } });
+    out.push({ contact, geodesic: { lengthM: entry.stub + dist[i]! + stub, path, plazaIds: crossedPlazas(d, path, p.plazaId) } });
   });
   return out;
 }
@@ -401,12 +451,186 @@ export function plazaGeodesics(g: CampusGraph, p: PlazaPoint): { contact: PlazaC
 export function plazaDistance(g: CampusGraph, plazaId: string, a: Position, b: Position, toPlazaId: string = plazaId): PlazaGeodesic | null {
   const d = dataOf(g, plazaId);
   if (!d || !d.ids.includes(toPlazaId)) return null;
-  const sa = d.frame.toXY(a);
-  const sb = d.frame.toXY(b);
-  if (!onPlaza(d, plazaId, sa) || !onPlaza(d, toPlazaId, sb)) return null;
-  const { dist, prev } = shortest(d, sa, [sb]);
+  const ea = entryOf(d, plazaId, d.frame.toXY(a));
+  const eb = entryOf(d, toPlazaId, d.frame.toXY(b));
+  if (!ea || !eb) return null;
+  const { dist, prev } = shortest(d, ea.inner, [eb.inner]);
   const target = d.vis.length;
   if (dist[target] === Infinity) return null;
-  const path = [copy(a), ...pathTo(d, prev, target, [b]).map(copy)];
-  return { lengthM: dist[target]!, path, plazaIds: crossedPlazas(d, path, plazaId) };
+  const at = (q: XY): Position => d.frame.toPos(q[0], q[1]);
+  const path = dedupe([
+    copy(a), ...(ea.stub > 0 ? [at(ea.inner)] : []),
+    ...pathTo(d, prev, target, [eb.stub > 0 ? at(eb.inner) : copy(b)]).map(copy),
+    ...(eb.stub > 0 ? [copy(b)] : []),
+  ]);
+  return { lengthM: ea.stub + dist[target]! + eb.stub, path, plazaIds: crossedPlazas(d, path, plazaId) };
+}
+
+/** The path without a point equal to the one before it. */
+function dedupe(path: Position[]): Position[] {
+  const out: Position[] = [];
+  for (const p of path) {
+    const last = out[out.length - 1];
+    if (!last || last[0] !== p[0] || last[1] !== p[1]) out.push(p);
+  }
+  return out;
+}
+
+// ---- 평지 전이: 평지에 닿는 길끼리 평지를 건너 잇는 링크 ----
+
+/** One way into (or out of) a plaza at a contact: a campus node, and the stretch of edge between it and the contact. */
+interface Way {
+  nodeId: string;
+  /** null at a node contact (the node is on the plaza). */
+  walk: { data: WalkLinkData; partial: PartialWalk } | null;
+  /** Into the plaza: node → contact. Out of it: contact → node. */
+  line: Position[];
+}
+
+function walkLinkOf(g: CampusGraph, a: string, b: string, edgeId: string): WalkLinkData | null {
+  for (const link of g.graph.getLinks(a) ?? []) {
+    if (String(link.fromId) === a && String(link.toId) === b && link.data.kind === 'walk' && link.data.edge.id === edgeId) return link.data;
+  }
+  return null;
+}
+
+/** The edge's line cut at `at`, `along` of its length (measured on the cluster's plane, as plazaContactsOn does). */
+function cutLine(d: ClusterData, coords: readonly Position[], along: number, at: Position): { head: Position[]; tail: Position[] } {
+  const pts = coords.map((p) => d.frame.toXY(p));
+  const seg = pts.slice(1).map((p, i) => hyp(pts[i]!, p));
+  const goal = along * seg.reduce((s, x) => s + x, 0);
+  let before = 0;
+  let i = 0;
+  while (i < seg.length - 1 && before + seg[i]! < goal) before += seg[i++]!;
+  return { head: dedupe([...coords.slice(0, i + 1).map(copy), copy(at)]), tail: dedupe([copy(at), ...coords.slice(i + 1).map(copy)]) };
+}
+
+/** The ways in (`into`) or out of the plaza at contact `c`. A one-way edge gives only the ways it can be walked. */
+function waysAt(g: CampusGraph, d: ClusterData, c: PlazaContact, into: boolean): Way[] {
+  if (c.kind === 'node') return [{ nodeId: c.nodeId, walk: null, line: [copy(c.at)] }];
+  let edge: WalkLinkData['edge'] | undefined;
+  g.graph.forEachLink((l) => {
+    if (!edge && l.data.kind === 'walk' && l.data.edge.id === c.edgeId) edge = l.data.edge;
+  });
+  if (!edge) return [];
+  const { from, to } = edge.properties;
+  const { head, tail } = cutLine(d, edge.geometry.coordinates, c.along, c.at);
+  // [node the way starts or ends at, link from, link to, share of the link, line in travel direction]
+  const options: [string, string, string, number, Position[]][] = into
+    ? [[from, from, to, c.along, head], [to, to, from, 1 - c.along, [...tail].reverse()]]
+    : [[to, from, to, 1 - c.along, tail], [from, to, from, c.along, [...head].reverse()]];
+  const out: Way[] = [];
+  for (const [nodeId, a, b, share, line] of options) {
+    const data = walkLinkOf(g, a, b, c.edgeId);
+    if (!data) continue;
+    out.push({ nodeId, walk: { data, partial: { edge, from: a, to: b, share, gradePct: data.gradePct } }, line });
+  }
+  return out;
+}
+
+/** Dijkstra over the visibility pairs alone, from vis index `src`. */
+function fromVis(d: ClusterData, src: number): { dist: number[]; prev: number[] } {
+  const n = d.vis.length;
+  const dist = new Array<number>(n).fill(Infinity);
+  const prev = new Array<number>(n).fill(-1);
+  const done = new Array<boolean>(n).fill(false);
+  dist[src] = 0;
+  for (;;) {
+    let u = -1;
+    for (let i = 0; i < n; i++) if (!done[i] && dist[i]! < Infinity && (u < 0 || dist[i]! < dist[u]!)) u = i;
+    if (u < 0) break;
+    done[u] = true;
+    for (const { to, w } of d.adj[u]!) {
+      if (dist[u]! + w < dist[to]!) {
+        dist[to] = dist[u]! + w;
+        prev[to] = u;
+      }
+    }
+  }
+  return { dist, prev };
+}
+
+/** The plaza of the cluster a contact stands on (the first by id), for the order of crossed plazas. */
+function plazaOfContact(d: ClusterData, i: number): string {
+  const p = d.contactXY[i]!;
+  return d.ids.find((_, k) => locateXY(d.domains[k]!, p, Math.max(d.tolM, PLAZA_NODE_TOL_M)) === 'solid') ?? d.ids[0]!;
+}
+
+function clusterLinks(g: CampusGraph, d: ClusterData): { from: string; to: string; data: PlazaLinkData }[] {
+  const visOf = d.contacts.map((_, i) => d.vis.findIndex((v) => v.contact === i));
+  const ins = d.contacts.map((c) => waysAt(g, d, c, true));
+  const outs = d.contacts.map((c) => waysAt(g, d, c, false));
+  // Per (from, to): the candidates, of which only those cheapest for some profile are kept.
+  const byPair = new Map<string, { from: string; to: string; data: PlazaLinkData }[]>();
+  d.contacts.forEach((ci, i) => {
+    if (visOf[i]! < 0 || ins[i]!.length === 0) return;
+    const { dist, prev } = fromVis(d, visOf[i]!);
+    d.contacts.forEach((cj, j) => {
+      if (i === j || dist[visOf[j]!] === Infinity || outs[j]!.length === 0) return;
+      const stubIn = hyp(d.contactXY[i]!, d.frame.toXY(ci.at));
+      const stubOut = hyp(d.contactXY[j]!, d.frame.toXY(cj.at));
+      const lengthM = stubIn + dist[visOf[j]!]! + stubOut;
+      const path = dedupe([copy(ci.at), ...pathTo(d, prev, visOf[j]!).map(copy), copy(cj.at)]);
+      // Which plazas the walk crosses is only needed for a route that takes it (and for closures): worked out then.
+      let ids: string[] | undefined;
+      const idsOf = () => (ids ??= crossedPlazas(d, path, plazaOfContact(d, i)));
+      const plazaT = lengthM / WALK_SPEED_MPS;
+      const shut = d.ids.some((id) => g.closed.has(id)) && idsOf().some((id) => g.closed.has(id));
+      for (const a of ins[i]!) {
+        for (const b of outs[j]!) {
+          if (a.nodeId === b.nodeId) continue;
+          const walks = [a.walk, b.walk].filter((w): w is NonNullable<Way['walk']> => w !== null);
+          let made: PlazaCrossing | undefined;
+          const crossing = (): PlazaCrossing => (made ??= {
+            plazaId: idsOf()[0]!, ...(idsOf().length > 1 ? { plazaIds: idsOf() } : {}),
+            fromNodeId: a.nodeId, toNodeId: b.nodeId, path, lengthM,
+            line: dedupe([...a.line, ...path, ...b.line]),
+          });
+          const data: PlazaLinkData = {
+            kind: 'plaza', crossing,
+            lengthM: lengthM + walks.reduce((s, w) => s + w.data.lengthM * w.partial.share, 0),
+            partials: walks.map((w) => w.partial),
+            timeSec: plazaT + walks.reduce((s, w) => s + w.data.timeSec * w.partial.share, 0),
+            cost: perProfile((p) => plazaT + walks.reduce((s, w) => s + w.data.cost[p] * w.partial.share, 0)),
+            blocked: perProfile((p) => shut || walks.some((w) => w.data.blocked[p])),
+          };
+          const key = `${a.nodeId}\u0000${b.nodeId}`;
+          byPair.set(key, [...(byPair.get(key) ?? []), { from: a.nodeId, to: b.nodeId, data }]);
+        }
+      }
+    });
+  });
+  const out: { from: string; to: string; data: PlazaLinkData }[] = [];
+  for (const list of byPair.values()) {
+    const keep = new Set<number>();
+    for (const p of PROFILES) {
+      let best = -1;
+      list.forEach((c, k) => {
+        if (!c.data.blocked[p] && (best < 0 || c.data.cost[p] < list[best]!.data.cost[p])) best = k;
+      });
+      if (best >= 0) keep.add(best);
+    }
+    // Blocked for every profile (a closed plaza): keep one, so the crossing is still there to be shown as closed.
+    if (keep.size === 0) keep.add(0);
+    for (const k of [...keep].sort((x, y) => x - y)) out.push(list[k]!);
+  }
+  return out;
+}
+
+/**
+ * The links a plaza (or linked plazas) adds to the graph: between every way into it at one contact and every way out of
+ * it at another, the shortest straight walk across it (around holes, over shared seams), as one node → node link. A
+ * contact on an edge goes on to either end of that edge for its share of the edge's link. Campus nodes only. Flat
+ * ground: every profile may cross, at cost = time = length / WALK_SPEED_MPS (the edge stretches cost what their links do).
+ */
+export function plazaTransferLinks(g: CampusGraph): { from: string; to: string; data: PlazaLinkData }[] {
+  const out: { from: string; to: string; data: PlazaLinkData }[] = [];
+  const done = new Set<ClusterData>();
+  for (const id of [...g.plazas.keys()].sort()) {
+    const d = dataOf(g, id);
+    if (!d || done.has(d)) continue;
+    done.add(d);
+    out.push(...clusterLinks(g, d));
+  }
+  return out;
 }

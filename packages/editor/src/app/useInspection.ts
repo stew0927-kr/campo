@@ -25,6 +25,8 @@ export function fastestOf(results: readonly { kind: RouteKind; result: PointRout
   return best?.kind ?? null;
 }
 
+const OUTDOOR_REF: RouteRef = { scope: OUTDOOR };
+
 export function useInspection(
   session: Session,
   state: EditState,
@@ -74,11 +76,12 @@ export function useInspection(
     const toRef: RouteRef = { scope: routeToPoint?.scope ?? OUTDOOR };
     const draw = (profile: RouteLine['profile'], r: PointRouteResult) => {
       if (!r.found) return;
-      // A plaza end walks straight across the plaza (around its holes) to where the route meets it: drawn as part of the
-      // route, and dashed on top like the foot of a perpendicular.
+      // A plaza end walks straight across the plaza (around its holes) to where the route meets it, and a crossing in the
+      // middle (길 A → 평지 → 길 B) walks across it between two nodes: drawn as part of the route, and dashed on top like the
+      // foot of a perpendicular.
       lines.push({ profile, ...routeStops(r, (id) => checkedState.nodes[id]?.coord, fromRef, toRef) });
       for (const leg of plazaWalks(r)) {
-        const ref = leg === r.startPlaza ? fromRef : toRef;
+        const ref = leg === r.startPlaza ? fromRef : leg === r.endPlaza ? toRef : OUTDOOR_REF;
         lines.push({ profile: 'snap', coordinates: leg.path, refs: leg.path.map(() => ref) });
       }
     };

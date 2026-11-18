@@ -67,10 +67,18 @@ function polylineOf(runtime: CampusRuntime, route: PointRoute): RoutePoint[] {
     points.push({ lat: position[1], lng: position[0] });
   };
   if (route.startFoot !== null) push(route.startFoot);
-  for (const id of route.nodes) {
+  // 평지를 건너는 구간(길 A → 평지 → 길 B)은 두 지점 사이에 평지 위 걷는 선을 끼워 넣는다(구멍을 돌아가는 꺾임 포함).
+  const vias = route.viaPlazas ?? [];
+  let next = 0;
+  route.nodes.forEach((id, i) => {
     const node = runtime.graph.nodes.get(id);
     if (node !== undefined) push(node.geometry.coordinates as Position);
-  }
+    const via = vias[next];
+    if (via !== undefined && via.fromNodeId === id && via.toNodeId === route.nodes[i + 1]) {
+      for (const p of via.line.slice(1, -1)) push(p);
+      next++;
+    }
+  });
   if (route.endFoot !== null) push(route.endFoot);
   // 출발과 도착이 같은 자리면 점이 하나뿐이다. 한 점짜리 LineString은 지도에 그릴 수 없으므로 같은 점을 한 번 더 둔다.
   const only = points.length === 1 ? points[0] : undefined;

@@ -98,16 +98,19 @@ export {
   plazaRingProblem,
   plazaRegionsOverlap,
   plazaTouchesNetwork,
+  nearestOnPlazaBoundary,
   pointInRingXY,
   ringAreaXY,
   segmentInPlazaDomain,
   signedAreaM2,
   type FramedPlaza,
   type LocalFrame as PlazaLocalFrame,
+  type PlazaBoundaryHit,
   type PlazaDraw,
   type PlazaHit,
   type XY,
 } from './plaza/geometry.ts';
+export * from './plaza/merge.ts';
 export * from './changeset/index.ts';
 export * from './reports/index.ts';
 export * from './survey/index.ts';

@@ -279,6 +279,52 @@ export function plazaProblem(rings: unknown): string | false {
   return plazaRingProblem(rings) || plazaHoleProblem(rings as Position[][]);
 }
 
+/** 평지 테두리에서 가장 가까운 점과, 그 점이 어느 링의 어느 변에 있는지. */
+export interface PlazaBoundaryHit {
+  /** 테두리 위의 점(변의 수선의 발, 꼭짓점에 가까우면 꼭짓점). */
+  position: Position;
+  /** 점에서 그 점까지의 곧은 거리(m). */
+  distanceM: number;
+  /** 0 = 바깥 링, 1 이상 = 구멍. */
+  ring: number;
+  /** 그 링의 변 번호(ring[i] → ring[i+1]). */
+  segment: number;
+}
+
+/**
+ * 평지 테두리(바깥 링·구멍 모두)에서 `p`에 가장 가까운 점. 길찾기용 수선의 발(출입문 → 평지)과 지점 마그넷 스냅이
+ * 같은 계산을 썻니다. 빈 평지면 null.
+ */
+export function nearestOnPlazaBoundary(rings: Position[][], p: Position): PlazaBoundaryHit | null {
+  if (rings.length === 0 || rings[0]!.length === 0) return null;
+  const { frame, rings: xy } = framePlaza(rings);
+  const target = frame.toXY(p);
+  let bestAt: XY | null = null;
+  let bestD = Infinity;
+  let bestRing = 0;
+  let bestSegment = 0;
+  for (let r = 0; r < xy.length; r++) {
+    const ring = xy[r]!;
+    for (let i = 0; i + 1 < ring.length; i++) {
+      const a = ring[i]!;
+      const b = ring[i + 1]!;
+      const ab = sub(b, a);
+      const len2 = dot(ab, ab);
+      const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, dot(sub(target, a), ab) / len2));
+      const at: XY = [a[0] + t * ab[0], a[1] + t * ab[1]];
+      const d = dist(target, at);
+      if (d < bestD) {
+        bestAt = at;
+        bestD = d;
+        bestRing = r;
+        bestSegment = i;
+      }
+    }
+  }
+  if (!bestAt) return null;
+  return { position: frame.toPos(bestAt[0], bestAt[1]), distanceM: bestD, ring: bestRing, segment: bestSegment };
+}
+
 /** 고체 영역 쪽(정규화 후 진행 방향 왼쪽)으로 아주 조금 들어간 표본점들. */
 function interiorSamples(rings: readonly XY[][]): XY[] {
   const out: XY[] = [];

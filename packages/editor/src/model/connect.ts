@@ -12,8 +12,11 @@ import {
   type Position,
 } from '@campo/core';
 import { isError, type Plan, type PlanResult, type Step } from './plan.ts';
-import { planPath, idMaker, nodeStep, DRAWN_SOURCE, type NodeProps, type OutdoorKind, type PathVertex } from './tools.ts';
+import { planCurvePath, planPath, idMaker, nodeStep, DRAWN_SOURCE, type NodeProps, type OutdoorKind, type PathVertex } from './tools.ts';
 import type { Scope } from './scope.ts';
+
+/** 길 그리기 pen: straight clicks, or control points of a curve. */
+export type PathShape = 'straight' | 'curve';
 
 export const NOT_CONNECTED_NOTICE = '아직 복도와 연결되지 않았어요. 복도를 그리면 자동으로 이어집니다';
 
@@ -118,8 +121,8 @@ export function simulateAttach(state: EditState, ctx: EditContext, ids: readonly
  * A drawn path as a plan. Finishing a corridor also attaches the unattached points of its floor within reach of the NEW corridor
  * edges, in the same plan (one Ctrl+Z takes both back).
  */
-export function planDrawnPath(state: EditState, ctx: EditContext, vertices: readonly PathVertex[], kind: OutdoorKind, scope: Scope): PlanResult | null {
-  const base = planPath(state, ctx, vertices, kind, scope);
+export function planDrawnPath(state: EditState, ctx: EditContext, vertices: readonly PathVertex[], kind: OutdoorKind, scope: Scope, shape: PathShape = 'straight'): PlanResult | null {
+  const base = (shape === 'curve' ? planCurvePath : planPath)(state, ctx, vertices, kind, scope);
   if (base === null || isError(base) || scope.kind !== 'building' || kind !== 'flat') return base;
   // The same action objects go into the plan: an action keeps the ids it drew, so the corridor edges the attach step looks for exist by the same ids when the plan runs.
   let s = state;

@@ -13,6 +13,7 @@ import {
   type NodeProperties,
   type Position,
 } from '@campo/core';
+import { curveSegments } from './curve.ts';
 import type { PlanResult, Step } from './plan.ts';
 import { OUTDOOR, floorLabel, snappable, type Scope } from './scope.ts';
 
@@ -39,7 +40,7 @@ export function idMaker(state: EditState, ctx: EditContext) {
 }
 
 export const nodeStep = (id: string, coord: Position, props: NodeProps, ctx: EditContext): Step => () => addNode({ id, coord: [coord[0], coord[1]], props }, ctx);
-export const edgeStep = (props: EdgeProps, ctx: EditContext): Step => () => addEdge({ props }, ctx);
+export const edgeStep = (props: EdgeProps, ctx: EditContext, vertices?: Position[]): Step => () => addEdge({ props, ...(vertices && vertices.length > 0 ? { vertices } : {}) }, ctx);
 
 // ---- 바깥 길 ----
 
@@ -60,6 +61,18 @@ export const ELEVATOR_NOT_DRAWN = '엘리베이터는 엘리베이터 도구로 
  * one edge per consecutive pair. An outdoor path that reaches an entrance makes that edge a portal. Null when there is nothing to draw.
  */
 export function planPath(state: EditState, ctx: EditContext, vertices: readonly PathVertex[], kind: OutdoorKind, scope: Scope): PlanResult | null {
+  return planPathShape(state, ctx, vertices, kind, scope, false);
+}
+
+/**
+ * 곡선 길: the same rules as planPath, but the clicks are control points of a smooth curve (curve.ts). Nodes are made only at the
+ * control points; each edge gets the samples of its segment as `vertices` (bend points), so the data stays plain nodes + edges.
+ */
+export function planCurvePath(state: EditState, ctx: EditContext, vertices: readonly PathVertex[], kind: OutdoorKind, scope: Scope): PlanResult | null {
+  return planPathShape(state, ctx, vertices, kind, scope, true);
+}
+
+function planPathShape(state: EditState, ctx: EditContext, vertices: readonly PathVertex[], kind: OutdoorKind, scope: Scope, curved: boolean): PlanResult | null {
   const indoor = scope.kind === 'building';
   if (indoor && kind === 'steps') return { error: '같은 층 안의 계단 구간은 그리지 않습니다. 층 사이 계단은 지점 추가의 계단으로 만드세요.' };
   const building = indoor ? buildingById(state, scope.buildingId) : undefined;
@@ -70,6 +83,7 @@ export function planPath(state: EditState, ctx: EditContext, vertices: readonly 
   const steps: Step[] = [];
   const path: string[] = [];
   const newAt = new Map<string, string>(); // "lng,lat" -> id, so closing a loop reuses the first new node
+  const coordOf = new Map<string, Position>(); // new nodes' positions (existing nodes are read from the state)
   for (const v of vertices) {
     let id: string;
     if ('nodeId' in v) {
@@ -84,12 +98,18 @@ export function planPath(state: EditState, ctx: EditContext, vertices: readonly 
       else {
         id = newId({ ...here, node_type: nodeType });
         newAt.set(key, id);
+        coordOf.set(id, [v.position[0], v.position[1]]);
         steps.push(nodeStep(id, v.position, { kind: 'node', node_type: nodeType, ...here, source: DRAWN_SOURCE }, ctx));
       }
     }
     if (path[path.length - 1] !== id) path.push(id); // clicking the same node twice is not a segment
   }
   if (path.length < 2) return null; // a lone click draws nothing
+  let bends: Position[][] | null = null;
+  if (curved) {
+    bends = curveSegments(path.map((id) => coordOf.get(id) ?? state.nodes[id]!.coord));
+    if (bends.length !== path.length - 1) return { error: '같은 자리에 겹친 지점이 있어 곡선을 만들 수 없습니다.' };
+  }
   for (let i = 0; i + 1 < path.length; i++) {
     const [a, b] = [path[i]!, path[i + 1]!];
     const outside = (id: string) => (state.nodes[id] ? state.nodes[id]!.props.building_id === null : true);
@@ -101,10 +121,11 @@ export function planPath(state: EditState, ctx: EditContext, vertices: readonly 
       kind: 'edge', highway: kind === 'ramp' ? 'ramp' : 'corridor', edge_type: 'indoor', step_free: null, from: a, to: b, bidirectional: true, source: DRAWN_SOURCE,
     } : {
       kind: 'edge', ...EDGE_BY_KIND[kind], edge_type: 'outdoor', from: a, to: b, bidirectional: true, source: DRAWN_SOURCE,
-    }, ctx));
+    }, ctx, bends?.[i]));
   }
   const n = path.length - 1;
-  return { annotation: indoor ? `${kind === 'ramp' ? '경사로' : '복도'} ${n}구간 그리기` : `바깥 길 ${n}구간 그리기`, steps };
+  const word = curved ? '곡선 ' : '';
+  return { annotation: indoor ? `${word}${kind === 'ramp' ? '경사로' : '복도'} ${n}구간 그리기` : `${word}바깥 길 ${n}구간 그리기`, steps };
 }
 
 /** 바깥 길 only (the scope-less form). */

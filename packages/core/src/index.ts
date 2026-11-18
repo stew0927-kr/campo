@@ -26,6 +26,7 @@ export {
   linkedPlazas,
   plazaDistance,
   plazaGeodesics,
+  plazaTransferLinks,
   type PlazaContact,
   type PlazaGeodesic,
   type PlazaPoint,
@@ -52,6 +53,9 @@ export {
   type GraphLinkData,
   type GraphNodeData,
   type HopLinkData,
+  type PartialWalk,
+  type PlazaCrossing,
+  type PlazaLinkData,
   type SinkLinkData,
   type WalkLinkData,
 } from './graph.ts';
@@ -107,6 +111,7 @@ export {
   pointInRingXY,
   ringAreaXY,
   segmentInPlazaDomain,
+  segmentIntersections,
   signedAreaM2,
   type FramedPlaza,
   type LocalFrame as PlazaLocalFrame,
@@ -116,6 +121,7 @@ export {
   type XY,
 } from './plaza/geometry.ts';
 export * from './plaza/merge.ts';
+export { PLAZA_JOIN_TOL_M, plazaJoins, type JoinEdge, type JoinNode } from './plaza/joins.ts';
 export * from './changeset/index.ts';
 export * from './reports/index.ts';
 export * from './survey/index.ts';

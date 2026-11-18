@@ -1218,7 +1218,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
               }}
             />
           )}
-          {sheet === 'info' && infoNode && (
+          {(sheet === 'info' || sheet === 'photos') && infoNode && (
             <PointInfoSheet
               key={infoNode.id}
               header={infoVertical ? (
@@ -1235,6 +1235,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
               access={infoNode.props}
               note={session.attachments[infoNode.id]?.note ?? ''}
               {...photo}
+              savedPhotos={(session.attachments[infoNode.id]?.photos ?? []).length}
+              onManagePhotos={() => setSheet('photos')}
               onClose={closeSheet}
               onSave={(answer) => saveInfo(infoNode, answer)}
             />
@@ -1248,7 +1250,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
             onAdd={() => setCamera({ kind: 'point', nodeId: infoNode.id })}
             onHeading={(path) => editSaved(infoNode.id, path)}
             onDelete={(path) => removeSaved(infoNode.id, path)}
-            onClose={closeSheet}
+            onClose={() => setSheet('info')}
           />
         )}
         {sheet === 'building' && draft !== null && <BuildingFormSheet corners={draft.length} onSave={addDrawnBuilding} onClose={() => setSheet(null)} />}

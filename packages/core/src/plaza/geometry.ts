@@ -479,10 +479,15 @@ export function segmentInPlazasDomain(domains: readonly (readonly (readonly XY[]
   if (len2 <= PLAZA_EPS_M * PLAZA_EPS_M) return solidInAny(domains, a, tolM);
   const ts = [0, 1];
   const tTol = 1e-12;
+  // A ring side whose box misses the walk's box (with a margin over the tolerances below) can neither cross nor lie on it.
+  const m = 1e-5;
+  const [x0, x1] = a[0] < b[0] ? [a[0] - m, b[0] + m] : [b[0] - m, a[0] + m];
+  const [y0, y1] = a[1] < b[1] ? [a[1] - m, b[1] + m] : [b[1] - m, a[1] + m];
   for (const ring of domains.flat()) {
     for (let i = 0; i + 1 < ring.length; i++) {
       const c = ring[i]!;
       const d = ring[i + 1]!;
+      if ((c[0] < x0 && d[0] < x0) || (c[0] > x1 && d[0] > x1) || (c[1] < y0 && d[1] < y0) || (c[1] > y1 && d[1] > y1)) continue;
       const s = sub(d, c);
       const denom = cross(r, s);
       const ca = sub(c, a);

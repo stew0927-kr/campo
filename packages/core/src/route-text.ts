@@ -3,7 +3,7 @@
 // names and to pick 올라가세요 / 내려가세요 when an edge has no `incline`. It
 // never chooses or connects anything; the route is fixed before it gets here.
 import { conveyingOf, gradeClass, isEscalator } from './costs.ts';
-import type { CampusGraph, GraphLinkData } from './graph.ts';
+import type { CampusGraph, GraphLinkData, PlazaLinkData } from './graph.ts';
 import type { EdgeFeature, Level, NodeFeature } from './types.ts';
 
 /** One traversed graph link, with campus node ids in travel direction (a car counts as its stop). */
@@ -60,19 +60,26 @@ type Direction = 'up' | 'down' | null;
  *   the other way) do not count as a branch.
  * - each bridge or portal edge: its own step.
  * - consecutive plain walking edges ('walk', moving walkways included) or ramps ('ramp'): one step each run.
+ * - each plaza crossing (평지): its own 'walk' step, "평지 '분수 광장'을 가로질러 30m 걸어가세요".
  */
 export function buildSteps(g: CampusGraph, legs: readonly Leg[]): RouteStep[] {
   const steps: RouteStep[] = [];
   let i = 0;
   while (i < legs.length) {
-    const kind = kindOf(legs[i]!);
+    const first = legs[i]!;
+    if (first.data.kind === 'plaza') {
+      steps.push(plazaStep(g, first, first.data));
+      i++;
+      continue;
+    }
+    const kind = kindOf(first);
     let j = i;
     if (kind === 'elevator') {
       while (j + 1 < legs.length && kindOf(legs[j + 1]!) === 'elevator' && legs[j]!.data.kind !== 'alight') j++;
     } else if (kind === 'stairs' || kind === 'escalator') {
       while (j + 1 < legs.length && kindOf(legs[j + 1]!) === kind && !branchesAt(g, legs[j]!, legs[j + 1]!, kind === 'escalator')) j++;
     } else if (kind === 'walk' || kind === 'ramp') {
-      while (j + 1 < legs.length && kindOf(legs[j + 1]!) === kind) j++;
+      while (j + 1 < legs.length && legs[j + 1]!.data.kind !== 'plaza' && kindOf(legs[j + 1]!) === kind) j++;
     }
     steps.push(makeStep(g, kind, legs.slice(i, j + 1)));
     i = j + 1;
@@ -82,6 +89,7 @@ export function buildSteps(g: CampusGraph, legs: readonly Leg[]): RouteStep[] {
 
 function kindOf(leg: Leg): RouteStepKind {
   const d = leg.data;
+  if (d.kind === 'plaza') return 'walk';
   if (d.kind !== 'walk') return 'elevator'; // board, hop, alight (sink never reaches here)
   const { highway, edge_type } = d.edge.properties;
   if (isEscalator(d.edge.properties)) return 'escalator';
@@ -109,6 +117,28 @@ function branchesAt(g: CampusGraph, a: Leg, b: Leg, escalators: boolean): boolea
     return true;
   }
   return false;
+}
+
+/** A walk across a plaza between two nodes: flat ground, named after the plazas it crosses. */
+function plazaStep(g: CampusGraph, leg: Leg, data: PlazaLinkData): RouteStep {
+  const start = g.nodes.get(leg.from)!;
+  const end = g.nodes.get(leg.to)!;
+  const crossing = data.crossing();
+  const names = (crossing.plazaIds ?? [crossing.plazaId])
+    .map((id) => g.plazas.get(id)?.properties.name)
+    .filter((n): n is string => typeof n === 'string' && n.trim() !== '');
+  const where = names.length > 0 ? `평지 ${names.map((n) => `'${n}'`).join('·')}을` : '평지를';
+  return {
+    kind: 'walk',
+    fromNodeId: start.id,
+    toNodeId: end.id,
+    fromLevel: levelOf(start),
+    toLevel: levelOf(end),
+    distanceM: round1(data.lengthM),
+    timeSec: round1(data.timeSec),
+    edgeIds: data.partials.filter((w) => w.share > 0).map((w) => w.edge.id),
+    text: `${where} 가로질러 ${Math.round(data.lengthM)}m 걸어가세요`,
+  };
 }
 
 function makeStep(g: CampusGraph, kind: RouteStepKind, legs: readonly Leg[]): RouteStep {

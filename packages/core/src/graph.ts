@@ -1,6 +1,6 @@
 // Routing graph (SPEC-v0.2 3.1-3.3).
 //
-// IMPORTANT: the graph follows edge connections only. Floor numbers are never
+// IMPORTANT: the graph follows edge connections (and the plazas they meet) only. Floor numbers are never
 // read here (AGENTS.md); a test checks this file for the word.
 import createGraph, { type Graph } from 'ngraph.graph';
 import distance from '@turf/distance';
@@ -23,6 +23,7 @@ import {
 import { edgeTargetKey, elevatorTargetKey, measuredTimes } from './routing/measured.ts';
 import { activeClosures } from './routing/overrides.ts';
 import { plazaProblem } from './plaza/geometry.ts';
+import { plazaTransferLinks } from './routing/plaza.ts';
 import type { BuildingFeature, EdgeFeature, EdgeProperties, LoadedCampus, NodeFeature, PlazaFeature, Position } from './types.ts';
 
 export interface GraphNodeData {
@@ -64,12 +65,52 @@ export interface AlightLinkData extends LinkCosts {
   kind: 'alight';
   stopId: string;
 }
+/**
+ * A walk across a plaza (평지) or linked plazas between two campus nodes that meet it (routing/plaza.ts plazaTransferLinks).
+ * Both ends are campus nodes; nothing virtual is added. A contact on an edge also walks the part of that edge between
+ * the contact and the node.
+ */
+export interface PlazaCrossing {
+  /** The plaza the walk enters first. */
+  plazaId: string;
+  /** Only when the walk crosses linked plazas: every plaza it crosses, in walking order. */
+  plazaIds?: string[];
+  /** Campus nodes the crossing joins, in travel direction. */
+  fromNodeId: string;
+  toNodeId: string;
+  /** The walk on the plaza, from where it enters to where it leaves (bends around holes included). */
+  path: Position[];
+  /** Metres of `path`. */
+  lengthM: number;
+  /** The whole line from fromNodeId to toNodeId: the stretches of edge to and from the plaza, then `path`. */
+  line: Position[];
+}
+/** The part of a walk link a plaza crossing walks before or after the plaza. */
+export interface PartialWalk {
+  edge: EdgeFeature;
+  /** Campus nodes of the walk link, in travel direction (the stretch is part of from → to). */
+  from: string;
+  to: string;
+  /** Share of the link walked, 0–1. */
+  share: number;
+  gradePct: number | null;
+}
+/** Node → node across a plaza: flat ground, no penalty, cost = time = length / WALK_SPEED_MPS (plus the edge stretches). */
+export interface PlazaLinkData extends LinkCosts {
+  kind: 'plaza';
+  /** The crossing, worked out when first asked for (a route that takes this link); the same object every time. */
+  crossing: () => PlazaCrossing;
+  /** Everything walked: the plaza walk and the edge stretches. */
+  lengthM: number;
+  /** Edges walked in part, in order (at most one before and one after the plaza). */
+  partials: PartialWalk[];
+}
 /** Matching node → findNearest's virtual target. Exists only inside findNearest, never in CampusGraph.graph. */
 export interface SinkLinkData extends LinkCosts {
   kind: 'sink';
 }
 
-export type GraphLinkData = WalkLinkData | BoardLinkData | HopLinkData | AlightLinkData | SinkLinkData;
+export type GraphLinkData = WalkLinkData | BoardLinkData | HopLinkData | AlightLinkData | PlazaLinkData | SinkLinkData;
 
 export interface CampusGraph {
   graph: Graph<GraphNodeData, GraphLinkData>;
@@ -236,7 +277,11 @@ export function buildGraph(campus: LoadedCampus, options: BuildGraphOptions = {}
     if (against) add(to, from, edge);
   }
 
-  return { graph, nodes, buildings, plazas, closed, heuristicSpeedMps, warnings };
+  // Plazas join the nodes and edges that meet them: one link per pair of ways in and out, between campus nodes only.
+  const g: CampusGraph = { graph, nodes, buildings, plazas, closed, heuristicSpeedMps, warnings };
+  if (plazas.size > 0) for (const t of plazaTransferLinks(g)) link(t.from, t.to, t.data);
+  g.heuristicSpeedMps = heuristicSpeedMps;
+  return g;
 }
 
 /**

@@ -493,6 +493,28 @@ export class SurveySession {
   }
 
   /**
+   * Take one saved photo off a point: its path leaves `photos` and its `photo_meta` entry goes (`photo_meta` itself when it
+   * was the last entry). When that was the point's last photo the `photos` list goes too, and an attachment that then holds
+   * nothing but `recorded_at` is removed — no empty `photos: []` is left behind. One 되돌리기 brings it all back; the map is not
+   * touched. The file itself is the caller's to move out of the way (storage/photoTrash.ts), so the undo can bring it back too.
+   */
+  removePhoto(featureId: string, path: string): boolean {
+    const old = this.attachmentsById[featureId];
+    if (!old?.photos?.includes(path)) return false;
+    const { photos: _photos, photo_meta: _meta, ...rest } = old;
+    const photos = old.photos.filter((p) => p !== path);
+    const meta: Record<string, PhotoMeta> = { ...old.photo_meta };
+    delete meta[path];
+    const next: SurveyAttachment = { ...rest, ...(photos.length > 0 ? { photos } : {}), ...(Object.keys(meta).length > 0 ? { photo_meta: meta } : {}) };
+    this.remember();
+    this.place = { ...this.place, edited: false };
+    const { [featureId]: _gone, ...others } = this.attachmentsById;
+    this.attachmentsById = Object.keys(next).every((k) => k === 'recorded_at') ? others : { ...others, [featureId]: next };
+    this.changed();
+    return true;
+  }
+
+  /**
    * Add a stopwatch time for an edge (an escalator ride). Every ride is kept: the times add up to the median the
    * calibration blends with the prediction. One 되돌리기 takes the last one back; the map is not touched.
    */

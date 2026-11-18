@@ -11,10 +11,10 @@ import {
   boxOf, clearDirty, dirtyCount, emptyDirty, isBreakline, isClean, markBreakline, markStateChange, recomputeRequest,
   type BreakLine, type ElevationDirty, type ElevationStore, type HeightNodeKey, type LngLatBox,
 } from '@campo/core/elevation';
-import { fetchElevation, requestRecompute, saveElevationStore } from '../api.ts';
+import { deleteElevationEdge, fetchElevation, requestRecompute, saveElevationStore } from '../api.ts';
 import type { BreaklineShape } from '../map/layers.ts';
 import {
-  mergePhoneStore, nodesNearLine, parseStore, planRecomputeResult, slopeLines, storeText, withBreakline, withBreaklinePatch, withoutBreakline, type BreaklinePatch, type SlopeLine,
+  dhEdgeRows, dirtyAfterEdgeRemoved, mergePhoneStore, nodesNearLine, parseStore, planRecomputeResult, slopeLines, storeText, withBreakline, withBreaklinePatch, withoutBreakline, type BreaklinePatch, type SlopeLine,
 } from '../model/elevation.ts';
 import type { PlanResult } from '../model/plan.ts';
 import { stateToFiles, type Session } from '../model/session.ts';
@@ -152,6 +152,30 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     void writeStore(next, `${done} 고도를 다시 계산하면 반영됩니다.`, near, id, [lineBox(before), lineBox(after)]);
   };
 
+  // ---- 고도 Δh: the measured height differences, listed and removed one by one ----
+
+  const dhEdges = useMemo(() => dhEdgeRows(store), [store]);
+  /**
+   * Remove one Δh edge on the dev server (DELETE), take the store text it answers with, and mark both ends of the edge for the
+   * next recompute (the status bar's 다시 계산 필요 N곳 grows). Resolves to whether it went through; the failure is announced.
+   * A measurement the phone still has comes back with its next export (mergePhoneStore replaces an install's edges).
+   */
+  const deleteDhEdge = async (edgeId: string): Promise<boolean> => {
+    try {
+      const answer = await deleteElevationEdge(session.campusId, edgeId);
+      const next = parseStore(answer.store);
+      current.current = next;
+      setStore(next);
+      setDirty((d) => dirtyAfterEdgeRemoved(d, answer.removed));
+      info('높이 차를 지웠습니다. 고도를 다시 계산하면 반영됩니다.');
+      onStoreSaved?.();
+      return true;
+    } catch (err) {
+      fail((err as Error).message);
+      return false;
+    }
+  };
+
   // ---- 현장 기록의 고도 측정 (elevation_store.json in the survey app's zip) ----
 
   /**
@@ -213,6 +237,8 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     recompute: () => void recompute(),
     solver,
     breaklines: store?.breaklines ?? [],
+    dhEdges,
+    deleteDhEdge,
     /** The recompute's height estimates (measured floor planes give the 3D view its floor heights). */
     estimates: store?.estimates ?? [],
     addBreakline,

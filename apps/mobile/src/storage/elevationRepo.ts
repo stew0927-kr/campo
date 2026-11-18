@@ -10,6 +10,7 @@ import {
   emptyDirty,
   emptyElevationStore,
   markMeasurements,
+  removeEdge,
   removeHeightNode,
   serializeElevationStore,
   type AddResult,
@@ -51,6 +52,11 @@ export interface LocalElevationRepo extends ElevationRepo {
    * for the recompute; the spot itself leaves the list. (Its pressures in memory are forgotten by the buffer's owner.)
    */
   remove(key: HeightNodeKey): Promise<void>;
+  /**
+   * Delete one Δh edge (and its profiles). Both of its measured spots stay and are marked for the recompute. Only this
+   * phone's copy changes: a zip already exported and anything the editor already took in are left as they are.
+   */
+  removeEdge(edgeId: string): Promise<void>;
   /** Forget every measurement (the buffer in memory is cleared by its own owner). */
   clear(): Promise<void>;
   subscribe(fn: () => void): () => void;
@@ -152,6 +158,14 @@ export async function openElevationRepo(fs: FileStore, newId: () => string = ran
       for (const e of removed) heightNodes.add(e.from).add(e.to);
       heightNodes.delete(key);
       dirty = { ...dirty, heightNodes };
+      store = next;
+      changed();
+      await persist();
+    },
+    async removeEdge(edgeId) {
+      const { store: next, removed } = removeEdge(store, edgeId);
+      if (!removed) return;
+      dirty = { ...dirty, heightNodes: new Set(dirty.heightNodes).add(removed.from).add(removed.to) };
       store = next;
       changed();
       await persist();

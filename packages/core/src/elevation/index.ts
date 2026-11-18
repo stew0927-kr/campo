@@ -6,5 +6,6 @@ export * from './pressureSessionBuffer.ts';
 export * from './measureMachine.ts';
 export * from './photoMapping.ts';
 export * from './store.ts';
+export * from './dhList.ts';
 export * from './recompute.ts';
 export * from './breakline.ts';

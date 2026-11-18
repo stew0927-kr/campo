@@ -54,6 +54,7 @@ import { deckLayers } from '../map/deck3d.ts';
 import { fetchTerrain } from '../api.ts';
 import { groundOf, sampleTerrainGrid, terrainBase, terrainTop, type TerrainGrid, type TerrainWall } from '../model/terrain3d.ts';
 import { ExaggerationControl } from '../ui/ExaggerationControl.tsx';
+import { DhEdgesDialog } from '../ui/DhEdgesDialog.tsx';
 import { HelpDialog } from '../ui/HelpDialog.tsx';
 import { MeasurePanel } from '../ui/MeasurePanel.tsx';
 import { PropertiesPanel } from '../ui/PropertiesPanel.tsx';
@@ -122,6 +123,7 @@ export function Workspace({ session }: { session: Session }) {
   const [lineMenu, setLineMenu] = useState<(BreaklineHit & { x: number; y: number }) | null>(null);
   const [copyPanel, setCopyPanel] = useState<{ ids: string[]; result: string[] | null } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [dhOpen, setDhOpen] = useState(false);
   /** 외곽선 수정: the outline being edited (one history entry on 완료). */
   const [outline, setOutline] = useState<OutlineDraft | null>(null);
   /** 평지 모양 수정: the plaza rings being edited (one history entry on 완료). */
@@ -1228,7 +1230,7 @@ export function Workspace({ session }: { session: Session }) {
         dirty={dirty}
         notice={notice}
         hint={ui.tool in TOOL_OPTIONS ? toolDef(ui.tool).hint : null}
-        elevation={{ count: elevation.count, busy: elevation.busy, onRecompute: elevation.recompute }}
+        elevation={{ count: elevation.count, busy: elevation.busy, onRecompute: elevation.recompute, dhCount: elevation.dhEdges.length, onOpenDh: () => setDhOpen(true) }}
       />
 
       {ctxMenu && contextBuilding && (
@@ -1340,6 +1342,7 @@ export function Workspace({ session }: { session: Session }) {
         );
       })()}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
+      {dhOpen && <DhEdgesDialog rows={elevation.dhEdges} onDelete={elevation.deleteDhEdge} onClose={() => setDhOpen(false)} />}
       {dialog && (
         <AppDialogs
           dialog={dialog}

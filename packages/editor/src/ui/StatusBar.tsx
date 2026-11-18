@@ -8,14 +8,14 @@ interface Props {
   notice: { text: string; tone: 'info' | 'warn' | 'error' } | null;
   hint: string | null;
   /** Places waiting for a height recompute and the button that runs it. Always shown, so the feature is there to find. */
-  elevation: { count: number; busy: boolean; onRecompute: () => void };
+  elevation: { count: number; busy: boolean; onRecompute: () => void; /** Measured Δh edges in the store, and the button that opens their list. */ dhCount: number; onOpenDh: () => void };
 }
 
 const RUN_TITLE = '바뀐 곳과 그 주변만 고도 계산기(campo_height_solver.py)로 다시 풀고, 결과를 되돌리기 한 번으로 취소할 수 있게 반영합니다.';
 const FRESH_TITLE = '다시 계산할 곳이 없습니다. 지점·구간을 고치거나, 고도 단절선을 그리거나, 현장 측정을 불러오면 바뀐 곳만 골라 다시 계산합니다.';
 
 /** 고도 상태: 최신 (nothing to do: the button stays, but only explains), 다시 계산 필요 N곳, or 계산 중. */
-function ElevationStatus({ count, busy, onRecompute }: Props['elevation']) {
+function ElevationStatus({ count, busy, onRecompute, dhCount, onOpenDh }: Props['elevation']) {
   const state = busy ? 'busy' : count > 0 ? 'stale' : 'fresh';
   return (
     <span className="status-elev" data-state={state}>
@@ -38,6 +38,9 @@ function ElevationStatus({ count, busy, onRecompute }: Props['elevation']) {
         }}
       >
         {busy ? '계산 중…' : '고도 다시 계산'}
+      </button>
+      <button type="button" className="status-elev-run" title="현장에서 잰 높이 차(Δh)를 보고 하나씩 지웁니다." onClick={onOpenDh}>
+        높이 차 {dhCount}개
       </button>
     </span>
   );

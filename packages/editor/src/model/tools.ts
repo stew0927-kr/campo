@@ -6,6 +6,8 @@ import {
   addNode,
   buildingById,
   freshId,
+  localFrame,
+  nearestOnPlazaBoundary,
   nodeIdPrefix,
   type EdgeProperties,
   type EditContext,
@@ -242,4 +244,37 @@ export function planPortal(state: EditState, ctx: EditContext, entranceId: strin
       kind: 'edge', highway: 'footway', edge_type: 'portal', step_free: null, from: entranceId, to: outdoorId, bidirectional: true, source: DRAWN_SOURCE,
     }, ctx)],
   };
+}
+
+/** 같은 자리로 보는 거리(m): 이미 있는 바깥 지점을 다시 만들지 않고 그 지점을 씻니다. */
+export const PORTAL_FOOT_REUSE_M = 0.05;
+
+/**
+ * 출입구 → 평지: the foot of the perpendicular from the entrance to the plaza's boundary (outer ring or hole) becomes an
+ * outdoor point, and a portal edge joins the entrance to it — the shortest way from the door onto the plaza, so a route
+ * can get on and off it (W17). An outdoor point already standing on that foot is reused, not duplicated.
+ */
+export function planPortalToPlaza(state: EditState, ctx: EditContext, entranceId: string, plazaId: string): PlanResult {
+  const entrance = state.nodes[entranceId];
+  if (!entrance || entrance.props.node_type !== 'entrance') return { error: '출입구 연결은 건물 출입구에서 시작합니다. 출입구 지점을 먼저 골라 주세요.' };
+  const plaza = state.plazas[plazaId];
+  if (!plaza) return { error: '이어질 평지를 찾을 수 없습니다.' };
+  const hit = nearestOnPlazaBoundary(plaza.polygon, entrance.coord);
+  if (!hit) return { error: '이 평지에는 테두리가 없습니다. 평지 도구로 도형을 다시 그려 주세요.' };
+  const foot = hit.position;
+  // Distances here are metres, not degrees: a reused point must sit on the foot itself.
+  const frame = localFrame(foot);
+  const there = Object.values(state.nodes).find((n) => n.props.building_id === null &&
+    Math.hypot(...frame.toXY(n.coord)) <= PORTAL_FOOT_REUSE_M);
+  if (there && joined(state, entranceId, there.id, (e) => e.props.edge_type === 'portal')) {
+    return { error: '이 출입구는 이미 그 평지 가장자리와 이어져 있습니다.' };
+  }
+  const props: NodeProps = { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: DRAWN_SOURCE };
+  const steps: Step[] = [];
+  const outdoorId = there?.id ?? idMaker(state, ctx)(props);
+  if (!there) steps.push(nodeStep(outdoorId, foot, props, ctx));
+  steps.push(edgeStep({
+    kind: 'edge', highway: 'footway', edge_type: 'portal', step_free: null, from: entranceId, to: outdoorId, bidirectional: true, source: DRAWN_SOURCE,
+  }, ctx));
+  return { annotation: '출입구를 평지에 연결', steps };
 }

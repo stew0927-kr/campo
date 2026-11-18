@@ -10,9 +10,13 @@ interface Props {
   onEdit: (edits: PlazaEdits) => string | undefined;
   onRemoveHole: (index: number) => void;
   onDelete: () => void;
+  /** Start 평지 모양 수정: the corners of the outer ring and the holes are dragged on the map. */
+  onEditShape: () => void;
+  /** Start 평지 합치기: press a side here and a side of another plaza to join them into one. */
+  onMerge: () => void;
 }
 
-export function PlazaPanel({ plaza, onEdit, onRemoveHole, onDelete }: Props) {
+export function PlazaPanel({ plaza, onEdit, onRemoveHole, onDelete, onEditShape, onMerge }: Props) {
   const p = plaza.props;
   const [name, setName] = useState(p.name ?? '');
   const [height, setHeight] = useState(p.fixed_height_m === undefined ? '' : String(p.fixed_height_m));
@@ -85,6 +89,10 @@ export function PlazaPanel({ plaza, onEdit, onRemoveHole, onDelete }: Props) {
         </ul>
       )}
       <p className="field-help">구멍을 더 뚫으려면 평지 도구(G)로 이 평지 안쪽에 닫힌 도형을 그리세요.</p>
+      <div className="plaza-shape-actions">
+        <button type="button" onClick={onEditShape} title="지도에서 꼭짓점을 끌어 옮기고, 선 위 우클릭으로 더하고, 꼭짓점 우클릭으로 지웁니다">모양 수정</button>
+        <button type="button" onClick={onMerge} title="두 평지에서 한 변씩 눌러 그 사이를 채우며 하나로 합칩니다">다른 평지와 합치기</button>
+      </div>
       <button type="button" className="danger" onClick={onDelete}>평지 삭제</button>
     </form>
   );

@@ -872,3 +872,37 @@ export const PLAZA_MERGE_LAYERS: LayerSpecification[] = [
     paint: { 'circle-radius': 5, 'circle-color': PLAZA_MERGE_COLOR, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 },
   },
 ];
+
+// ---- 마그넷 미리보기: where the next click (or the corner being pulled) will snap to ----
+
+export const SNAP_SOURCE = 'campo-snap';
+
+/** A ring around the place the point will go: blue on an edge (it will be split there), green on a plaza edge, dark on a node. */
+export const SNAP_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-snap-ring',
+    type: 'circle',
+    source: SNAP_SOURCE,
+    paint: {
+      'circle-radius': 9,
+      'circle-color': '#ffffff',
+      'circle-opacity': 0.6,
+      'circle-stroke-width': 3,
+      'circle-stroke-color': ['match', ['get', 'kind'], 'edge', '#1f6fd1', 'plaza', PLAZA_COLORS.line, '#1e2933'] as never,
+    },
+  },
+  {
+    id: 'campo-snap-dot',
+    type: 'circle',
+    source: SNAP_SOURCE,
+    paint: { 'circle-radius': 2, 'circle-color': '#1e2933' },
+  },
+];
+
+/** The snap preview as GeoJSON (empty when nothing would snap). */
+export function snapGeoJSON(hit: { kind: string; position: Position } | null): FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: hit ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [hit.position[0], hit.position[1]] }, properties: { kind: hit.kind } }] : [],
+  };
+}

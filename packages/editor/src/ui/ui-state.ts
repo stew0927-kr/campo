@@ -1,6 +1,7 @@
 // Screen-only state. Never saved; never mixed into CampusDoc.
 // (What the editor offers - tools, operations, panel tabs - is in registry.ts.)
 import { buildingById, findFeature, type EditState, type Position } from '@campo/core';
+import type { PathShape } from '../model/connect.ts';
 import type { IndoorNodeKind, OutdoorKind } from '../model/tools.ts';
 import { OUTDOOR, type Scope } from '../model/scope.ts';
 import { initialDoorRun, type DoorRun } from '../model/doors.ts';
@@ -25,6 +26,10 @@ export const OUTDOOR_ADD_KINDS: AddKind[] = ['outdoor', 'poi'];
 export interface UiState {
   tool: Tool;
   outdoorKind: OutdoorKind;
+  /** 길 그리기 pen: straight clicks (default) or a curve through the clicked control points. Screen state, not saved data. */
+  pathShape: PathShape;
+  /** Counts the presses of 곡선의 '완료' button; the map finishes the curve being drawn when it changes. */
+  pathFinish: number;
   addKind: AddKind;
   basemap: BasemapId;
   panelTab: PanelTab;
@@ -65,6 +70,8 @@ export const initialCrossPick: CrossPick = { noRoof: false, mode: 'pair' };
 export const initialUi: UiState = {
   tool: 'select',
   outdoorKind: 'flat',
+  pathShape: 'straight',
+  pathFinish: 0,
   addKind: 'corridor',
   basemap: 'osm',
   panelTab: 'properties',

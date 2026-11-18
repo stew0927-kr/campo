@@ -478,12 +478,12 @@ export function Workspace({ session }: { session: Session }) {
   };
 
   const onPathDrawn = useCallback((vertices: PathVertex[], scope: Scope) => {
-    const drawn = planDrawnPath(state, ctx, vertices, ui.outdoorKind, scope);
+    const drawn = planDrawnPath(state, ctx, vertices, ui.outdoorKind, scope, ui.pathShape);
     if (!drawn) return setNotice(null);
     const plan = withSyncMirror(state, ctx, drawn);
     if (perform(plan) === undefined) followScope(scope);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, state, ui.outdoorKind, ui.scope]);
+  }, [session, state, ui.outdoorKind, ui.pathShape, ui.scope]);
 
   const onBoxSelect = (ids: string[]) => {
     patchUi({ selection: ids, ...(ids.length > 0 ? { panelTab: 'properties' as const } : {}) });
@@ -1005,6 +1005,8 @@ export function Workspace({ session }: { session: Session }) {
           limits={session.meta.map_limits}
           tool={ui.tool}
           outdoorKind={ui.outdoorKind}
+          pathShape={ui.pathShape}
+          pathFinish={ui.pathFinish}
           basemap={ui.basemap}
           scope={ui.scope}
           highlight={highlight}

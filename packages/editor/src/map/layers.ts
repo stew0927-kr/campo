@@ -523,7 +523,39 @@ export function previewGeoJSON(...parts: (FeatureCollection | null | undefined)[
   return { type: 'FeatureCollection', features: parts.flatMap((p) => p?.features ?? []) };
 }
 
+/**
+ * 곡선 길 being drawn: the curve through the control points and the pointer (role 'curve', the same line the finished path gets),
+ * the control points put down so far (role 'ctrl') and the pointer's own point (role 'cursor').
+ */
+export function curvePreviewGeoJSON(controls: readonly Position[], cursor: Position | null, line: readonly Position[]): FeatureCollection {
+  const features: FeatureCollection['features'] = [];
+  if (line.length >= 2) features.push({ type: 'Feature', properties: { role: 'curve' }, geometry: { type: 'LineString', coordinates: line.map((p) => [p[0], p[1]]) } });
+  for (const c of controls) features.push({ type: 'Feature', properties: { role: 'ctrl' }, geometry: { type: 'Point', coordinates: [c[0], c[1]] } });
+  if (cursor) features.push({ type: 'Feature', properties: { role: 'cursor' }, geometry: { type: 'Point', coordinates: [cursor[0], cursor[1]] } });
+  return { type: 'FeatureCollection', features };
+}
+
 export const PREVIEW_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-preview-curve',
+    type: 'line',
+    source: PREVIEW_SOURCE,
+    filter: ['==', ['get', 'role'], 'curve'],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#e8590c', 'line-width': 3.5, 'line-dasharray': [2, 1.2] },
+  },
+  {
+    id: 'campo-preview-ctrl',
+    type: 'circle',
+    source: PREVIEW_SOURCE,
+    filter: ['match', ['get', 'role'], ['ctrl', 'cursor'], true, false],
+    paint: {
+      'circle-radius': ['match', ['get', 'role'], 'cursor', 4, 5] as never,
+      'circle-color': ['match', ['get', 'role'], 'cursor', '#ffffff', '#e8590c'] as never,
+      'circle-stroke-color': '#1e2933',
+      'circle-stroke-width': 2,
+    },
+  },
   {
     id: 'campo-preview-link',
     type: 'line',

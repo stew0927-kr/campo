@@ -12,18 +12,18 @@ import type { Preview } from '../model/doors.ts';
 import type { PlazaEdgePick } from '../model/plazaMerge.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { edgeMidpoint } from '../model/split.ts';
-import type { OutdoorKind, PathVertex } from '../model/tools.ts';
+import { pathCanLandOn, type OutdoorKind, type PathVertex } from '../model/tools.ts';
 import type { MapLimits } from '@campo/core';
 import { startZoom, viewLimits } from '../model/viewLimits.ts';
 import { buildingInScope, edgeStrong, nodeStrong, scopeAt, scopeLabel, snappable, type Scope } from '../model/scope.ts';
 import type { RouteFocus } from '../model/routeFocus.ts';
-import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } from '../model/snap.ts';
+import { distanceToSegment, footOnSegment, nearestWithin, resolveSnap, segmentsOf, type ScreenPoint, type SnapCandidates, type SnapHit } from '../model/snap.ts';
 import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
   BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, PLAZA_COLORS, OUTLINE_LAYERS, OUTLINE_SOURCE,
   PLAZA_EDIT_LAYERS, PLAZA_EDIT_SOURCE, PLAZA_MERGE_LAYERS, PLAZA_MERGE_SOURCE,
-  PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
+  PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, SNAP_LAYERS, SNAP_SOURCE, WAY_COLORS, snapGeoJSON,
   dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, curvePreviewGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
   plazaEditGeoJSON, plazaMergeGeoJSON,
   type BreaklineShape, type OutlineHover, type PlazaHover, type PlazaMergeSide, type RouteLine,
@@ -46,8 +46,6 @@ const DROP_PX = 8;
 /** 외곽선 수정: a press this close to a corner takes it; a right-click this close to a side adds a corner there. */
 const CORNER_PX = 10;
 const SIDE_PX = 8;
-/** A new outdoor point or a dragged one this close to a plaza's edge (outer ring or hole) is put on that edge (마그넷). */
-const PLAZA_SNAP_PX = 6;
 /** 고도 단절선 being edited: the pointer within this many pixels of it shows (and a click sets) the low side under it. */
 const BAND_PX = 80;
 /** The tools in which a click on a drawn 고도 단절선 selects it, and its points and sides can be edited. */
@@ -88,6 +86,8 @@ export interface OutlineEditView {
 
 /** 평지 모양 수정 on the map: the rings being edited (open: corners only, ring 0 = outer, 1+ = holes) and what the map does. */
 export interface PlazaEditView {
+  /** The plaza being edited: its own rings are not snapped onto (other plazas' edges are). */
+  plazaId?: string;
   rings: readonly (readonly Position[])[];
   /** A corner was dragged and let go here. */
   onMove: (ring: number, index: number, to: Position) => void;
@@ -190,7 +190,10 @@ interface Props {
   plazaEdit: PlazaEditView | null;
   /** 평지 합치기 is on: clicks pick the two sides to join (nothing else reacts). */
   plazaMerge: PlazaMergeView | null;
-  /** A new outdoor point or a dragged point snaps onto a plaza's edge (마그넷) within a few pixels; Alt never snaps. */
+  /**
+   * 지점 추가: a new outdoor point snaps onto a plaza's edge (마그넷, model/snap.ts PLAZA_SNAP_PX); Alt never snaps. Dragging an
+   * outdoor point, 길 그리기, 평지 그리기 and 평지 모양 수정 snap onto plaza edges whatever this says.
+   */
   snapPlaza: boolean;
   /** A click may pick a plaza even while a building floor is shown (the second click of 출입구 연결). */
   plazaPick: boolean;
@@ -382,13 +385,8 @@ export function MapView(props: Props) {
     // ---- 곡선 길: this file takes the clicks itself (Terra Draw stays 'static') and keeps the control points ----
     const curvePen = () => latest.current.tool === 'path' && latest.current.pathShape === 'curve';
     const vertexPosition = (v: PathVertex): Position => ('nodeId' in v ? latest.current.state.nodes[v.nodeId]!.coord : v.position);
-    /** The same snap a click gets (snapPath), as a control point. */
-    const curvePoint = (point: ScreenPoint, sc: Scope): PathVertex => {
-      const node = snapPath(point, sc);
-      if (node) return { nodeId: node.id };
-      const at = toMap(point);
-      return { position: [at[0], at[1]] };
-    };
+    /** The same snap a click gets (pathSnapAt: node, else edge or plaza edge; Alt: none), as a control point. */
+    const curvePoint = (point: ScreenPoint, sc: Scope, alt = false): PathVertex => vertexOf(pathSnapAt(point, sc, alt), toMap(point));
     /** The curve through the control points plus the pointer (when given), drawn dashed; the finished path uses the same curveLine samples. */
     const showCurve = (cursor: PathVertex | null) => {
       const c = curve.current;
@@ -421,10 +419,10 @@ export function MapView(props: Props) {
       showCurve(null);
       if (c.vertices.length >= 2) latest.current.onPathDrawn(c.vertices, c.scope);
     };
-    const addCurvePoint = (point: ScreenPoint) => {
+    const addCurvePoint = (point: ScreenPoint, alt = false) => {
       const c = (curve.current ??= { vertices: [], scope: pathScope.current ?? autoScope(toMap(point)) });
       pathScope.current = c.scope;
-      const v = curvePoint(point, c.scope);
+      const v = curvePoint(point, c.scope, alt);
       const last = c.vertices[c.vertices.length - 1];
       // The second click of a double click lands on the point the first one put down: not a new control point.
       if (last && dist2(toScreen(vertexPosition(last)), toScreen(vertexPosition(v))) < 4 * 4) return showCurve(null);
@@ -519,25 +517,45 @@ export function MapView(props: Props) {
       return best;
     };
 
-    // ---- 평지 가장자리 마그넷: a point this close to a plaza edge (outer ring or hole) is put on that edge ----
-    const plazaSnapAt = (point: ScreenPoint): { coord: Position; ring: Position } | null => {
-      const st = latest.current.state;
-      let best: { coord: Position; ring: Position } | null = null;
-      let bestD = PLAZA_SNAP_PX;
-      for (const p of Object.values(st.plazas)) {
-        for (const corners of p.polygon) {
-          for (let i = 0; i + 1 < corners.length; i++) {
-            const f = footOnSegment(point, toScreen(corners[i]!), toScreen(corners[i + 1]!));
-            if (f.dist <= bestD) {
-              bestD = f.dist;
-              const coord = toMap(f.point);
-              best = { coord, ring: coord };
-            }
-          }
-        }
-      }
-      return best;
+    // ---- 마그넷 (model/snap.ts): plaza edges (outer ring and holes), and for 길 그리기 the nodes and edges of its scope ----
+    /** Every plaza ring, as screen segments (optionally without one plaza: the one whose shape is being edited). */
+    const plazaLines = (except?: string): NonNullable<SnapCandidates['plazas']> =>
+      Object.values(latest.current.state.plazas).filter((p) => p.id !== except).flatMap((p) => p.polygon.map((ring) => ({ id: p.id, segments: segmentsOf(ring, toScreen) })));
+    /** Plaza corners, so a new plaza or a pulled corner can meet another plaza corner to corner. */
+    const plazaCorners = (except?: string): NonNullable<SnapCandidates['nodes']> =>
+      Object.values(latest.current.state.plazas).filter((p) => p.id !== except).flatMap((p) => p.polygon.flatMap((ring) => ring.slice(0, -1).map((c) => ({ id: p.id, position: c, screen: toScreen(c) }))));
+    /** A point near a plaza edge goes exactly onto it (지점 추가, 지점 끌기). Alt: never. */
+    const plazaSnapAt = (point: ScreenPoint, alt = false): { coord: Position; ring: Position } | null => {
+      const hit = resolveSnap(point, { plazas: plazaLines() }, { alt });
+      return hit ? { coord: hit.position, ring: hit.position } : null;
     };
+    /** 평지 그리기 / 평지 모양 수정: another plaza's corner first, else its edge (outer ring or hole). */
+    const plazaShapeSnapAt = (point: ScreenPoint, alt: boolean, except?: string): SnapHit | null =>
+      resolveSnap(point, { nodes: plazaCorners(except), plazas: plazaLines(except) }, { alt });
+    /**
+     * 길 그리기: a node of the path's scope (SNAP_PX) first, else the nearer of an edge of that scope a path may be joined to
+     * (it is split there when the path is finished) and, outdoors, a plaza edge.
+     */
+    const pathSnapAt = (point: ScreenPoint, scope: Scope, alt: boolean): SnapHit | null => {
+      const st = latest.current.state;
+      return resolveSnap(point, {
+        nodes: Object.values(st.nodes).filter((n) => snappable(n, scope)).map((n) => ({ id: n.id, position: n.coord, screen: toScreen(n.coord) })),
+        edges: Object.values(st.edges).filter((e) => pathCanLandOn(st, e, scope)).map((e) => ({ id: e.id, segments: segmentsOf(edgeCoords(st, e), toScreen) })),
+        plazas: scope.kind === 'outdoor' ? plazaLines() : [],
+      }, { alt });
+    };
+    const vertexOf = (hit: SnapHit | null, at: Position): PathVertex =>
+      hit?.kind === 'node' ? { nodeId: hit.id } : hit?.kind === 'edge' ? { edgeId: hit.id, position: hit.position } : { position: hit ? hit.position : [at[0], at[1]] };
+    /** Where the snap preview ring is drawn (null: nowhere). */
+    let snapShown: SnapHit | null = null;
+    const showSnap = (hit: SnapHit | null) => {
+      if (snapShown === hit || (snapShown && hit && snapShown.kind === hit.kind && snapShown.position[0] === hit.position[0] && snapShown.position[1] === hit.position[1])) return;
+      snapShown = hit;
+      (map.getSource(SNAP_SOURCE) as GeoJSONSource | undefined)?.setData(snapGeoJSON(hit));
+    };
+    /** Terra Draw's path points, by where they were put: which were snapped onto an edge (and Alt-free ones), read when the line is finished. */
+    const pathPicks = new Map<string, PathVertex | 'free'>();
+    const pickKey = (p: Position) => `${p[0].toFixed(8)},${p[1].toFixed(8)}`;
 
     // ---- 고도 단절선: drawn lines under a screen point ----
     const drawnLine = (id: string | null) => (id === null ? undefined : latest.current.breaklines.find((b) => b.kind === 'drawn' && b.id === id));
@@ -653,10 +671,10 @@ export function MapView(props: Props) {
         // 평지 합치기: the side under the click (a miss is reported so the status line can say how to pick).
         return latest.current.plazaMerge.onClick(plazaSideAt(e.point));
       }
-      if (curvePen()) return addCurvePoint(e.point);
+      if (curvePen()) return addCurvePoint(e.point, e.originalEvent.altKey);
       const clicked = toMap(e.point);
       // 지점 마그넷: a new outdoor point near a plaza edge goes exactly onto it (Alt: where it was clicked).
-      const snap = latest.current.snapPlaza && !e.originalEvent.altKey ? plazaSnapAt(e.point) : null;
+      const snap = latest.current.snapPlaza ? plazaSnapAt(e.point, e.originalEvent.altKey) : null;
       const at: Position = snap ? snap.coord : clicked;
       const { tool, breaklineEdit: be } = latest.current;
       const drawTool = DRAW_MODE[tool] !== undefined && !curvePen();
@@ -792,8 +810,8 @@ export function MapView(props: Props) {
         const foot = toMap(best.foot);
         return { coord: foot, target: { kind: 'edge', id: best.id }, ring: foot };
       }
-      // 지점 마그넷: an outdoor point let go near a plaza edge is put on that edge (nothing to merge or split).
-      if (latest.current.snapPlaza && scopeId === 'outdoor') {
+      // 지점 마그넷: an outdoor point let go near a plaza edge is put on that edge (nothing to merge or split), in any tool.
+      if (scopeId === 'outdoor') {
         const snap = plazaSnapAt(point);
         if (snap) return { coord: snap.coord, target: null, ring: snap.ring };
       }
@@ -932,7 +950,10 @@ export function MapView(props: Props) {
       }
       const pd = plazaDrag.current;
       if (pd) {
-        pd.rings[pd.ring]![pd.index] = toMap(e.point);
+        // A pulled corner snaps onto another plaza's corner or edge (Alt: where it is), with the snap ring shown.
+        const hit = plazaShapeSnapAt(e.point, e.originalEvent.altKey, latest.current.plazaEdit?.plazaId);
+        showSnap(hit);
+        pd.rings[pd.ring]![pd.index] = hit ? hit.position : toMap(e.point);
         pushPlazaEdit(pd.rings);
         return;
       }
@@ -1020,7 +1041,9 @@ export function MapView(props: Props) {
         plazaDrag.current = null;
         map.getContainer().removeAttribute('data-dragging');
         plazaCursor(plazaHover.current);
-        latest.current.plazaEdit?.onMove(pd.ring, pd.index, toMap(e.point));
+        showSnap(null);
+        const hit = plazaShapeSnapAt(e.point, e.originalEvent.altKey, latest.current.plazaEdit?.plazaId);
+        latest.current.plazaEdit?.onMove(pd.ring, pd.index, hit ? hit.position : toMap(e.point));
         return;
       }
       press = null;
@@ -1070,11 +1093,26 @@ export function MapView(props: Props) {
     badgeEl.current = badge;
     let lastMove: MapMouseEvent | null = null;
     let moveRaf: number | null = null;
+    /** Where a click at the pointer would snap in the tool in use (마그넷 미리보기), or null. */
+    const snapPreview = (e: MapMouseEvent | null): SnapHit | null => {
+      if (!e || drag || plazaDrag.current) return null;
+      const { tool, snapPlaza, outline, plazaEdit, plazaMerge } = latest.current;
+      if (outline || plazaEdit || plazaMerge) return null;
+      const alt = e.originalEvent.altKey;
+      if (tool === 'path') return pathSnapAt(e.point, pathScope.current ?? autoScope(toMap(e.point)), alt);
+      if (tool === 'plaza') return plazaShapeSnapAt(e.point, alt);
+      if (tool === 'add-node' && snapPlaza) {
+        const hit = resolveSnap(e.point, { plazas: plazaLines() }, { alt });
+        return hit && autoScope(hit.position).kind === 'outdoor' ? hit : null;
+      }
+      return null;
+    };
     const refreshHover = () => {
       moveRaf = null;
+      showSnap(snapPreview(lastMove));
       if (curvePen()) {
         badge.hidden = true;
-        if (curve.current && lastMove) showCurve(curvePoint(lastMove.point, curve.current.scope));
+        if (curve.current && lastMove) showCurve(curvePoint(lastMove.point, curve.current.scope, lastMove.originalEvent.altKey));
         return;
       }
       const { tool, state: st, hover } = latest.current;
@@ -1105,6 +1143,7 @@ export function MapView(props: Props) {
     map.getContainer().addEventListener('mouseleave', () => {
       lastMove = null;
       badge.hidden = true;
+      showSnap(null);
     });
     const typing = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
@@ -1155,6 +1194,7 @@ export function MapView(props: Props) {
       map.addSource(OUTLINE_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PLAZA_EDIT_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PLAZA_MERGE_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addSource(SNAP_SOURCE, { type: 'geojson', data: snapGeoJSON(null) });
       registerPictograms(map);
       registerBreaklineTooth(map);
       registerBeltIcons(map);
@@ -1171,6 +1211,7 @@ export function MapView(props: Props) {
       for (const layer of OUTLINE_LAYERS) map.addLayer(layer);
       for (const layer of PLAZA_EDIT_LAYERS) map.addLayer(layer);
       for (const layer of PLAZA_MERGE_LAYERS) map.addLayer(layer);
+      for (const layer of SNAP_LAYERS) map.addLayer(layer);
 
       // Terra Draw reads positions through its adapter: with 지형 3D on, the shape is drawn on the relief under the cursor.
       class SurfaceAdapter extends TerraDrawMapLibreGLAdapter<MapLibreMap> {
@@ -1190,12 +1231,23 @@ export function MapView(props: Props) {
               toCustom: (ev: TerraDrawMouseEvent) => {
                 if (latest.current.tool === 'breakline') return undefined; // a wall is drawn where it is, not onto the paths
                 const sc = pathScope.current ?? autoScope([ev.lng, ev.lat]);
-                return snapPath({ x: ev.containerX, y: ev.containerY }, sc)?.coord;
+                // Node (SNAP_PX) first, else the nearer of an edge of the scope and a plaza edge; Alt: where it is.
+                const hit = pathSnapAt({ x: ev.containerX, y: ev.containerY }, sc, ev.heldKeys.includes('Alt'));
+                pathPicks.set(pickKey(hit ? hit.position : [ev.lng, ev.lat]), hit ? vertexOf(hit, hit.position) : 'free');
+                return hit ? [hit.position[0], hit.position[1]] : undefined;
               },
             },
             styles: lineStyles(KIND_COLOR.flat),
           }),
           new TerraDrawPolygonMode({
+            snapping: {
+              // 평지 그리기: corners go onto another plaza's corner or edge, so plazas can meet exactly (linked plazas). Alt: no snap.
+              toCustom: (ev: TerraDrawMouseEvent) => {
+                if (latest.current.tool !== 'plaza') return undefined;
+                const hit = plazaShapeSnapAt({ x: ev.containerX, y: ev.containerY }, ev.heldKeys.includes('Alt'));
+                return hit ? [hit.position[0], hit.position[1]] : undefined;
+              },
+            },
             styles: {
               fillColor: '#1e2933',
               fillOpacity: 0.08,
@@ -1221,10 +1273,15 @@ export function MapView(props: Props) {
           const coords = drawn.geometry.coordinates as Position[];
           const sc = pathScope.current ?? autoScope(coords[0]!);
           pathScope.current = null;
+          // What each point was snapped to when it was put down (an edge point splits that edge); else the old node snap.
           const vertices = coords.map((position): PathVertex => {
+            const picked = pathPicks.get(pickKey(position));
+            if (picked === 'free') return { position: [position[0], position[1]] };
+            if (picked && !('nodeId' in picked && !latest.current.state.nodes[picked.nodeId])) return 'position' in picked ? { ...picked, position: [position[0], position[1]] } : picked;
             const node = snapPath(toScreen(position), sc);
             return node ? { nodeId: node.id } : { position: [position[0], position[1]] };
           });
+          pathPicks.clear();
           latest.current.onPathDrawn(vertices, sc);
         } else if (drawn?.geometry.type === 'Polygon') {
           latest.current.onPolygonDrawn((drawn.geometry.coordinates[0] as Position[]).map(([x, y]) => [x, y]));

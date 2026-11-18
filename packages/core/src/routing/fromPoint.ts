@@ -7,7 +7,7 @@ import { findRoute, type NearestRoute, type Route, type RouteResult, type SlopeS
 import { findNearestRestroom } from '../restroom.ts';
 import { WALK_SPEED_MPS, gradeClass, isEscalator, isStepFreeUnknown, type Profile } from '../costs.ts';
 import type { EdgeFeature, Position } from '../types.ts';
-import { plazaAt, plazaDistance, plazaGeodesics, type PlazaPoint } from './plaza.ts';
+import { linkedPlazas, plazaAt, plazaDistance, plazaGeodesics, type PlazaPoint } from './plaza.ts';
 
 /** Where a point meets the route network. */
 export interface RouteSnap {
@@ -49,7 +49,14 @@ export type RouteEnd = { nodeId: string } | { snap: RouteSnap } | { plaza: Plaza
 
 /** The straight walk across a plaza between a picked point and where the plaza meets the network. */
 export interface PlazaLeg {
+  /** The plaza the picked point is on. */
   plazaId: string;
+  /**
+   * Only when the walk crosses linked plazas (touching or overlapping, SPEC-v0.2 2.8): every plaza it crosses, in walking
+   * order (start: from the picked point's plaza; destination: towards it, so the picked point's plaza is last). lengthM is
+   * the whole walk over all of them.
+   */
+  plazaIds?: string[];
   /** Start: picked point → contact. Destination: contact → picked point. Bends around holes included. */
   path: Position[];
   lengthM: number;
@@ -135,13 +142,15 @@ function legsOfEnd(g: CampusGraph, end: RouteEnd, profile: Profile, leaving: boo
   const out: Leg[] = [];
   for (const { contact, geodesic } of plazaGeodesics(g, end.plaza)) {
     const path = leaving ? geodesic.path : [...geodesic.path].reverse();
+    const ids = leaving ? geodesic.plazaIds : [...geodesic.plazaIds].reverse();
+    const across = ids.length > 1 ? { plazaIds: ids } : {};
     if (contact.kind === 'node') {
-      const leg: PlazaLeg = { plazaId: end.plaza.plazaId, path, lengthM: geodesic.lengthM, contact: { kind: 'node', nodeId: contact.nodeId } };
+      const leg: PlazaLeg = { plazaId: end.plaza.plazaId, ...across, path, lengthM: geodesic.lengthM, contact: { kind: 'node', nodeId: contact.nodeId } };
       out.push(withPlaza({ nodeId: contact.nodeId, cost: 0, timeSec: 0, distanceM: 0 }, leg));
       continue;
     }
     const leg: PlazaLeg = {
-      plazaId: end.plaza.plazaId, path, lengthM: geodesic.lengthM,
+      plazaId: end.plaza.plazaId, ...across, path, lengthM: geodesic.lengthM,
       contact: { kind: 'edge', edgeId: contact.edgeId, at: contact.at, along: contact.along },
     };
     const snap: RouteSnap = { point: contact.at, edgeId: contact.edgeId, foot: contact.at, distanceM: 0, along: contact.along };
@@ -160,18 +169,19 @@ function footOf(end: RouteEnd): Position | null {
   return 'snap' in end ? end.snap.foot : null;
 }
 
-/** The same plaza at both ends: the straight walk inside it, without the network. */
+/** The same plaza, or linked plazas, at both ends: the straight walk inside them, without the network. */
 function directRoute(g: CampusGraph, from: { plaza: PlazaPoint }, to: { plaza: PlazaPoint }, profile: Profile): PointRoute | null {
-  const d = plazaDistance(g, from.plaza.plazaId, from.plaza.point, to.plaza.point);
+  const d = plazaDistance(g, from.plaza.plazaId, from.plaza.point, to.plaza.point, to.plaza.plazaId);
   if (!d) return null;
   const t = round1(plazaSeconds(d.lengthM));
   const plazaId = from.plaza.plazaId;
+  const across = d.plazaIds.length > 1 ? { plazaIds: d.plazaIds } : {};
   return {
     found: true, profile, nodes: [], edgeIds: [], cost: t, timeSec: t, distanceM: round1(d.lengthM),
     stairsCount: 0, escalatorCount: 0, steps: [], uncertainSegments: [], slopeSegments: [], fallback: null,
     startFoot: null, endFoot: null,
-    startPlaza: { plazaId, path: d.path, lengthM: d.lengthM, contact: { kind: 'direct' } },
-    endPlaza: { plazaId, path: [d.path[d.path.length - 1]!], lengthM: 0, contact: { kind: 'direct' } },
+    startPlaza: { plazaId, ...across, path: d.path, lengthM: d.lengthM, contact: { kind: 'direct' } },
+    endPlaza: { plazaId: to.plaza.plazaId, path: [d.path[d.path.length - 1]!], lengthM: 0, contact: { kind: 'direct' } },
   };
 }
 
@@ -198,9 +208,9 @@ export function findRouteBetween(g: CampusGraph, from: RouteEnd, to: RouteEnd, p
   }
   // Both ends on one edge: walking straight along it from foot to foot beats any detour through its end nodes.
   const onEdge = 'snap' in from && 'snap' in to ? directOnEdge(g, from.snap, to.snap, profile) : null;
-  // Both ends on one plaza: the straight walk inside it, around its holes.
+  // Both ends on one plaza, or on linked plazas: the straight walk inside them, around their holes.
   const onPlaza =
-    'plaza' in from && 'plaza' in to && from.plaza.plazaId === to.plaza.plazaId ? directRoute(g, from, to, profile) : null;
+    'plaza' in from && 'plaza' in to && linkedPlazas(g, from.plaza.plazaId).includes(to.plaza.plazaId) ? directRoute(g, from, to, profile) : null;
   const direct = onEdge && onPlaza ? (onPlaza.cost < onEdge.cost ? onPlaza : onEdge) : (onEdge ?? onPlaza);
   if (direct && (!best || direct.cost <= round1(best.total))) return direct;
   if (!best) {

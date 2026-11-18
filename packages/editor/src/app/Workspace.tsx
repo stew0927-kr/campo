@@ -448,6 +448,7 @@ export function Workspace({ session }: { session: Session }) {
     info('평지 모양 수정을 취소했습니다. 고친 것은 반영하지 않았습니다.');
   };
   const plazaEditView = useMemo<PlazaEditView | null>(() => (plazaDraft ? {
+    plazaId: plazaDraft.plazaId,
     rings: plazaDraft.rings,
     onMove: (ring, index, to) => setPlazaDraft((d) => d && movePlazaCorner(d, ring, index, to)),
     onInsert: (ring, side, at) => setPlazaDraft((d) => d && insertPlazaCorner(d, ring, side, at)),

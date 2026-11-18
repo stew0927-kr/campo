@@ -49,7 +49,7 @@ const TOOL_SPECS = [
   {
     id: 'path', label: '길 그리기', group: 'draw', key: 'P', placing: true,
     description: '클릭하며 바깥 길이나 층 안의 복도를 그립니다.',
-    hint: '클릭하며 이어 그리고, 마지막 점을 한 번 더 누르거나 Enter를 누르면 끝납니다. 처음 누른 자리가 바깥이면 바깥 길, 건물 안이면 그 층의 복도입니다.',
+    hint: '클릭하며 이어 그리고, 마지막 점을 한 번 더 누르거나 Enter를 누르면 끝납니다. 처음 누른 자리가 바깥이면 바깥 길, 건물 안이면 그 층의 복도입니다. 기존 길이나 평지 가장자리 가까이에서는 고리 표시가 나오고 그 위에 붙으며, 기존 길 위에 찍은 점은 그 길을 나눠 바로 이어집니다. Alt를 누르면 붙이지 않습니다.',
   },
   {
     id: 'building', label: '건물 외곽선 그리기', group: 'draw', scope: 'outdoor',
@@ -59,7 +59,7 @@ const TOOL_SPECS = [
   {
     id: 'plaza', label: '평지', group: 'draw', key: 'G', scope: 'outdoor',
     description: '평평하게 만들 땅의 테두리를 그립니다. 평지 안쪽에 닫힌 도형을 그리면 구멍이 뚫립니다.',
-    hint: '테두리를 클릭하며 그리고, 첫 점을 다시 누르면 끝납니다. 이미 있는 평지 안쪽에서 시작하면 구멍이 됩니다. Esc는 취소입니다.',
+    hint: '테두리를 클릭하며 그리고, 첫 점을 다시 누르면 끝납니다. 이미 있는 평지 안쪽에서 시작하면 구멍이 됩니다. 다른 평지의 꼭짓점·가장자리 가까이에서는 그 위에 붙어 맞닿은 평지로 이어집니다(Alt는 붙이지 않음). Esc는 취소입니다.',
   },
   {
     id: 'outline', label: '외곽선 수정', group: 'draw',
@@ -74,7 +74,7 @@ const TOOL_SPECS = [
   {
     id: 'add-node', label: '지점 추가', group: 'draw', placing: true,
     description: '출입구·문·복도·계단 같은 지점을 하나씩 찍습니다.',
-    hint: '지도를 누르면 고른 종류의 지점이 생깁니다.',
+    hint: '지도를 누르면 고른 종류의 지점이 생깁니다. 바깥 지점은 평지 가장자리 가까이에서 고리 표시가 나오고 그 위에 붙습니다(Alt는 붙이지 않음).',
   },
   {
     id: 'connect', label: '잇기', group: 'draw',

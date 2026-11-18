@@ -1,4 +1,4 @@
-// 평지 합치기(plaza merge): 두 평지에서 고른 변 사이의 다리, 합집합, 구멍 보존, 그리고 편집 action의 규칙(E16·E17·E18).
+// 평지 합치기(plaza merge): 두 평지에서 고른 변 사이의 다리, 합집합, 구멍 보존, 그리고 편집 action의 규칙(E16·E17, 다른 평지와 겹쳐도 됨).
 import { describe, expect, it } from 'vitest';
 import {
   addPlaza,
@@ -120,7 +120,7 @@ describe('mergePlazas action', () => {
     expect(history.current()).toEqual(s0);
   });
 
-  it('refuses the same plaza twice, a missing plaza, and a merge that would run into a third plaza', () => {
+  it('refuses the same plaza twice and a missing plaza; a merge running into a third plaza is allowed (linked plazas)', () => {
     const s = twoPlazas();
     expect(mergePlazas('plaza_a', 'plaza_a', { into: A_RIGHT, from: B_LEFT }).disabled(s)).toMatch(/같은 평지/);
     expect(mergePlazas('plaza_a', 'plaza_x', { into: A_RIGHT, from: B_LEFT }).disabled(s)).toMatch(/없습니다/);
@@ -128,7 +128,7 @@ describe('mergePlazas action', () => {
     const withThird = addPlaza({ id: 'plaza_b', polygon: [B()], props }).apply(addPlaza({ id: 'plaza_a', polygon: [A()], props }).apply(third));
     // The bridge runs straight through plaza_c.
     expect(withThird.plazas['plaza_c']).toBeDefined();
-    expect(mergePlazas('plaza_a', 'plaza_b', { into: A_RIGHT, from: B_LEFT }).disabled(withThird)).toMatch(/plaza_c/);
+    expect(mergePlazas('plaza_a', 'plaza_b', { into: A_RIGHT, from: B_LEFT }).disabled(withThird)).toBe(false);
   });
 
   it('works between a hole edge and another plaza, and reports the merged rings without writing', () => {
@@ -156,11 +156,11 @@ describe('setPlazaOutline action (평지 모양 수정)', () => {
     expect(history.current()).toEqual(s0);
   });
 
-  it('refuses a broken ring, a self-crossing shape and an overlap with another plaza', () => {
+  it('refuses a broken ring and a self-crossing shape; overlapping another plaza is allowed (linked plazas)', () => {
     const s = twoPlazas();
     expect(setPlazaOutline('plaza_a', [[P(0, 0), P(10, 0)]]).disabled(s)).toMatch(/닫힌 고리/);
     expect(setPlazaOutline('plaza_a', [[P(0, 0), P(40, 30), P(40, 0), P(0, 30), P(0, 0)]]).disabled(s)).toMatch(/겹칩|닫힌|넓이/);
-    expect(setPlazaOutline('plaza_a', normalizePlazaRings([rect(30, 0, 80, 30)])).disabled(s)).toMatch(/plaza_b|겹칩니다/);
+    expect(setPlazaOutline('plaza_a', normalizePlazaRings([rect(30, 0, 80, 30)])).disabled(s)).toBe(false);
     expect(setPlazaOutline('plaza_x', normalizePlazaRings([A()])).disabled(s)).toMatch(/없습니다/);
   });
 });

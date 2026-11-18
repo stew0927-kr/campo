@@ -2,22 +2,27 @@
 // New ids come from core (freshId with the session's generator), new Features start at rev 1 inside addNode / addEdge.
 // step_free defaults follow SPEC-v0.2 §2.1: steps false, elevator true, everything else null (not known).
 import {
+  SNAP_VERTEX_M,
   addEdge,
   addNode,
   buildingById,
+  edgeCoords,
   freshId,
   localFrame,
   nearestOnPlazaBoundary,
   nodeIdPrefix,
+  splitEdgeAt,
+  splitPlan,
   type EdgeProperties,
   type EditContext,
+  type EditEdge,
   type EditState,
   type NodeProperties,
   type Position,
 } from '@campo/core';
 import { curveSegments } from './curve.ts';
 import type { PlanResult, Step } from './plan.ts';
-import { OUTDOOR, floorLabel, snappable, type Scope } from './scope.ts';
+import { OUTDOOR, floorLabel, nodeInScope, snappable, type Scope } from './scope.ts';
 
 /** Default source for data drawn in the editor until someone checks it on site (SPEC §4.1). */
 export const DRAWN_SOURCE = 'estimate';
@@ -52,8 +57,66 @@ const EDGE_BY_KIND: Record<OutdoorKind, Pick<EdgeProps, 'highway' | 'step_free'>
   ramp: { highway: 'ramp', step_free: null },
 };
 
-/** A clicked point: either snapped onto an existing node, or a new position. */
-export type PathVertex = { nodeId: string } | { position: Position };
+/**
+ * A clicked point: snapped onto an existing node, snapped onto an existing edge of the same scope (the edge is split there
+ * with splitEdgeAt and the path joins the node the split makes), or a new position.
+ */
+export type PathVertex = { nodeId: string } | { edgeId: string; position: Position } | { position: Position };
+
+/**
+ * Whether a 길 그리기 point may land on this edge (마그넷 + 나누기): both ends in the path's scope, and an edge splitEdgeAt can
+ * cut (not an elevator, bridge, portal or conveyor; steps only with step_count 2 or more).
+ */
+export function pathCanLandOn(state: EditState, edge: EditEdge, scope: Scope): boolean {
+  const p = edge.props;
+  if (p.highway === 'elevator' || p.edge_type === 'bridge' || p.edge_type === 'portal' || p.conveying !== undefined) return false;
+  if (p.highway === 'steps' && (p.step_count === undefined || p.step_count < 2)) return false;
+  const [a, b] = [state.nodes[p.from], state.nodes[p.to]];
+  return !!a && !!b && nodeInScope(a, scope) && nodeInScope(b, scope);
+}
+
+/** Metres along `coords` to the foot of `p` on it (local plane), and how far `p` is from the line. */
+function footAlong(coords: readonly Position[], p: Position): { along: number; off: number } {
+  const f = localFrame(p);
+  const pts = coords.map(f.toXY);
+  let best = { along: 0, off: Infinity };
+  let before = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const [a, b] = [pts[i]!, pts[i + 1]!];
+    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+    const len = Math.hypot(dx, dy);
+    const t = len === 0 ? 0 : Math.max(0, Math.min(1, (-a[0] * dx - a[1] * dy) / (len * len)));
+    const off = Math.hypot(a[0] + t * dx, a[1] + t * dy);
+    if (off < best.off) best = { along: before + t * len, off };
+    before += len;
+  }
+  return best;
+}
+
+const metresBetween = (a: Position, b: Position): number => Math.hypot(...localFrame(a).toXY(b));
+
+/** The piece of an edge (the edge itself, or a piece split off it in this plan) that holds `at`, in `s`. */
+function pieceAt(s: EditState, original: EditState, edgeId: string, at: Position): string | undefined {
+  let best: { id: string; off: number } | undefined;
+  for (const e of Object.values(s.edges)) {
+    if (e.id !== edgeId && e.id in original.edges) continue;
+    if (!s.nodes[e.props.from] || !s.nodes[e.props.to]) continue;
+    const { off } = footAlong(edgeCoords(s, e), at);
+    if (off <= 0.05 && (!best || off < best.off)) best = { id: e.id, off };
+  }
+  return best?.id;
+}
+
+/** The node a split in this plan made at `at` (new since `original`, within 5 cm). */
+function splitNodeAt(s: EditState, original: EditState, at: Position): string | undefined {
+  let best: { id: string; d: number } | undefined;
+  for (const n of Object.values(s.nodes)) {
+    if (n.id in original.nodes) continue;
+    const d = metresBetween(at, n.coord);
+    if (d <= 0.05 && (!best || d < best.d)) best = { id: n.id, d };
+  }
+  return best?.id;
+}
 
 /** The kinds of way the 길 그리기 tool draws. Elevators are not one of them: they come from the 엘리베이터 tool (SPEC-v0.2 6.5). */
 export const ELEVATOR_NOT_DRAWN = '엘리베이터는 엘리베이터 도구로 만드세요';
@@ -83,9 +146,12 @@ function planPathShape(state: EditState, ctx: EditContext, vertices: readonly Pa
   const nodeType = indoor ? 'corridor' : 'outdoor';
   const newId = idMaker(state, ctx);
   const steps: Step[] = [];
+  /** Node ids, or `split:k` for the node the k-th split will make (its id is splitEdgeAt's own, read when the edges are added). */
   const path: string[] = [];
   const newAt = new Map<string, string>(); // "lng,lat" -> id, so closing a loop reuses the first new node
   const coordOf = new Map<string, Position>(); // new nodes' positions (existing nodes are read from the state)
+  /** Splits of existing edges, in click order: the original edge, where, and how far along it. */
+  const splits: { edgeId: string; at: Position; along: number }[] = [];
   for (const v of vertices) {
     let id: string;
     if ('nodeId' in v) {
@@ -93,6 +159,32 @@ function planPathShape(state: EditState, ctx: EditContext, vertices: readonly Pa
       if (!node) throw new Error(`no node ${v.nodeId}`);
       if (!snappable(node, scope)) return { error: '다른 층이나 다른 범위의 지점에는 붙일 수 없습니다.' };
       id = v.nodeId;
+    } else if ('edgeId' in v) {
+      const edge = state.edges[v.edgeId];
+      if (!edge) throw new Error(`no edge ${v.edgeId}`);
+      const ends = [state.nodes[edge.props.from], state.nodes[edge.props.to]];
+      if (!ends.every((n) => n && nodeInScope(n, scope))) return { error: '다른 층이나 다른 범위의 구간에는 붙일 수 없습니다.' };
+      // On (or within SNAP_VERTEX_M of) an end of the edge: that end node, nothing to split.
+      const end = ends.map((n) => ({ n: n!, d: metresBetween(n!.coord, v.position) })).sort((a, b) => a.d - b.d)[0]!;
+      const plan = splitPlan(state, v.edgeId, v.position);
+      if (end.d <= SNAP_VERTEX_M || typeof plan === 'string') {
+        if (end.d <= SNAP_VERTEX_M || plan === `구간 끝에서 ${SNAP_VERTEX_M}m 안이라 나눌 수 없습니다.`) id = end.n.id;
+        else return { error: `이 구간에는 길을 붙일 수 없습니다: ${plan as string}` };
+      } else {
+        // The same edge clicked twice at (nearly) one place: one split, one node.
+        const k = splits.findIndex((x) => x.edgeId === v.edgeId && metresBetween(x.at, plan.at) <= SNAP_VERTEX_M);
+        if (k >= 0) id = `split:${k}`;
+        else {
+          const at: Position = [plan.at[0], plan.at[1]];
+          const along = footAlong(edgeCoords(state, edge), at).along;
+          splits.push({ edgeId: v.edgeId, at, along });
+          id = `split:${splits.length - 1}`;
+          coordOf.set(id, at);
+          const edgeId = v.edgeId;
+          // The piece holding the point: the first split of an edge cuts it, a later one cuts whichever piece the point is on.
+          steps.push((s) => splitEdgeAt(pieceAt(s, state, edgeId, at) ?? edgeId, at, { source: DRAWN_SOURCE }, ctx));
+        }
+      }
     } else {
       const key = `${v.position[0]},${v.position[1]}`;
       const known = newAt.get(key);
@@ -112,22 +204,50 @@ function planPathShape(state: EditState, ctx: EditContext, vertices: readonly Pa
     bends = curveSegments(path.map((id) => coordOf.get(id) ?? state.nodes[id]!.coord));
     if (bends.length !== path.length - 1) return { error: '같은 자리에 겹친 지점이 있어 곡선을 만들 수 없습니다.' };
   }
+  /**
+   * Two consecutive points on one existing edge with nothing of it between them: the edge (a piece of it after the
+   * splits) already joins them, and a new edge there would only lie on top of it.
+   */
+  const alongOn = (edgeId: string, id: string): number | undefined => {
+    const e = state.edges[edgeId]!;
+    if (id === e.props.from) return 0;
+    if (id === e.props.to) return footAlong(edgeCoords(state, e), state.nodes[e.props.to]!.coord).along;
+    const k = id.startsWith('split:') ? Number(id.slice(6)) : -1;
+    return k >= 0 && splits[k]!.edgeId === edgeId ? splits[k]!.along : undefined;
+  };
+  const alongExisting = (a: string, b: string): boolean => {
+    for (const edgeId of new Set(splits.map((x) => x.edgeId))) {
+      const [ta, tb] = [alongOn(edgeId, a), alongOn(edgeId, b)];
+      if (ta === undefined || tb === undefined) continue;
+      const [lo, hi] = [Math.min(ta, tb), Math.max(ta, tb)];
+      if (!splits.some((x) => x.edgeId === edgeId && x.along > lo + 1e-9 && x.along < hi - 1e-9)) return true;
+    }
+    return false;
+  };
+  const resolve = (s: EditState, id: string): string => (id.startsWith('split:') ? splitNodeAt(s, state, coordOf.get(id)!) ?? id : id);
+  // A new point (or a split of an outdoor edge) is outdoors; only used for an outdoor path.
+  const outside = (id: string) => (id.startsWith('split:') || !state.nodes[id] ? true : state.nodes[id]!.props.building_id === null);
+  let n = 0;
   for (let i = 0; i + 1 < path.length; i++) {
     const [a, b] = [path[i]!, path[i + 1]!];
-    const outside = (id: string) => (state.nodes[id] ? state.nodes[id]!.props.building_id === null : true);
+    if (alongExisting(a, b)) continue;
     if (!indoor && !outside(a) && !outside(b)) return { error: '출입구와 출입구는 바로 이을 수 없습니다. 사이에 바깥 지점을 두세요.' };
     const toEntrance = !indoor && (!outside(a) || !outside(b));
-    steps.push(edgeStep(toEntrance ? {
+    const props: EdgeProps = toEntrance ? {
       kind: 'edge', highway: 'footway', edge_type: 'portal', step_free: null, from: a, to: b, bidirectional: true, source: DRAWN_SOURCE,
     } : indoor ? {
       kind: 'edge', highway: kind === 'ramp' ? 'ramp' : 'corridor', edge_type: 'indoor', step_free: null, from: a, to: b, bidirectional: true, source: DRAWN_SOURCE,
     } : {
       kind: 'edge', ...EDGE_BY_KIND[kind], edge_type: 'outdoor', from: a, to: b, bidirectional: true, source: DRAWN_SOURCE,
-    }, ctx, bends?.[i]));
+    };
+    const vertices = bends?.[i];
+    steps.push((s) => addEdge({ props: { ...props, from: resolve(s, a), to: resolve(s, b) }, ...(vertices && vertices.length > 0 ? { vertices } : {}) }, ctx));
+    n++;
   }
-  const n = path.length - 1;
+  if (n === 0) return { error: '기존 구간 위만 따라 찍었습니다. 새 길이 지나갈 곳에 점을 찍어 주세요.' };
   const word = curved ? '곡선 ' : '';
-  return { annotation: indoor ? `${word}${kind === 'ramp' ? '경사로' : '복도'} ${n}구간 그리기` : `${word}바깥 길 ${n}구간 그리기`, steps };
+  const cut = splits.length > 0 ? ` (기존 구간 ${splits.length}곳 나눠 잇기)` : '';
+  return { annotation: `${indoor ? `${word}${kind === 'ramp' ? '경사로' : '복도'} ${n}구간 그리기` : `${word}바깥 길 ${n}구간 그리기`}${cut}`, steps };
 }
 
 /** 바깥 길 only (the scope-less form). */

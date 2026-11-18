@@ -8,6 +8,7 @@ import {
 import type { RouteLine } from '../map/layers.ts';
 import { measureSummary, measureTargetOf, type MeasureSummary } from '../model/measure.ts';
 import { routePlaces } from '../model/places.ts';
+import { routeFocusOf, type RouteFocus } from '../model/routeFocus.ts';
 import { OUTDOOR, edgeInScope } from '../model/scope.ts';
 import type { RouteRef } from '../model/terrain3d.ts';
 import { stateToCampus, type Session } from '../model/session.ts';
@@ -31,7 +32,7 @@ export function fastestOf(results: readonly { kind: RouteKind; result: PointRout
 export function useInspection(
   session: Session,
   state: EditState,
-  ui: Pick<UiState, 'panelTab' | 'routeFrom' | 'routeTo' | 'routeFromPoint' | 'routeToPoint' | 'routeShown' | 'nearest' | 'selection'>,
+  ui: Pick<UiState, 'panelTab' | 'routeFrom' | 'routeTo' | 'routeFromPoint' | 'routeToPoint' | 'routeShown' | 'nearest' | 'selection' | 'scope'>,
   /** Changes when the session's measurements do (they live outside the edit history). */
   obsRev: number,
 ) {
@@ -103,6 +104,16 @@ export function useInspection(
     return lines;
   }, [routeResults, nearest, shown, ends, checkedState, routesOpen, routeFrom, routeTo, routeFromPoint, routeToPoint]);
 
+  /** Which parts of other buildings stay sharp for the routes shown (null: nothing special). */
+  const routeFocus = useMemo<RouteFocus | null>(() => {
+    const endBuilding = (id: string | null, p: RoutePoint | null) => (p ? (p.scope.kind === 'building' ? p.scope.buildingId : null) : id ? checkedState.nodes[id]?.props.building_id : null);
+    return routeFocusOf(
+      checkedState, ui.scope, routesOpen,
+      routeResults.filter((r) => shown.includes(r.kind)).map((r) => r.result),
+      [endBuilding(routeFrom, routeFromPoint), endBuilding(routeTo, routeToPoint)],
+    );
+  }, [checkedState, ui.scope, routesOpen, routeResults, shown, routeFrom, routeTo, routeFromPoint, routeToPoint]);
+
   // ---- 측정: the selected edge or elevator, with core's predicted time (a graph built without calibration) ----
   const measureTarget = useMemo(() => (ui.selection.length === 1 ? measureTargetOf(state, ui.selection) : null), [state, ui.selection]);
   const measurable = ui.panelTab === 'properties' && measureTarget !== null && 'target' in measureTarget;
@@ -115,5 +126,5 @@ export function useInspection(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measureTarget, measureGraph, session, obsRev]);
 
-  return { checks, graph, places, routeResults, routeShown: shown, nearest, routeLines, measureTarget, measure };
+  return { checks, graph, places, routeResults, routeShown: shown, nearest, routeLines, routeFocus, measureTarget, measure };
 }

@@ -458,6 +458,8 @@ button.check-item:hover { background: var(--chrome); }
 .access { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--rule); }
 .access legend { padding: 0; font-weight: 600; }
 .access-field { display: flex; flex-direction: column; gap: 5px; }
+/* 길 폭 (width_m): label above the number field, the range message or the help under it. */
+.edge-width-field label { display: flex; flex-direction: column; gap: 4px; }
 .access-field label { display: flex; flex-direction: column; gap: 3px; }
 .access-field input { padding: 5px 7px; border: 1px solid var(--rule); border-radius: 5px; font: inherit; color: var(--ink); background: var(--surface); }
 .presets { display: flex; flex-wrap: wrap; gap: 4px; }

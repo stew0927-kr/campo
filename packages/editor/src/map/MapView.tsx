@@ -21,7 +21,7 @@ import { distanceToSegment, footOnSegment, nearestWithin, resolveSnap, segmentsO
 import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
-  BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, PLAZA_COLORS, OUTLINE_LAYERS, OUTLINE_SOURCE,
+  BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, EDGE_WIDTH_LAYER, ELEVATION_COLORS, edgeWidthLineWidth, ELEVATION_SOURCE, PLAZA_COLORS, OUTLINE_LAYERS, OUTLINE_SOURCE,
   PLAZA_EDIT_LAYERS, PLAZA_EDIT_SOURCE, PLAZA_MERGE_LAYERS, PLAZA_MERGE_SOURCE,
   PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, SNAP_LAYERS, SNAP_SOURCE, WAY_COLORS, snapGeoJSON,
   dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, curvePreviewGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
@@ -1206,6 +1206,8 @@ export function MapView(props: Props) {
         if (layer.id === 'campo-nodes-highlight') for (const r of [...ROUTE_LAYERS, ...SLOPE_LAYERS]) map.addLayer(r);
         map.addLayer(layer);
       }
+      // 길 폭 band: metres → pixels for the campus' own latitude (the layer list is built for 한양대학교's).
+      map.setPaintProperty(EDGE_WIDTH_LAYER, 'line-width', edgeWidthLineWidth(map.getCenter().lat));
       for (const layer of PREVIEW_LAYERS) map.addLayer(layer);
       for (const layer of DRAG_LAYERS) map.addLayer(layer);
       for (const layer of OUTLINE_LAYERS) map.addLayer(layer);

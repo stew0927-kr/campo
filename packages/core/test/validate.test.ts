@@ -776,3 +776,45 @@ describe('escalators and measurements (SPEC-v0.2 2.7, 3.9, 8)', () => {
     expect(campus.calibration).toEqual({});
   });
 });
+
+describe('edge width width_m and E19 (SPEC §4.2, SPEC-v0.2 §8)', () => {
+  const WIDE = 'e_out_0001__out_0006';
+  const e19 = (r: ValidationResult) => r.errors.filter((i) => i.code === E.edgeWidthInvalid);
+
+  it('the fixture has one 3.0 m edge and validates clean', () => {
+    const edge = fixture.features.map((f) => f.feature as AnyFeature).find((f) => f.id === WIDE);
+    expect(edge.properties.width_m).toBe(3.0);
+    expect(validateCampus(fixture)).toEqual({ errors: [], warnings: [] });
+  });
+
+  it('width_m 0.3 is one E19 error', () => {
+    const result = broken(({ get }) => {
+      get(WIDE).properties.width_m = 0.3;
+    });
+    expect(codes(e19(result))).toEqual([[E.edgeWidthInvalid, WIDE]]);
+    expect(e19(result)[0]!.message).toBe('길 폭(width_m)은 0.5 m 이상 20 m 이하의 숫자여야 합니다. 지금 값: 0.3');
+  });
+
+  it('width_m 2.5 and no width_m are no E19 error', () => {
+    const ok = broken(({ get }) => {
+      get(WIDE).properties.width_m = 2.5;
+    });
+    expect(e19(ok)).toEqual([]);
+    expect(ok.errors).toEqual([]);
+    const none = broken(({ get }) => {
+      delete get(WIDE).properties.width_m;
+    });
+    expect(e19(none)).toEqual([]);
+    expect(none.errors).toEqual([]);
+  });
+
+  it('accepts 0.5 and 20, and gives E19 for 20.01, a string and a negative width', () => {
+    for (const ok of [0.5, 20]) {
+      expect(broken(({ get }) => { get(WIDE).properties.width_m = ok; }).errors, `width_m ${ok}`).toEqual([]);
+    }
+    for (const bad of [20.01, '3', -1]) {
+      const result = broken(({ get }) => { get(WIDE).properties.width_m = bad; });
+      expect(codes(e19(result)), `width_m ${bad}`).toEqual([[E.edgeWidthInvalid, WIDE]]);
+    }
+  });
+});

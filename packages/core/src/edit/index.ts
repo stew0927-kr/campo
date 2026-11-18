@@ -46,6 +46,7 @@ export { setBuildingLevels } from './actions/setBuildingLevels.ts';
 export { outlineToEdit, resetFloorOutline, setBuildingOutline } from './actions/setBuildingOutline.ts';
 export { reverseEdge } from './actions/reverseEdge.ts';
 export { setEdgeElevation, type EdgeElevationValues } from './actions/setEdgeElevation.ts';
+export { EDGE_WIDTH_REFUSED, setEdgeWidth } from './actions/setEdgeWidth.ts';
 export { compose, type ComposeStep } from './compose.ts';
 export { addRoom, type NewRoom } from './actions/addRoom.ts';
 export { deleteRooms, doorsOfRoom } from './actions/deleteRooms.ts';

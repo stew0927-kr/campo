@@ -1,8 +1,9 @@
 // How the edit state is drawn on the map. Display only: builds a throwaway GeoJSON from the EditState.
 import type { FeatureCollection } from 'geojson';
 import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
-import { PICTOGRAM_COLORS, beltEndIds, closeRing, edgeCoords, outlineOfLevel, edgesAt, movedTogether, pictogramOf, type EditEdge, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
+import { PICTOGRAM_COLORS, beltEndIds, closeRing, edgeCoords, edgeWidthM, outlineOfLevel, edgesAt, movedTogether, pictogramOf, type EditEdge, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
 import { unattachedIds } from '../model/connect.ts';
+import { edgeWidthApplies } from '../model/edgeWidth.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { buildingInScope, edgeStrong, nodeStrong, roomInScope, type Scope } from '../model/scope.ts';
@@ -112,6 +113,8 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       properties: {
         id: e.id, kind: 'edge', highway: e.props.highway, node_type: null, classroom: false,
         emphasis: edgeStrong(state, e, scope) || (focus !== null && routeEdgeStrong(state, e, focus)) ? 1 : 0, selected: false, highlight: highlight.has(e.id),
+        // The effective width (m): width_m, or 2.0 when it is missing, and whether the edge takes one (the campo-edges-width band).
+        width_m: edgeWidthM(e.props), hasWidth: edgeWidthApplies(e.props),
         ...beltProps(e.props.conveying, pairs.get(e.id) ?? 0),
       },
     });
@@ -169,6 +172,37 @@ export function dragGeoJSON(state: EditState, nodeId: string, target?: Position 
   if (target) features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: target }, properties: { role: 'target' } });
   return { type: 'FeatureCollection', features };
 }
+
+// ---- Edge width (width_m) in metres on the map ----
+
+/** Earth's equatorial circumference (m) in the Web Mercator formula. */
+const EARTH_CIRCUMFERENCE_M = 40075016.686;
+/** Latitude the width band is drawn for before the map tells the real one (한양대학교 서울캠퍼스). */
+export const EDGE_WIDTH_REF_LAT_DEG = 37.5557;
+
+/**
+ * Screen pixels per ground metre at `zoom` on `latDeg`, for MapLibre's 512 px tiles:
+ * metres per pixel = 40075016.686 · cos(lat) / (512 · 2^zoom), and this is its inverse.
+ */
+export function pxPerMeter(zoom: number, latDeg: number): number {
+  return (512 * 2 ** zoom) / (EARTH_CIRCUMFERENCE_M * Math.cos((latDeg * Math.PI) / 180));
+}
+
+/**
+ * line-width that draws an edge `width_m` metres wide. Pixels per metre double with each zoom level, so an exponential
+ * (base 2) interpolation between zoom 14 and 22 is exact in between. Good for the latitude it is built for; a campus is
+ * small enough that cos(lat) does not change within it (MapView builds it again for the map's own latitude).
+ */
+export function edgeWidthLineWidth(latDeg: number): ExpressionSpecification {
+  return [
+    'interpolate', ['exponential', 2], ['zoom'],
+    14, ['*', ['get', 'width_m'], pxPerMeter(14, latDeg)],
+    22, ['*', ['get', 'width_m'], pxPerMeter(22, latDeg)],
+  ];
+}
+
+/** Layer id of the width band under the selected edges. */
+export const EDGE_WIDTH_LAYER = 'campo-edges-width';
 
 const strong: ExpressionSpecification = ['==', ['get', 'emphasis'], 1];
 const opacity: ExpressionSpecification = ['case', strong, 1, 0.18];
@@ -244,6 +278,15 @@ export const DATA_LAYERS: LayerSpecification[] = [
       'line-width': ['case', ['get', 'highlight'], 4, ['get', 'selected'], 2.5, 1.5] as never,
       'line-opacity': ['case', strong, 0.8, 0.3] as never,
     },
+  },
+  {
+    // 길 폭: the selected edges' width on the ground (width_m, default 2.0 m), a faint band under the lines.
+    id: EDGE_WIDTH_LAYER,
+    type: 'line',
+    source: DATA_SOURCE,
+    filter: ['all', isEdge, ['get', 'highlight'], ['==', ['get', 'hasWidth'], true]],
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': wayColor as never, 'line-width': edgeWidthLineWidth(EDGE_WIDTH_REF_LAT_DEG), 'line-opacity': 0.25, 'line-offset': pairShift },
   },
   {
     // Selected edges: a yellow halo under the line.

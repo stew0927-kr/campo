@@ -36,6 +36,7 @@ export { formatFeatureCollection, formatMeta } from './format.ts';
 export { migrateCampusFiles, type MigrateProblem, type MigrateResult, type MigrateSummary } from './migrate.ts';
 export { ENDPOINT_TOLERANCE_M, isClassroomDoor, isValidFeature, mapLimitsProblem, validateCampus } from './validate.ts';
 export * from './costs.ts';
+export * from './edgeWidth.ts';
 export * from './pictograms.ts';
 export * from './outline.ts';
 export * from './buildingStack.ts';

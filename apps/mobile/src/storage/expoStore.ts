@@ -4,6 +4,9 @@ import type { FileStore } from './store.ts';
 
 const at = (path: string): File => new File(Paths.document, path);
 
+/** The file:// URI of a file in the document folder (`path` is relative to it, like every FileStore path), for an Image. */
+export const photoUri = (path: string): string => at(path).uri;
+
 function ensureParent(file: File): void {
   const dir = file.parentDirectory;
   if (!dir.exists) dir.create({ intermediates: true });

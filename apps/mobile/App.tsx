@@ -9,6 +9,7 @@ import bundle from './assets/campus.generated.json';
 import { SurveyScreen } from './src/SurveyScreen.tsx';
 import { loadCampus, type BundledCampus, type Campus } from './src/campus.ts';
 import { expoStore } from './src/storage/expoStore.ts';
+import { emptyPhotoTrash } from './src/storage/photoTrash.ts';
 import { SURVEY_DIR, clearSnapshot, loadSnapshot } from './src/storage/store.ts';
 import { SurveySession } from './src/survey/session.ts';
 import { isoLocal } from './src/time.ts';
@@ -34,6 +35,8 @@ async function boot(): Promise<Boot> {
   // The JSON import loses the [lng, lat] tuples of the outlines; the shape is the one scripts/bundle-campus.mjs writes.
   const campus = loadCampus(bundle as unknown as BundledCampus);
   const unread = campus.issues > 0 ? `읽지 못한 항목이 ${campus.issues}개 있습니다. 편집기의 오류 검사에서 확인해 주세요.` : null;
+  // Photos deleted in an earlier run can no longer be undone: give their space back.
+  await emptyPhotoTrash(expoStore).catch(() => undefined);
   const snapshot = await loadSnapshot(expoStore);
   if (!snapshot) return fresh(campus, unread);
   const restored = SurveySession.restore({ campus: campus.id, base: campus.base, ids: newIds() }, snapshot);

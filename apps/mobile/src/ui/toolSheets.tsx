@@ -1,6 +1,6 @@
 // Sheets of the tool row: 건물 이름·층 (after an outline is drawn), 층 복사·연동, 사진 방향, 설정 (offline map).
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { floorLabel } from '../model/scope.ts';
 import { parseLevelRange } from '../survey/buildings.ts';
 import { BottomSheet } from './BottomSheet.tsx';
@@ -97,22 +97,72 @@ export interface PhotoItem {
 interface PhotosProps {
   title: string;
   photos: readonly PhotoItem[];
+  /** Where a saved photo's file is (a file:// URI), for the thumbnail. */
+  uriOf: (path: string) => string;
   onAdd: () => void;
   onHeading: (path: string) => void;
+  onDelete: (path: string) => void;
   onClose: () => void;
 }
 
-export function PhotosSheet({ title, photos, onAdd, onHeading, onClose }: PhotosProps) {
+const THUMB = 64;
+
+/** The picture of a saved photo; a grey box saying the file is missing when it cannot be read. */
+function Thumb({ uri }: { uri: string }) {
+  // One more try after a moment: 되돌리기 puts the file back a moment after the row is drawn again.
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setAttempt(0);
+    setFailed(false);
+  }, [uri]);
+  if (failed) {
+    return (
+      <View style={[styles.thumb, styles.thumbMissing]} accessibilityLabel="사진 파일 없음">
+        <Text style={styles.thumbMissingText}>사진 파일 없음</Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      key={attempt}
+      source={{ uri }}
+      style={styles.thumb}
+      resizeMode="cover"
+      accessibilityIgnoresInvertColors
+      onError={() => {
+        if (attempt === 0) setTimeout(() => setAttempt(1), 700);
+        else setFailed(true);
+      }}
+    />
+  );
+}
+
+export function PhotosSheet({ title, photos, uriOf, onAdd, onHeading, onDelete, onClose }: PhotosProps) {
   return (
     <BottomSheet title={title} onClose={onClose}>
       <Text style={styles.note}>한 지점에 여러 장을 각각 다른 방향으로 남길 수 있습니다(예: 복도 양쪽). 길 안내에서 걷는 방향과 가장 가까운 사진이 보입니다.</Text>
       {photos.length === 0 && <Text style={styles.note}>아직 사진이 없습니다.</Text>}
       {photos.map((p, i) => (
         <View key={p.path} style={styles.photoRow}>
-          <Text style={styles.photoText}>사진 {i + 1} · {p.heading === null ? '방향 없음' : `${p.heading}° ${compassWord(p.heading)}쪽`}</Text>
-          <Pressable onPress={() => onHeading(p.path)} accessibilityRole="button" accessibilityLabel={`사진 ${i + 1} 방향 설정`} style={styles.small}>
-            <Text style={styles.smallLabel}>방향 설정</Text>
-          </Pressable>
+          <Thumb uri={uriOf(p.path)} />
+          <View style={styles.photoMain}>
+            <Text style={styles.photoText}>사진 {i + 1} · {p.heading === null ? '방향 없음' : `${p.heading}° ${compassWord(p.heading)}쪽`}</Text>
+            <View style={styles.photoActions}>
+              <Pressable onPress={() => onHeading(p.path)} accessibilityRole="button" accessibilityLabel={`사진 ${i + 1} 방향 설정`} style={styles.small}>
+                <Text style={styles.smallLabel}>방향 설정</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => onDelete(p.path)}
+                accessibilityRole="button"
+                accessibilityLabel={`사진 ${i + 1} 삭제`}
+                accessibilityHint="확인을 한 번 받고 지웁니다. 되돌리기로 되살릴 수 있습니다"
+                style={styles.small}
+              >
+                <Text style={styles.deleteLabel}>삭제</Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
       ))}
       <BigButton label="사진 추가" onPress={onAdd} style={styles.gap} />
@@ -192,9 +242,15 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: color.ink, borderColor: color.ink },
   chipLabel: { fontSize: font.body, fontWeight: '600', color: color.ink },
   onColor: { color: color.onPrimary },
-  photoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md, minHeight: TOUCH, marginTop: space.sm, paddingLeft: space.lg, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: 1, borderColor: color.line },
-  photoText: { flexShrink: 1, fontSize: font.body, color: color.ink, fontWeight: '600' },
-  small: { minHeight: TOUCH, minWidth: 84, paddingHorizontal: space.lg, alignItems: 'center', justifyContent: 'center' },
+  photoRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: 1, borderColor: color.line },
+  photoMain: { flex: 1, gap: 2 },
+  photoActions: { flexDirection: 'row', alignItems: 'center' },
+  photoText: { fontSize: font.body, color: color.ink, fontWeight: '600' },
+  thumb: { width: THUMB, height: THUMB, borderRadius: radius.md, backgroundColor: color.line },
+  thumbMissing: { alignItems: 'center', justifyContent: 'center', padding: 4 },
+  thumbMissingText: { fontSize: font.small, lineHeight: 14, color: color.inkSoft, textAlign: 'center' },
+  deleteLabel: { fontSize: font.body, fontWeight: '700', color: color.danger },
+  small: { minHeight: TOUCH, minWidth: 72, paddingHorizontal: space.md, alignItems: 'center', justifyContent: 'center' },
   smallLabel: { fontSize: font.body, fontWeight: '700', color: color.primary },
   bar: { height: 8, borderRadius: 4, backgroundColor: color.line, overflow: 'hidden', marginTop: space.lg },
   barFill: { height: 8, backgroundColor: color.primary },

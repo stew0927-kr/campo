@@ -7,6 +7,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
+import type { DhRow } from '../survey/dhRows.ts';
 import { pinText, type PressurePin } from '../survey/pressurePins.ts';
 import { BottomSheet } from './BottomSheet.tsx';
 import { BigButton, FieldLabel } from './controls.tsx';
@@ -221,9 +222,10 @@ export interface PressureRow {
 interface PressureSheetProps {
   rows: readonly PressureRow[];
   ttlMin: number;
-  /** Δh edges kept on the phone (not superseded) and measured heights waiting for the editor's recompute. */
-  edges: number;
+  /** Δh edges kept on the phone (not superseded), newest first, and measured heights waiting for the editor's recompute. */
+  dh: readonly DhRow[];
   pending: number;
+  onDeleteDh: (row: DhRow) => void;
   onClear: () => void;
   onClose: () => void;
 }
@@ -231,7 +233,7 @@ interface PressureSheetProps {
 const clock = (ms: number) => new Date(ms).toTimeString().slice(0, 8);
 
 /** The pressures in memory (newest first), each with how long it is kept. Nothing on this sheet is saved. */
-export function PressureSheet({ rows, ttlMin, edges, pending, onClear, onClose }: PressureSheetProps) {
+export function PressureSheet({ rows, ttlMin, dh, pending, onDeleteDh, onClear, onClose }: PressureSheetProps) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15_000);
@@ -244,7 +246,7 @@ export function PressureSheet({ rows, ttlMin, edges, pending, onClear, onClose }
         기압은 이 휴대폰의 메모리에만 {ttlMin}분 동안 두었다가 지웁니다. 저장하고 내보내는 것은 두 지점 사이의 높이 차뿐입니다.
       </Text>
       <View style={styles.summary}>
-        <View style={styles.summaryCell}><Text style={styles.summaryNum}>{edges}</Text><Text style={styles.summaryKey}>저장된 높이 차</Text></View>
+        <View style={styles.summaryCell}><Text style={styles.summaryNum}>{dh.length}</Text><Text style={styles.summaryKey}>저장된 높이 차</Text></View>
         <View style={styles.summaryCell}><Text style={styles.summaryNum}>{pending}</Text><Text style={styles.summaryKey}>다시 계산 대기</Text></View>
       </View>
       <FieldLabel>메모리에 있는 기압 {live.length}개</FieldLabel>
@@ -266,6 +268,29 @@ export function PressureSheet({ rows, ttlMin, edges, pending, onClear, onClose }
         );
       })}
       <BigButton tone="plain" label="기압 기록 지우기" disabled={live.length === 0} hint="저장된 높이 차는 그대로 둡니다" onPress={onClear} style={styles.gap} />
+
+      <FieldLabel>저장된 높이 차 {dh.length}개</FieldLabel>
+      <Text style={styles.note}>지우면 이 휴대폰에 저장된 것만 사라집니다. 이미 내보낸 압축 파일과 편집기로 넘어간 사본은 그대로입니다.</Text>
+      {dh.length === 0 ? (
+        <Text style={styles.note}>저장된 높이 차가 없습니다.</Text>
+      ) : dh.map((r) => (
+        <View key={r.edgeId} style={styles.row}>
+          <View style={styles.rowMain}>
+            <Text style={styles.rowLabel} numberOfLines={1}>{r.from} → {r.to}</Text>
+            <Text style={styles.rowSub}>{r.at} 측정</Text>
+          </View>
+          <Text style={styles.rowValue}>{r.dh}</Text>
+          <Pressable
+            onPress={() => onDeleteDh(r)}
+            accessibilityRole="button"
+            accessibilityLabel={`${r.from}에서 ${r.to}까지 높이 차 ${r.dh} 삭제`}
+            accessibilityHint="확인을 한 번 받고 이 휴대폰에서 지웁니다"
+            style={({ pressed }) => [styles.delete, pressed && styles.pressed]}
+          >
+            <Text style={styles.deleteLabel}>삭제</Text>
+          </Pressable>
+        </View>
+      ))}
     </BottomSheet>
   );
 }
@@ -344,6 +369,8 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: font.label, fontWeight: '700', color: color.ink },
   rowValue: { fontSize: font.label, fontWeight: '700', color: color.ink, fontVariant: ['tabular-nums'] },
   rowSub: { fontSize: font.small, color: color.inkSoft, fontVariant: ['tabular-nums'] },
+  delete: { minHeight: TOUCH, minWidth: 56, paddingHorizontal: space.sm, alignItems: 'center', justifyContent: 'center' },
+  deleteLabel: { fontSize: font.body, fontWeight: '700', color: color.danger },
   state: { gap: 4, padding: space.md, marginTop: space.xs, borderRadius: radius.md, borderWidth: 1.5 },
   stateLive: { borderColor: color.primary, backgroundColor: '#EEF4FF' },
   stateSaved: { borderColor: color.ok, backgroundColor: '#EDF7F0' },

@@ -53,6 +53,12 @@ export function memoryStore() {
     async move(from, to) {
       if (store.failMove) throw new Error('move failed');
       log.push(`move ${from} ${to}`);
+      if (bytes.has(from)) {
+        bytes.set(to, bytes.get(from)!);
+        bytes.delete(from);
+        return;
+      }
+      if (!files.has(from)) throw new Error(`no such file: ${from}`);
       files.set(to, files.get(from)!);
       files.delete(from);
     },

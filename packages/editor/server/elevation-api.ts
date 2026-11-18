@@ -3,6 +3,8 @@
 //   PUT  /api/elevation/:id/store      ← { text }    the ElevationStore (break lines drawn in the editor). No absolute pressure.
 //   POST /api/elevation/:id/recompute  ← { request, files }  recomputeRequest JSON and the campus as it would be saved
 //        → { derived, mode: 'solved' | 'existing', log }
+//   DELETE /api/elevation/:id/edges/:edgeId  one Δh edge out of store.json (core removeEdge; both nodes stay)
+//        → { written: true, store: text, removed: { edgeId, from, to } }; 404 for an unknown campus store or edge
 //   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null, walls: TerrainWall[] }  solve/corrected_dem first, else dem.json;
 //        walls: 1 m sections across the store's break lines with lowSide and dropM > 0 (server/terrain.ts terrainWalls)
 // Per campus folder <elevationDir>/<id>/ (default derived/<id>/, git-ignored):
@@ -22,6 +24,10 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
+// The store file only (not the whole elevation entry): this server is loaded by vite.config.ts under Node's own TypeScript
+// stripping, which cannot read the entry's classes with `private readonly` constructor parameters.
+import { removeEdge } from '@campo/core/elevation/store';
+import type { ElevationStore } from '@campo/core/elevation';
 import { HttpError, writeCampusFiles } from './campus-api.ts';
 import { findPython, outputTail, parseCommand, pythonCandidates, showCommand, type Probe, type PythonCommand } from './python.ts';
 import { GridFormatError, readTerrain } from './terrain.ts';
@@ -136,6 +142,19 @@ async function readIfExists(path: string): Promise<string | null> {
   }
 }
 
+/** Writes store.json through a temporary file, so a crash or a full disk leaves the last good copy (PUT /store and DELETE /edges share it). */
+async function writeStoreText(dir: string, path: string, text: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  try {
+    await writeFile(tmp, text, 'utf8');
+    await rename(tmp, path);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
+  }
+}
+
 const exists = async (path: string) => (await readIfExists(path)) !== null;
 
 /** The store file must be an ElevationStore v1 and must not carry absolute pressures (they stay in the phone's memory). */
@@ -171,7 +190,7 @@ export function createElevationApi(opts: ElevationApiOptions) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SOLVER_TIMEOUT_MS;
   const queue = keyedQueue();
   return async (req: IncomingMessage, res: ServerResponse, next: () => void): Promise<void> => {
-    const m = /^\/api\/elevation\/([^/?#]+)(\/store|\/recompute|\/terrain)?\/?(?:\?.*)?$/.exec(req.url ?? '');
+    const m = /^\/api\/elevation\/([^/?#]+)(\/store|\/recompute|\/terrain|\/edges\/[^/?#]+)?\/?(?:\?.*)?$/.exec(req.url ?? '');
     if (!m) return next();
     try {
       const id = decodeURIComponent(m[1]!);
@@ -208,11 +227,28 @@ export function createElevationApi(opts: ElevationApiOptions) {
         const text = body.text;
         checkStoreText(text);
         // Queued with the recomputes: a run in progress reads store.json.
-        await queue(id, async () => {
-          await mkdir(dir, { recursive: true });
-          await writeFile(paths.store, text, 'utf8');
-        });
+        await queue(id, () => writeStoreText(dir, paths.store, text));
         return send(res, 200, { written: true });
+      }
+      if (m[2]?.startsWith('/edges/') && req.method === 'DELETE') {
+        const edgeId = decodeURIComponent(m[2].slice('/edges/'.length));
+        // Read, change and write inside the campus queue, so a recompute or another save never sees half of it.
+        const done = await queue(id, async () => {
+          const text = await readIfExists(paths.store);
+          if (text === null) throw new HttpError(404, `고도 저장소(store.json)가 없습니다: ${id}`);
+          try {
+            checkStoreText(text);
+          } catch (err) {
+            throw new HttpError(500, `저장된 고도 저장소를 읽을 수 없습니다. ${(err as Error).message}`);
+          }
+          const { store, removed } = removeEdge(JSON.parse(text) as ElevationStore, edgeId);
+          if (!removed) throw new HttpError(404, `이 높이 차를 찾을 수 없습니다. 이미 지워졌을 수 있습니다: ${edgeId}`);
+          const next = `${JSON.stringify(store, null, 2)}\n`;
+          checkStoreText(next);
+          await writeStoreText(dir, paths.store, next);
+          return { next, removed };
+        });
+        return send(res, 200, { written: true, store: done.next, removed: { edgeId: done.removed.edgeId, from: done.removed.from, to: done.removed.to } });
       }
       if (m[2] === '/recompute' && req.method === 'POST') {
         const body = JSON.parse(await readBody(req)) as { request?: unknown; files?: unknown };

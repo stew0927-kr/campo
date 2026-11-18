@@ -112,7 +112,7 @@ ull(안 봄)이다. 터치 대상은 모두 38dp 이상이다(앱이 한 손·�
 ```
 
 - `changeset`: 앱에 실어 둔 캠퍼스 데이터(기준 상태)와 조사 뒤 상태의 차이다. 기존 changeset과 형식이 같아서 충돌 검사(`rev_mismatch` 등)와 `applyChangeset`을 그대로 쓴다. 지도를 바꾸지 않고 사진만 붙였으면 없다.
-- `attachments`: Feature id별 사진·방향·기압·메모(`photo_meta`: 사진 경로별 `heading_deg`, 0 이상 360 미만, 선택. 없는 예전 파일도 그대로 읽힌다), 그리고 현장에서 적은 `hours`·`closed_period`·`access_condition`·`sync_group`(선택). 사진 경로는 기록 폴더 안의 `photos/…`만 허용한다.
+- `attachments`: Feature id별 사진·방향·기압·메모(`photo_meta`: 사진 경로별 `heading_deg`, 0 이상 360 미만, 선택. 없는 예전 파일도 그대로 읽힌다. 선택 필드로 `heading_source`(sensor·dial·manual), 다이얼 보정 전 센서 값 `heading_sensor_deg`, `heading_accuracy`(0~3), `heading_ref`(true·magnetic), 사진별 `captured_at`, EXIF에서 읽은 `focal_length_mm`·`focal_length_35mm`·`width_px`·`height_px`와 계산한 수평 화각 `hfov_deg`, `direction_hint`도 남길 수 있다), 그리고 현장에서 적은 `hours`·`closed_period`·`access_condition`·`sync_group`(선택). 사진 경로는 기록 폴더 안의 `photos/…`만 허용한다.
 - `vertical`: 구간별 기압 측정. `height_m`은 구간의 `from`에서 `to`로 올라간 높이이고 내려가면 음수다.
 - `timings`(선택): 스톱워치로 잰 에스컬레이터 탑승 시간. `{ "target": "edge:<id>", "duration_sec": 21.4, "direction": "backward"(그린 방향과 반대로 탔을 때만), "measured_at": "…" }`. observations/*.jsonl 한 줄에서 `source`만 뺀 모양이고, core `surveyObservations`가 `source: "field"`로 바꿔 보정(SPEC-v0.2 3.9)에 그대로 쓸 수 있게 한다. 잴 때마다 하나씩 쌓이고, 없으면 필드가 빠지며, 되돌린 구간의 것은 내보낼 때 빠진다. 편집기 불러오기는 아직 이 값을 observations에 옮기지 않는다(후속).
 - 누가, 어느 기기로, 어떤 경로로 걸었는지는 필드가 없다. 스키마가 모르는 필드를 모든 단계에서 막는다.

@@ -273,6 +273,14 @@ function useSensorFixes(pushFix: (fix: SensorFix) => unknown) {
 
 > `tMs`는 **뒤로 가지 않아야 한다**(`position.timestamp` 사용). 기압은 `baroDeltaM`(시작점 대비 높이 차, m, **올라가면 양수**)만 넘긴다 — 절대 기압은 코어가 받지 않는다. 기압(hPa)은 높이가 오를수록 **내려가므로** `-(현재 − 기준) × 8.3`이다. 기준(`baseHpa`)을 새로 잡고 싶으면(안내를 다시 시작할 때) 값을 비워 다음 값으로 다시 시작한다.
 
+### 3.5 `useRoutePhotos(route, catalog)` — 사진 길안내(선택)
+
+사진 데이터는 사진 공급자(DB 행 `PhotoRow`: `id, node_id, heading_deg, heading_source?, direction_hint?, hfov_deg?, thumb_url, full_url`)가 준다.
+`photoCatalogFromRows(rows)`로 `PhotoCatalog`를 만들어 넘기고, 아직 없으면 `EMPTY_PHOTO_CATALOG`(또는 `null`)를 넘긴다 — 그때 결과는 `[]`이고 화면은 문구·지도만으로 안내하면 된다.
+결과는 단계마다 하나 + 도착 하나(`stepIndex = steps.length`)인 `RouteStepPhoto[]`(`pick`: ahead / approach / approximate / none, `arrow`, `badge`).
+지도에는 `<Map>` 안에 `<RoutePhotoMarkers stepPhotos currentIndex onOpen />`, 확대는 `<PhotoViewerModal pages={photoViewerPages(route, stepPhotos, catalog)} … />`.
+문구(`badge`, `arrowSentence`, 접근성 레이블)는 `src/photos/photoText.ts`의 것을 그대로 쓴다. Camera props는 11.5.1 이름(`center`/`zoom`/`bearing`)이다.
+
 ---
 
 ## 4. 5탭 연결 방법

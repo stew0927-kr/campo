@@ -4,6 +4,7 @@ import type { Graph, Link, Node, NodeId } from 'ngraph.graph';
 import { gradeClass, isEscalator, isProfile, isStepFreePassable, isStepFreeUnknown, perProfile, type GradeClass, type Profile } from './costs.ts';
 import { straight, type CampusGraph, type GraphLinkData, type GraphNodeData } from './graph.ts';
 import { buildSteps, type Leg, type RouteStep } from './route-text.ts';
+import { computeStepBearings, type LngLat } from './route/bearing.ts';
 import type { NodeFeature } from './types.ts';
 
 /** An edge on the route whose step_free is not known yet (step_free requests only). */
@@ -221,11 +222,35 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
     distanceM: round1(distanceM),
     stairsCount,
     escalatorCount,
-    steps: buildSteps(g, legs),
+    steps: withBearings(g, buildSteps(g, legs), nodes),
     uncertainSegments,
     slopeSegments,
     fallback: used === requested ? null : fallbackInfo(stairsCount, escalatorCount, barrierCount),
   };
+}
+
+/** The steps with their walking directions (route/bearing.ts), unrounded; a direction that cannot be told is left out. */
+function withBearings(g: CampusGraph, steps: RouteStep[], nodes: readonly string[]): RouteStep[] {
+  const line: LngLat[] = [];
+  for (const id of nodes) {
+    const node = g.nodes.get(id);
+    if (!node) return steps;
+    line.push(node.geometry.coordinates);
+  }
+  const bearings = computeStepBearings(steps, line);
+  if (bearings.length !== steps.length + 1) return steps;
+  return steps.map((step, i) => {
+    const b = bearings[i]!;
+    const arrive = bearings[i + 1]!.inDeg;
+    return {
+      ...step,
+      ...(b.outDeg !== null ? { bearing_deg: b.outDeg } : {}),
+      ...(b.inDeg !== null ? { bearing_in_deg: b.inDeg } : {}),
+      ...(b.turnDeg !== null ? { bearing_turn_deg: b.turnDeg } : {}),
+      ...(b.floorChange ? { bearing_floor_change: b.floorChange } : {}),
+      ...(arrive !== null ? { bearing_arrive_deg: arrive } : {}),
+    };
+  });
 }
 
 function fallbackInfo(stairsCount: number, escalatorCount: number, barrierCount: number): RouteFallback {

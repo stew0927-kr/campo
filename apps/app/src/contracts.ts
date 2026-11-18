@@ -6,7 +6,7 @@
 // - 앞으로 늘어날 수 있는 필드는 반드시 optional(`?`)로 연다. 필수 필드를 더하는 변경은 하위 호환이 깨지는 변경이라
 //   프론트 화면을 같이 고쳐야 한다.
 // - 화면에 보여 줄 문구는 여기 있는 message/label을 그대로 쓰면 한국어 존댓말이 된다. 화면에서 새로 만들지 않는다.
-import type { CampusGraph, MatchNetwork, NavEvent, NavMode, Profile, RouteStep, SensorFix } from '@campo/core';
+import type { ArrowModel, CampusGraph, MatchNetwork, NavEvent, NavMode, PhotoMeta, Profile, RouteStep, SensorFix } from '@campo/core';
 import type { CampusRuntime } from './campus/types.ts';
 
 /** 지도 위의 한 점. 화면 좌표가 아니라 WGS84 위경도다. */
@@ -59,7 +59,10 @@ export interface CampusRouteView {
   distanceM: number;
   stairsCount: number;
   escalatorCount: number;
-  /** 단계별 안내 문장(한국어 존댓말). */
+  /**
+   * 단계별 안내 문장(한국어 존댓말). 각 단계에는 코어가 경로 모양으로 계산한 진행 방위가 선택 필드로 붙는다
+   * (RouteStepBearing: bearing_deg·bearing_in_deg·bearing_turn_deg·bearing_floor_change·bearing_arrive_deg, 없을 수 있다).
+   */
   steps: RouteStep[];
   /** 경로 위의 층 이동. 계단·에스컬레이터·엘리베이터로 층이 바뀌는 곳마다 하나. */
   floorChanges: FloorChange[];
@@ -200,3 +203,80 @@ export const EMPTY_GPS_SNAPSHOT: GpsMatcherSnapshot = Object.freeze({
   rerouteRequested: false,
   fixCount: 0,
 });
+
+// ---- 사진 길안내 (docs: campo-photo-guidance-design.md) ----
+// 사진 데이터는 조원 D가 만드는 사진 공급자(DB 행 → PhotoCatalog)가 준다. 이 앱은 URL을 받아 보여 주기만 하고,
+// 사진을 줄이거나 올리지 않는다. 사진이 하나도 없어도 아래 계약은 빈 값으로 동작한다(EMPTY_PHOTO_CATALOG).
+
+/** RouteStep에 코어가 얹는 진행 방위(도, 북쪽 기준 시계 방향). 전부 선택 필드이며 계산할 수 없으면 빠진다. */
+export type RouteStepBearing = Pick<RouteStep, 'bearing_deg' | 'bearing_in_deg' | 'bearing_turn_deg' | 'bearing_floor_change' | 'bearing_arrive_deg'>;
+
+/** 사진 위 방향 화살표. 코어의 ArrowModel을 그대로 쓴다(mode: inFrame / edge / behind, label: 한국어 방향 문구). */
+export type PhotoArrow = ArrowModel;
+
+/** 경로 안내에 쓰는 사진 한 장. URL은 공급자가 준 그대로다. */
+export interface RoutePhoto {
+  photoId: string;
+  /** 사진을 찍은 캠퍼스 지점 id(경로의 RouteStep.fromNodeId / toNodeId와 같은 id 공간). */
+  nodeId: string;
+  /** 사진이 바라보는 방향(도, 0 이상 360 미만). null이면 자동으로 고르지 않고 "이 지점 다른 사진" 목록에만 나온다. */
+  heading_deg: number | null;
+  heading_source?: PhotoMeta['heading_source'];
+  /** 예: "사진 오른쪽 두 번째 문". 화면에 그대로 쓴다. */
+  direction_hint?: string;
+  /** 수평 화각(도). 없으면 기본 65°로 화살표 위치를 잡는다. */
+  hfov_deg?: number;
+  /** 지도 썸네일용 작은 사진 URL. */
+  thumbUrl: string;
+  /** 확대 뷰어용 사진 URL. */
+  fullUrl: string;
+}
+
+/** 경로의 한 단계(또는 도착 지점)에 고른 사진. */
+export interface RouteStepPhoto {
+  /** CampusRouteView.steps의 인덱스. steps.length이면 도착 지점(마지막 단계의 toNodeId)이다. */
+  stepIndex: number;
+  /** 사진을 고른 지점. */
+  nodeId: string;
+  /** 지점의 좌표 [경도, 위도]. 경로 선에서 찾지 못하면 null(지도 마커를 그리지 않는다). */
+  lngLat: [number, number] | null;
+  /**
+   * ahead: 나가는 방향 ±45° 사진 / approach: 들어오는 방향 ±45° 사진(화살표는 나가는 방향 기준)
+   * approximate: ±90° 안의 가장 가까운 사진(badge를 함께 보여 준다) / none: 사진 없이 문구와 지도로 안내
+   */
+  pick: 'ahead' | 'approach' | 'approximate' | 'none';
+  photo: RoutePhoto | null;
+  /** 가야 할 방향 − 사진 방향(-180..180, 양수 = 오른쪽). 사진이 없으면 null. */
+  deltaDeg: number | null;
+  arrow: PhotoArrow | null;
+  /** 가야 할 방향(도). 다른 각도 사진을 고를 때 화살표를 다시 계산하는 기준. 모르면 null. */
+  targetDeg: number | null;
+  /** approximate일 때 "정면이 아닐 수 있습니다". 그 밖에는 null. 화면에 그대로 쓴다. */
+  badge: string | null;
+}
+
+/**
+ * 사진 공급자(조원 D 연동 지점). 지점 id로 그 지점의 사진을 원래 순서대로 준다. 없는 지점은 빈 배열.
+ * `size`(전체 사진 수)는 선택이며, 0이면 사진 안내를 통째로 끈다.
+ */
+export interface PhotoCatalog {
+  byNodeId(nodeId: string): RoutePhoto[];
+  readonly size?: number;
+}
+
+/**
+ * 사진 DB의 한 행(조원 D의 테이블 모양). URL 필드 이름은 `thumb_url` / `full_url`로 고정한다.
+ * 빈 칸은 null로 와도 된다. id·node_id·thumb_url·full_url이 비어 있는 행은 버린다.
+ */
+export interface PhotoRow {
+  id: string;
+  node_id: string;
+  heading_deg: number | null;
+  heading_source?: PhotoMeta['heading_source'] | null;
+  direction_hint?: string | null;
+  hfov_deg?: number | null;
+  thumb_url: string;
+  full_url: string;
+}
+
+export { EMPTY_PHOTO_CATALOG, photoCatalogFromRows } from './photos/catalog.ts';

@@ -1,13 +1,16 @@
-// [사진 촬영]: a full-screen camera with one large shutter. The picture's file URI goes back to whoever asked.
+// [사진 촬영]: a full-screen camera with one large shutter. The picture's file URI goes back to whoever asked, with what
+// its EXIF says about the lens and the size (survey/photoMeta.ts exifPhotoInfo). EXIF is only read, never written.
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { exifPhotoInfo, type ExifPhotoInfo } from '../survey/photoMeta.ts';
 import { BigButton } from './controls.tsx';
 import { TOUCH, color, font, space } from './theme.ts';
 
 interface Props {
-  onCapture: (uri: string) => void;
+  /** `info`: focal lengths, pixel size and field of view read from the picture's EXIF (fields left out when unknown). */
+  onCapture: (uri: string, info: ExifPhotoInfo) => void;
   onClose: () => void;
   onError: (message: string) => void;
 }
@@ -23,8 +26,8 @@ export function CameraCapture({ onCapture, onClose, onError }: Props) {
     setBusy(true);
     try {
       // Moderate quality: the picture shows which door it is, and a walk takes dozens of them.
-      const picture = await camera.current.takePictureAsync({ quality: 0.6 });
-      onCapture(picture.uri);
+      const picture = await camera.current.takePictureAsync({ quality: 0.6, exif: true });
+      onCapture(picture.uri, exifPhotoInfo(picture.exif, picture));
     } catch (err) {
       onError(`사진을 찍지 못했습니다. ${(err as Error).message}`);
       setBusy(false);

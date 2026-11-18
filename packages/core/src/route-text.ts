@@ -31,6 +31,18 @@ export interface RouteStep {
   text: string;
   /** Walk and ramp steps with a steep part (grade above GRADE_CAUTION_MAX_PCT in travel direction). Absent otherwise. */
   steep?: true;
+  // Walking directions from the route's geometry (route/bearing.ts computeStepBearings), degrees clockwise from north.
+  // Each is left out when it cannot be told; a route built without them is still a whole route.
+  /** Leaving fromNodeId (the photo to show there looks this way). */
+  bearing_deg?: number;
+  /** Arriving at fromNodeId. Absent at the start of a route. */
+  bearing_in_deg?: number;
+  /** bearing_deg minus bearing_in_deg, -180..180, negative = turn left. */
+  bearing_turn_deg?: number;
+  /** This step changes floor this way. */
+  bearing_floor_change?: 'stairs' | 'elevator' | 'escalator';
+  /** Arriving at toNodeId (for the last step: the direction the destination is reached in). */
+  bearing_arrive_deg?: number;
 }
 
 /** Added to the sentence of a walk or ramp step with a steep part. */

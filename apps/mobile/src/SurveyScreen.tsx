@@ -26,6 +26,7 @@ import { SURVEY_DIR, clearSnapshot, createSaver, type FileStore } from './storag
 import { lookupOsmBuilding, planDrawnBuilding, planOsmBuilding } from './survey/buildings.ts';
 import { floorCopyTargets, planCopyFloor, planMoveNode, planUnsync, syncedOnFloor } from './survey/floors.ts';
 import { planDoor, planEscalator, planFloorChange, planLink, planPortal, planRestroom, planStart, type PathKind, type Plan, type PlanInput } from './survey/plans.ts';
+import { photoCapture, type ExifPhotoInfo, type PhotoCapture } from './survey/photoMeta.ts';
 import { buildingCentre, pressurePins } from './survey/pressurePins.ts';
 import { nextRoomRef } from './survey/readings.ts';
 import { advanceRun, corridorAt, isRoomRef, planStrip, stripPreview, type DoorRun, type StripInput } from './survey/rooms.ts';
@@ -119,6 +120,8 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   /** Pictures taken for the record being made (and the direction each looks); they are filed under its Feature when it is recorded. */
   const [shots, setShots] = useState<string[]>([]);
   const [shotHeadings, setShotHeadings] = useState<(number | null)[]>([]);
+  /** What was known about each of those pictures when it was taken (compass value before the dial, lens, size). */
+  const [shotCaptures, setShotCaptures] = useState<(PhotoCapture | null)[]>([]);
   const [heading, setHeading] = useState<HeadingTarget | null>(null);
   const [trip, setTrip] = useState<Trip | null>(null);
   const [escTrip, setEscTrip] = useState<EscTrip | null>(null);
@@ -229,6 +232,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   const clearShots = (): void => {
     setShots([]);
     setShotHeadings([]);
+    setShotCaptures([]);
   };
   const closeSheet = (): void => {
     setSheet(null);
@@ -258,7 +262,11 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
       notify(plan.error, 'error');
       return false;
     }
-    const paths = session.record(plan, { at: isoLocal(new Date()), ...sensors.current, ...(trip ? { trip } : {}), photos: uris.length, photoHeadings: shotHeadings.slice(0, uris.length) });
+    const { pressureHpa, headingDeg } = sensors.current;
+    const paths = session.record(plan, {
+      at: isoLocal(new Date()), pressureHpa, headingDeg, ...(trip ? { trip } : {}),
+      photos: uris.length, photoHeadings: shotHeadings.slice(0, uris.length), photoCaptures: shotCaptures.slice(0, uris.length),
+    });
     // Copy the pictures into the walk's folder under the names the session reserved for them.
     void Promise.all(paths.map((path, i) => store.importFile(uris[i]!, `${SURVEY_DIR}/${path}`)))
       .catch((err: Error) => notify(`사진을 저장하지 못했습니다. ${err.message}`, 'error'));
@@ -348,13 +356,16 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   };
 
   /** A picture was taken: its direction starts at the compass reading and the fan opens on the map to correct it. */
-  const picked = (uri: string, target: CameraFor): void => {
+  const picked = (uri: string, target: CameraFor, exif: ExifPhotoInfo): void => {
     const initial = sensorHeading();
+    const { headingDeg, headingAccuracy, headingRef } = sensors.current;
+    const capture = photoCapture({ at: isoLocal(new Date()), sensorDeg: headingDeg, accuracy: headingAccuracy, headingRef, exif });
     setCamera(null);
     if (target.kind === 'record') {
       const index = shots.length;
       setShots((s) => [...s, uri]);
       setShotHeadings((h) => [...h, initial]);
+      setShotCaptures((c) => [...c, capture]);
       openHeading(recordSpot(), initial, guidesOf(snappedId), (deg) => {
         setShotHeadings((h) => h.map((x, i) => (i === index ? deg : x)));
         notify(`사진 ${index + 1} 방향을 ${deg}°로 정했습니다.`);
@@ -364,7 +375,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     const node = state.nodes[target.nodeId];
     if (!node) return;
     openHeading(node.coord, initial, guidesOf(node.id), (deg) => {
-      const done = session.annotate(node.id, { access: node.props, photos: 1, photoHeadings: [deg] }, isoLocal(new Date()));
+      const done = session.annotate(node.id, { access: node.props, photos: 1, photoHeadings: [deg], photoCaptures: [capture] }, isoLocal(new Date()));
       if ('error' in done) return notify(done.error, 'error');
       void Promise.all(done.paths.map((path) => store.importFile(uri, `${SURVEY_DIR}/${path}`)))
         .catch((err: Error) => notify(`사진을 저장하지 못했습니다. ${err.message}`, 'error'));
@@ -509,7 +520,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
       const sill = planEdgeEdits(state, sillEdges(node.id), { stepFree: answer.stepFree });
       if (!('error' in sill)) extra = sill;
     }
-    const done = session.annotate(node.id, { access: answer.access, note: answer.note, photos: shots.length, photoHeadings: shotHeadings, ...(extra ? { extra } : {}) }, isoLocal(new Date()));
+    const done = session.annotate(node.id, { access: answer.access, note: answer.note, photos: shots.length, photoHeadings: shotHeadings, photoCaptures: shotCaptures, ...(extra ? { extra } : {}) }, isoLocal(new Date()));
     if ('error' in done) return notify(done.error, 'error');
     void Promise.all(done.paths.map((path, i) => store.importFile(shots[i]!, `${SURVEY_DIR}/${path}`)))
       .catch((err: Error) => notify(`사진을 저장하지 못했습니다. ${err.message}`, 'error'));
@@ -1317,7 +1328,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
             setCamera(null);
             notify(message, 'error');
           }}
-          onCapture={(uri) => picked(uri, camera)}
+          onCapture={(uri, info) => picked(uri, camera, info)}
         />
       )}
     </View>

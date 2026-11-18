@@ -10,9 +10,10 @@ import { NEED_FLOOR, nextRefAfter, planDoor } from '../model/doors.ts';
 import { planEscalator } from '../model/escalator.ts';
 import { nextSelection } from '../model/ops.ts';
 import type { PlanResult } from '../model/plan.ts';
+import { plazaLabel } from '../model/plaza.ts';
 import { levelStep, sameScope, scopeLabel, type Scope } from '../model/scope.ts';
 import { withSyncMirror } from '../model/sync.ts';
-import { planConnect, planIndoorNode, planOutdoorNode, planPortal } from '../model/tools.ts';
+import { planConnect, planIndoorNode, planOutdoorNode, planPortal, planPortalToPlaza } from '../model/tools.ts';
 import type { Tool } from '../ui/registry.ts';
 import { effectiveAddKind, stripStage, type StripState, type UiState } from '../ui/ui-state.ts';
 import type { Dialog } from './AppDialogs.tsx';
@@ -170,6 +171,37 @@ export function toolClicks(env: ToolEnv): Record<Tool, ToolClick | null> {
     if (stage === 'last') return setStrip((st) => ({ ...st, last: position }));
   };
 
+  /**
+   * 출입구 연결: the first click is the entrance, the second an outdoor point — or a plaza, whose nearest edge then gets the
+   * outdoor point (수선의 발) and the portal edge, so the door is on the walkable network at once.
+   */
+  const onPortal: ToolClick = ({ node, plaza }) => {
+    if (!ui.pickFrom) {
+      if (!node) return info('출입구 지점을 먼저 눌러 주세요.');
+      if (node.props.node_type !== 'entrance') return fail('출입구 연결은 건물 출입구에서 시작합니다. 출입구 지점을 먼저 골라 주세요.');
+      patchUi({ pickFrom: node.id });
+      return info(`${node.id}을(를) 골랐습니다. 이어질 바깥 지점이나 평지를 눌러 주세요.`);
+    }
+    const from = state.nodes[ui.pickFrom];
+    if (!from) return patchUi({ pickFrom: null });
+    if (node) {
+      if (node.props.building_id !== null) return info('이어질 바깥 지점을 눌러 주세요.');
+      const plan = planPortal(state, ctx, from.id, node.id);
+      patchUi({ pickFrom: null });
+      perform(plan);
+      return;
+    }
+    if (plaza) {
+      const plan = planPortalToPlaza(state, ctx, from.id, plaza.id);
+      if (perform(plan) === undefined) {
+        patchUi({ pickFrom: null });
+        info(`출입구를 ${plazaLabel(plaza)} 가장자리에 이었습니다. 가장 가까운 점에 바깥 지점을 만들어 출입구 구간으로 연결했습니다.`);
+      }
+      return;
+    }
+    return info('이어질 바깥 지점이나 평지를 눌러 주세요. 평지 안쪽을 누르면 가장 가까운 가장자리로 자동 연결합니다.');
+  };
+
   return {
     select: onSelect,
     'select-building': onSelectBuilding,
@@ -182,7 +214,7 @@ export function toolClicks(env: ToolEnv): Record<Tool, ToolClick | null> {
     'add-node': onAddNode,
     // An edge between two points linked to other floors is made on those floors too (sync.ts).
     connect: pickPair((a, b) => withSyncMirror(state, ctx, planConnect(state, ctx, a, b)), '이을 다른 지점을 눌러 주세요.'),
-    portal: pickPair((a, b) => planPortal(state, ctx, a, b), '이어질 바깥 지점을 눌러 주세요(흐리게 보이는 바깥 지점).'),
+    portal: onPortal,
     bridge: onCross('bridge'),
     restroom: onRestroom,
     elevator: onElevator,

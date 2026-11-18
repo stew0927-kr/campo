@@ -9,6 +9,7 @@ import { edgeCoords, scopeOfNode, type EditBuilding, type EditEdge, type EditNod
 import { plazaAt } from '../model/plaza.ts';
 import type { DragResult, DropTarget, HandleDrag, NodeDrag } from '../model/drag.ts';
 import type { Preview } from '../model/doors.ts';
+import type { PlazaEdgePick } from '../model/plazaMerge.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import type { OutdoorKind, PathVertex } from '../model/tools.ts';
@@ -21,9 +22,11 @@ import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
   BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, PLAZA_COLORS, OUTLINE_LAYERS, OUTLINE_SOURCE,
+  PLAZA_EDIT_LAYERS, PLAZA_EDIT_SOURCE, PLAZA_MERGE_LAYERS, PLAZA_MERGE_SOURCE,
   PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
   dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, curvePreviewGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
-  type BreaklineShape, type OutlineHover, type RouteLine,
+  plazaEditGeoJSON, plazaMergeGeoJSON,
+  type BreaklineShape, type OutlineHover, type PlazaHover, type PlazaMergeSide, type RouteLine,
 } from './layers.ts';
 import { WebMercatorViewport, type Layer } from '@deck.gl/core';
 import { PathLayer } from '@deck.gl/layers';
@@ -43,6 +46,8 @@ const DROP_PX = 8;
 /** 외곽선 수정: a press this close to a corner takes it; a right-click this close to a side adds a corner there. */
 const CORNER_PX = 10;
 const SIDE_PX = 8;
+/** A new outdoor point or a dragged one this close to a plaza's edge (outer ring or hole) is put on that edge (마그넷). */
+const PLAZA_SNAP_PX = 6;
 /** 고도 단절선 being edited: the pointer within this many pixels of it shows (and a click sets) the low side under it. */
 const BAND_PX = 80;
 /** The tools in which a click on a drawn 고도 단절선 selects it, and its points and sides can be edited. */
@@ -79,6 +84,32 @@ export interface OutlineEditView {
   onInsert: (side: number, at: Position) => void;
   /** A corner was right-clicked. */
   onRemove: (index: number) => void;
+}
+
+/** 평지 모양 수정 on the map: the rings being edited (open: corners only, ring 0 = outer, 1+ = holes) and what the map does. */
+export interface PlazaEditView {
+  rings: readonly (readonly Position[])[];
+  /** A corner was dragged and let go here. */
+  onMove: (ring: number, index: number, to: Position) => void;
+  /** A side was right-clicked: a corner at the foot on it. */
+  onInsert: (ring: number, side: number, at: Position) => void;
+  /** A corner was right-clicked. */
+  onRemove: (ring: number, index: number) => void;
+}
+
+/** A side of some plaza under the pointer: which plaza, which ring and which side of it. */
+export interface PlazaSideHit {
+  plazaId: string;
+  ring: number;
+  segment: number;
+  /** The nearest point on that side. */
+  at: Position;
+}
+
+/** 평지 합치기 on the map: the sides picked so far and what a click does (a side, or null when none is near). */
+export interface PlazaMergeView {
+  picks: readonly PlazaEdgePick[];
+  onClick: (hit: PlazaSideHit | null) => void;
 }
 
 export interface MapClick {
@@ -155,6 +186,14 @@ interface Props {
   onDragEnd: (result: DragResult | null) => void;
   /** 외곽선 수정 is on: corners drag, right-clicks add and remove corners, and nothing else on the map reacts. */
   outline: OutlineEditView | null;
+  /** 평지 모양 수정 is on: outer-ring and hole corners drag, right-clicks add and remove them, nothing else reacts. */
+  plazaEdit: PlazaEditView | null;
+  /** 평지 합치기 is on: clicks pick the two sides to join (nothing else reacts). */
+  plazaMerge: PlazaMergeView | null;
+  /** A new outdoor point or a dragged point snaps onto a plaza's edge (마그넷) within a few pixels; Alt never snaps. */
+  snapPlaza: boolean;
+  /** A click may pick a plaza even while a building floor is shown (the second click of 출입구 연결). */
+  plazaPick: boolean;
   /** 건물 3D or 지형 3D is on: the map tilts. */
   tilt: boolean;
   /** What deck.gl draws over the map (map/deck3d.ts); nothing of it takes a click. */
@@ -239,6 +278,38 @@ export function MapView(props: Props) {
   const pushOutline = (corners?: readonly Position[]) => whenReady((map) => {
     const o = latest.current.outline;
     (map.getSource(OUTLINE_SOURCE) as GeoJSONSource).setData(outlineGeoJSON(corners ?? o?.corners ?? [], o?.holes ?? [], o ? outlineHover.current : null, outlineDrag.current?.index ?? null));
+  });
+  /** 평지 모양 수정: the corner or side under the pointer, and the rings while a corner is being dragged. */
+  const plazaHover = useRef<PlazaHover>(null);
+  const plazaDrag = useRef<{ ring: number; index: number; rings: Position[][] } | null>(null);
+  const pushPlazaEdit = (rings?: readonly (readonly Position[])[]) => whenReady((map) => {
+    const p = latest.current.plazaEdit;
+    const drag = plazaDrag.current;
+    const shown = rings ?? drag?.rings ?? p?.rings ?? [];
+    (map.getSource(PLAZA_EDIT_SOURCE) as GeoJSONSource | undefined)?.setData(plazaEditGeoJSON(shown, p ? plazaHover.current : null, drag));
+  });
+  /** 평지 합치기: the side under the pointer, and the sides already picked (drawn on the map). */
+  const mergeHover = useRef<PlazaSideHit | null>(null);
+  const pushPlazaMerge = () => whenReady((map) => {
+    const m = latest.current.plazaMerge;
+    const state = latest.current.state;
+    const sides: PlazaMergeSide[] = [];
+    const sideOf = (plazaId: string, ring: number, segment: number): [Position, Position] | null => {
+      const corners = state.plazas[plazaId]?.polygon[ring];
+      const a = corners?.[segment];
+      const b = corners?.[segment + 1];
+      return a && b ? [a, b] : null;
+    };
+    for (const pick of m?.picks ?? []) {
+      const coordinates = sideOf(pick.plazaId, pick.ring, pick.segment);
+      if (coordinates) sides.push({ coordinates, picked: true, hover: false });
+    }
+    const hover = mergeHover.current;
+    if (hover) {
+      const coordinates = sideOf(hover.plazaId, hover.ring, hover.segment);
+      if (coordinates) sides.push({ coordinates, picked: false, hover: true });
+    }
+    (map.getSource(PLAZA_MERGE_SOURCE) as GeoJSONSource | undefined)?.setData(plazaMergeGeoJSON(sides));
   });
 
   useEffect(() => {
@@ -395,6 +466,79 @@ export function MapView(props: Props) {
       map.getCanvas().style.cursor = !latest.current.outline ? '' : h?.kind === 'corner' ? (outlineDrag.current ? 'grabbing' : 'grab') : h?.kind === 'side' ? 'copy' : '';
     };
 
+    // ---- 평지 모양 수정: the corner (first) or the side under a screen point, on any ring (outer ring or hole) ----
+    /** The plaza corner or side under a screen point, with the ring it is on. */
+    const plazaHit = (point: ScreenPoint): { ring: number; kind: 'corner' | 'side'; index: number; foot: ScreenPoint } | null => {
+      const p = latest.current.plazaEdit;
+      if (!p) return null;
+      let best: { ring: number; kind: 'corner' | 'side'; index: number; foot: ScreenPoint } | null = null;
+      let bestD = CORNER_PX;
+      p.rings.forEach((corners, ring) => {
+        corners.forEach((c, i) => {
+          const pt = toScreen(c);
+          const d = Math.hypot(pt.x - point.x, pt.y - point.y);
+          if (d <= bestD) {
+            bestD = d;
+            best = { ring, kind: 'corner', index: i, foot: pt };
+          }
+        });
+      });
+      if (best) return best;
+      bestD = SIDE_PX;
+      p.rings.forEach((corners, ring) => {
+        corners.forEach((c, i) => {
+          const f = footOnSegment(point, toScreen(c), toScreen(corners[(i + 1) % corners.length]!));
+          if (f.dist <= bestD) {
+            bestD = f.dist;
+            best = { ring, kind: 'side', index: i, foot: f.point };
+          }
+        });
+      });
+      return best;
+    };
+    const plazaCursor = (h: PlazaHover) => {
+      map.getCanvas().style.cursor = !latest.current.plazaEdit ? '' : h?.kind === 'corner' ? (plazaDrag.current ? 'grabbing' : 'grab') : h?.kind === 'side' ? 'copy' : '';
+    };
+
+    // ---- 평지 합치기: the plaza side under a screen point (nearest over every plaza) ----
+    const plazaSideAt = (point: ScreenPoint): PlazaSideHit | null => {
+      const st = latest.current.state;
+      let best: PlazaSideHit | null = null;
+      let bestD = PICK_PX;
+      for (const p of Object.values(st.plazas)) {
+        p.polygon.forEach((ring, r) => {
+          for (let i = 0; i + 1 < ring.length; i++) {
+            const f = footOnSegment(point, toScreen(ring[i]!), toScreen(ring[i + 1]!));
+            if (f.dist <= bestD) {
+              bestD = f.dist;
+              best = { plazaId: p.id, ring: r, segment: i, at: toMap(f.point) };
+            }
+          }
+        });
+      }
+      return best;
+    };
+
+    // ---- 평지 가장자리 마그넷: a point this close to a plaza edge (outer ring or hole) is put on that edge ----
+    const plazaSnapAt = (point: ScreenPoint): { coord: Position; ring: Position } | null => {
+      const st = latest.current.state;
+      let best: { coord: Position; ring: Position } | null = null;
+      let bestD = PLAZA_SNAP_PX;
+      for (const p of Object.values(st.plazas)) {
+        for (const corners of p.polygon) {
+          for (let i = 0; i + 1 < corners.length; i++) {
+            const f = footOnSegment(point, toScreen(corners[i]!), toScreen(corners[i + 1]!));
+            if (f.dist <= bestD) {
+              bestD = f.dist;
+              const coord = toMap(f.point);
+              best = { coord, ring: coord };
+            }
+          }
+        }
+      }
+      return best;
+    };
+
     // ---- 고도 단절선: drawn lines under a screen point ----
     const drawnLine = (id: string | null) => (id === null ? undefined : latest.current.breaklines.find((b) => b.kind === 'drawn' && b.id === id));
     /** The point (first) or the segment of `line` under a screen point, with the foot on the segment. */
@@ -504,8 +648,16 @@ export function MapView(props: Props) {
     };
     map.on('click', (e) => {
       if (latest.current.outline) return; // 외곽선 수정 works with drags and right-clicks only
+      if (latest.current.plazaEdit) return; // 평지 모양 수정 too
+      if (latest.current.plazaMerge) {
+        // 평지 합치기: the side under the click (a miss is reported so the status line can say how to pick).
+        return latest.current.plazaMerge.onClick(plazaSideAt(e.point));
+      }
       if (curvePen()) return addCurvePoint(e.point);
-      const at: Position = toMap(e.point);
+      const clicked = toMap(e.point);
+      // 지점 마그넷: a new outdoor point near a plaza edge goes exactly onto it (Alt: where it was clicked).
+      const snap = latest.current.snapPlaza && !e.originalEvent.altKey ? plazaSnapAt(e.point) : null;
+      const at: Position = snap ? snap.coord : clicked;
       const { tool, breaklineEdit: be } = latest.current;
       const drawTool = DRAW_MODE[tool] !== undefined && !curvePen();
       if (drawTool && drawingAtPress) return; // Terra Draw is adding a point to the shape being drawn
@@ -531,7 +683,7 @@ export function MapView(props: Props) {
       if (tool === 'path' && !pathScope.current) pathScope.current = autoScope(at);
       if (drawTool) return; // Terra Draw owns clicks while drawing
       const { node, edge, building } = picked ?? pickAt(e.point, latest.current.canPick, true);
-      const plaza = !node && !edge && !building && latest.current.scope.kind === 'outdoor' ? plazaAt(latest.current.state, at) : undefined;
+      const plaza = !node && !edge && !building && (latest.current.scope.kind === 'outdoor' || latest.current.plazaPick) ? plazaAt(latest.current.state, at) : undefined;
       latest.current.onMapClick({ position: at, node, edge, building, ...(plaza ? { plaza } : {}), shift: e.originalEvent.shiftKey, scope: autoScope(at) });
     });
     // 곡선: a double click ends the curve (and must not zoom the map).
@@ -550,10 +702,17 @@ export function MapView(props: Props) {
         else if (h?.kind === 'side') o.onInsert(h.index, toMap(h.foot));
         return;
       }
+      const pe = latest.current.plazaEdit;
+      if (pe) {
+        const h = plazaHit(e.point);
+        if (h?.kind === 'corner') pe.onRemove(h.ring, h.index);
+        else if (h?.kind === 'side') pe.onInsert(h.ring, h.index, toMap(h.foot));
+        return;
+      }
       // A drawing tool keeps the right button to itself only while a shape is being drawn.
       if (DRAW_MODE[latest.current.tool] && (curvePen() ? curve.current !== null : drawingNow())) return;
       const { node, edge, building } = pickAt(e.point, (n) => nodeStrong(n, latest.current.scope), true);
-      const plaza = !node && !edge && !building && latest.current.scope.kind === 'outdoor' ? plazaAt(latest.current.state, toMap(e.point)) : undefined;
+      const plaza = !node && !edge && !building && (latest.current.scope.kind === 'outdoor' || latest.current.plazaPick) ? plazaAt(latest.current.state, toMap(e.point)) : undefined;
       let breakline: BreaklineHit | undefined;
       if (!node) {
         const sel = drawnLine(latest.current.breaklineEdit.selected);
@@ -633,6 +792,11 @@ export function MapView(props: Props) {
         const foot = toMap(best.foot);
         return { coord: foot, target: { kind: 'edge', id: best.id }, ring: foot };
       }
+      // 지점 마그넷: an outdoor point let go near a plaza edge is put on that edge (nothing to merge or split).
+      if (latest.current.snapPlaza && scopeId === 'outdoor') {
+        const snap = plazaSnapAt(point);
+        if (snap) return { coord: snap.coord, target: null, ring: snap.ring };
+      }
       return free;
     };
 
@@ -700,6 +864,18 @@ export function MapView(props: Props) {
         }
         return;
       }
+      const pe = latest.current.plazaEdit;
+      if (pe) {
+        const h = e.originalEvent.button === 0 ? plazaHit(e.point) : null;
+        if (h?.kind === 'corner') {
+          e.preventDefault(); // the map must not pan while a plaza corner is pulled
+          plazaDrag.current = { ring: h.ring, index: h.index, rings: pe.rings.map((ring) => ring.map((p): Position => [p[0], p[1]])) };
+          map.getContainer().setAttribute('data-dragging', 'true');
+          plazaCursor(h);
+        }
+        return;
+      }
+      if (latest.current.plazaMerge && e.originalEvent.button === 0) return; // a click picks a side; the map must not pan
       if (e.originalEvent.button === 0 && LINE_EDIT_TOOLS.has(latest.current.tool)) {
         const sel = drawnLine(latest.current.breaklineEdit.selected);
         const h = sel ? lineHit(sel, e.point) : null;
@@ -752,6 +928,33 @@ export function MapView(props: Props) {
       if (od) {
         od.corners[od.index] = toMap(e.point);
         pushOutline(od.corners);
+        return;
+      }
+      const pd = plazaDrag.current;
+      if (pd) {
+        pd.rings[pd.ring]![pd.index] = toMap(e.point);
+        pushPlazaEdit(pd.rings);
+        return;
+      }
+      if (latest.current.plazaEdit) {
+        const h = plazaHit(e.point);
+        const next: PlazaHover = h ? { ring: h.ring, kind: h.kind, index: h.index } : null;
+        const was = plazaHover.current;
+        if (was?.kind !== next?.kind || was?.index !== next?.index || was?.ring !== next?.ring) {
+          plazaHover.current = next;
+          pushPlazaEdit();
+          plazaCursor(next);
+        }
+        return;
+      }
+      if (latest.current.plazaMerge) {
+        const hit = plazaSideAt(e.point);
+        const was = mergeHover.current;
+        if (was?.plazaId !== hit?.plazaId || was?.ring !== hit?.ring || was?.segment !== hit?.segment) {
+          mergeHover.current = hit;
+          pushPlazaMerge();
+        }
+        map.getCanvas().style.cursor = hit ? 'pointer' : '';
         return;
       }
       if (latest.current.outline) {
@@ -812,6 +1015,14 @@ export function MapView(props: Props) {
         latest.current.outline?.onMove(od.index, toMap(e.point));
         return;
       }
+      const pd = plazaDrag.current;
+      if (pd) {
+        plazaDrag.current = null;
+        map.getContainer().removeAttribute('data-dragging');
+        plazaCursor(plazaHover.current);
+        latest.current.plazaEdit?.onMove(pd.ring, pd.index, toMap(e.point));
+        return;
+      }
       press = null;
       endBox(e);
       if (!drag) return;
@@ -837,6 +1048,12 @@ export function MapView(props: Props) {
         outlineDrag.current = null;
         map.getContainer().removeAttribute('data-dragging');
         pushOutline();
+      }
+      if (plazaDrag.current) {
+        // Let go outside the map: the plaza corner goes back.
+        plazaDrag.current = null;
+        map.getContainer().removeAttribute('data-dragging');
+        pushPlazaEdit();
       }
       press = null;
       if (box) {
@@ -896,6 +1113,12 @@ export function MapView(props: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (lineDrag) endLineDrag(false);
+        if (plazaDrag.current) {
+          // The plaza corner goes back where it was.
+          plazaDrag.current = null;
+          map.getContainer().removeAttribute('data-dragging');
+          pushPlazaEdit();
+        }
         cancelDrag();
         pathScope.current = null;
         cancelCurve.current();
@@ -930,6 +1153,8 @@ export function MapView(props: Props) {
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
       map.addSource(ELEVATION_SOURCE, { type: 'geojson', data: elevationGeoJSON(latest.current.breaklines, latest.current.slopes, { selected: latest.current.breaklineEdit.selected, ...lineView.current }) });
       map.addSource(OUTLINE_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addSource(PLAZA_EDIT_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addSource(PLAZA_MERGE_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       registerPictograms(map);
       registerBreaklineTooth(map);
       registerBeltIcons(map);
@@ -944,6 +1169,8 @@ export function MapView(props: Props) {
       for (const layer of PREVIEW_LAYERS) map.addLayer(layer);
       for (const layer of DRAG_LAYERS) map.addLayer(layer);
       for (const layer of OUTLINE_LAYERS) map.addLayer(layer);
+      for (const layer of PLAZA_EDIT_LAYERS) map.addLayer(layer);
+      for (const layer of PLAZA_MERGE_LAYERS) map.addLayer(layer);
 
       // Terra Draw reads positions through its adapter: with 지형 3D on, the shape is drawn on the relief under the cursor.
       class SurfaceAdapter extends TerraDrawMapLibreGLAdapter<MapLibreMap> {
@@ -1148,6 +1375,24 @@ export function MapView(props: Props) {
     }
     pushOutline();
   }, [props.outline]);
+
+  // 평지 모양 수정: the plaza's rings as they are now (after a move, an added or removed corner, 되돌리기); off clears it.
+  useEffect(() => {
+    if (!props.plazaEdit) {
+      plazaHover.current = null;
+      plazaDrag.current = null;
+      whenReady((map) => {
+        map.getCanvas().style.cursor = '';
+      });
+    }
+    pushPlazaEdit();
+  }, [props.plazaEdit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 평지 합치기: the sides picked so far (and none left when the mode ends).
+  useEffect(() => {
+    if (!props.plazaMerge) mergeHover.current = null;
+    pushPlazaMerge();
+  }, [props.plazaMerge]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     whenReady(() => drawRef.current?.setModeStyles('linestring', lineStyles(tool === 'breakline' ? ELEVATION_COLORS.breakline : KIND_COLOR[outdoorKind])));

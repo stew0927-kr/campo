@@ -53,6 +53,8 @@ export { addPlaza, overlappingPlaza, type NewPlaza } from './actions/addPlaza.ts
 export { addPlazaHole } from './actions/addPlazaHole.ts';
 export { removePlazaHole } from './actions/removePlazaHole.ts';
 export { deletePlazas } from './actions/deletePlazas.ts';
+export { mergePlazas, mergedPlazaPolygon, overlappingOtherPlaza, type PlazaMergeEdges } from './actions/mergePlazas.ts';
+export { setPlazaOutline } from './actions/setPlazaOutline.ts';
 export { applyChangeset } from './actions/applyChangeset.ts';
 export * from './macros/index.ts';
 export * from './overrides.ts';

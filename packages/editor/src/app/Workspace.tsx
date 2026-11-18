@@ -19,6 +19,10 @@ import { featureCenter, featureScope } from '../model/locate.ts';
 import { makeObservation, type MeasureForm, type MeasureTarget } from '../model/measure.ts';
 import { menuFields, planMenuEdit, selectionSummary, type MenuEdits } from '../model/menu.ts';
 import { planDeletePlaza, planPlaza, planPlazaEdit, planRemovePlazaHole, plazaDraftMessage, plazaLabel, type PlazaEdits } from '../model/plaza.ts';
+import {
+  draftProblem, movePlazaCorner, insertPlazaCorner, planPlazaShape, redoPlazaEdit, removePlazaCorner, startPlazaEdit, undoPlazaEdit, type PlazaEditDraft,
+} from '../model/plazaEdit.ts';
+import { edgePickLabel, planMergePlazas, type PlazaEdgePick } from '../model/plazaMerge.ts';
 import { buildingAt } from '../model/building.ts';
 import { breaklinePositions, insertBreaklinePoint, moveBreaklinePoint, planElevationFlag, removeBreaklinePoint, sideLabel } from '../model/elevation.ts';
 import { fetchOsmBuilding, osmCode, planOsmBuilding } from '../model/osm.ts';
@@ -42,6 +46,7 @@ import { CrossPicker } from '../ui/CrossPicker.tsx';
 import { FloorPicker } from '../ui/FloorPicker.tsx';
 import { HistoryButtons } from '../ui/HistoryButtons.tsx';
 import { OutlineForm } from '../ui/OutlineForm.tsx';
+import { PlazaEditForm, PlazaMergeForm } from '../ui/PlazaForms.tsx';
 import { View3DButton } from '../ui/View3DButton.tsx';
 import { TerrainButton } from '../ui/TerrainButton.tsx';
 import { measuredFloorLevels, plinthFloors } from '@campo/core';
@@ -61,7 +66,7 @@ import { StripForm } from '../ui/StripForm.tsx';
 import { SurveyNotes } from '../ui/SurveyNotes.tsx';
 import { Toolbar, type OperationState } from '../ui/Toolbar.tsx';
 import { TOOL_OPTIONS } from '../ui/ToolOptions.tsx';
-import { followBuildingRename, initialStrip, initialUi, reconcileUi, stripStage, type StripState, type UiState } from '../ui/ui-state.ts';
+import { effectiveAddKind, followBuildingRename, initialStrip, initialUi, reconcileUi, stripStage, type StripState, type UiState } from '../ui/ui-state.ts';
 import { AppDialogs, type Dialog } from './AppDialogs.tsx';
 import { commitSave, prepareSave } from './persist.ts';
 import { toolClicks } from './toolClicks.ts';
@@ -72,7 +77,7 @@ import { useShortcuts, type KeyBinding } from './useShortcuts.ts';
 import {
   insertDraftCorner, moveDraftCorner, planOutline, planResetOutline, redoDraft, removeDraftCorner, startOutline, undoDraft, type OutlineDraft,
 } from '../model/outlineEdit.ts';
-import type { BreaklineEditView, BreaklineHit, OutlineEditView } from '../map/MapView.tsx';
+import type { BreaklineEditView, BreaklineHit, OutlineEditView, PlazaEditView, PlazaMergeView, PlazaSideHit } from '../map/MapView.tsx';
 import type { BreakLineSide } from '@campo/core/elevation';
 
 type Notice = { text: string; tone: 'info' | 'warn' | 'error' } | null;
@@ -119,6 +124,10 @@ export function Workspace({ session }: { session: Session }) {
   const [helpOpen, setHelpOpen] = useState(false);
   /** 외곽선 수정: the outline being edited (one history entry on 완료). */
   const [outline, setOutline] = useState<OutlineDraft | null>(null);
+  /** 평지 모양 수정: the plaza rings being edited (one history entry on 완료). */
+  const [plazaDraft, setPlazaDraft] = useState<PlazaEditDraft | null>(null);
+  /** 평지 합치기: the first side picked (null: still waiting for it); the mode ends when the merge runs or is cancelled. */
+  const [plazaMerge, setPlazaMerge] = useState<{ first: PlazaEdgePick | null } | null>(null);
   /** 3D 보기: the map tilted with every building's floors stacked by height. */
   const [view3d, setView3d] = useState(false);
   /** 지형 3D: on or off (independent of 건물 3D), and the grid once it has been asked for (null: none; undefined: not yet). */
@@ -299,6 +308,10 @@ export function Workspace({ session }: { session: Session }) {
       setOutline((d) => d && (dir === 'undo' ? undoDraft(d) : redoDraft(d)));
       return;
     }
+    if (plazaDraft) {
+      setPlazaDraft((d) => d && (dir === 'undo' ? undoPlazaEdit(d) : redoPlazaEdit(d)));
+      return;
+    }
     history[dir]();
     lastProp.current = null;
     sync();
@@ -320,6 +333,9 @@ export function Workspace({ session }: { session: Session }) {
   /** Another tool: nothing stays selected (highlighted) from the one before, and the right-click menus close. */
   const setTool = (tool: Tool) => {
     if (tool === 'outline') return beginOutline();
+    // 평지 모양 수정 / 합치기 end when another tool is chosen.
+    if (plazaDraft) setPlazaDraft(null);
+    if (plazaMerge) setPlazaMerge(null);
     patchUi((u) => ({ tool, pickFrom: null, ...(tool !== u.tool ? { selection: [] } : dropImported()) }));
     if (tool !== ui.tool) {
       imported.current = null;
@@ -397,6 +413,90 @@ export function Workspace({ session }: { session: Session }) {
       else setOutline(next);
     },
   } : null), [outline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- 평지 모양 수정: 꼭짓점을 지도에서 고치는 draft; 완료가 한 번의 history 항목 ----
+
+  /** Start on a plaza (the selected one); its outer ring and its holes are edited on the map. */
+  const beginPlazaEdit = (plazaId: string) => {
+    const draft = startPlazaEdit(state, plazaId);
+    if ('error' in draft) return fail(draft.error);
+    setPlazaMerge(null);
+    setPlazaDraft(draft);
+    setOutline(null);
+    setLineSel(null);
+    setCtxMenu(null);
+    setLineMenu(null);
+    patchUi({ tool: 'select', pickFrom: null, selection: [], scope: { kind: 'outdoor' } });
+    setStrip(initialStrip);
+    setNotice({ text: `${plazaLabel(state.plazas[plazaId]!)} 모양을 고칩니다. 꼭짓점을 끌어 옮기고, 선 위 우클릭으로 더하고, 꼭짓점 우클릭으로 지웁니다.`, tone: 'info' });
+  };
+  const finishPlazaEdit = () => {
+    if (!plazaDraft) return;
+    if (plazaDraft.past.length === 0) {
+      setPlazaDraft(null);
+      return info('바뀐 것이 없어 모양 수정을 마쳤습니다.');
+    }
+    const problem = draftProblem(plazaDraft);
+    if (problem) return fail(problem);
+    if (perform(planPlazaShape(state, plazaDraft)) === undefined) {
+      setPlazaDraft(null);
+      info('평지 모양을 반영했습니다. 되돌리기 한 번으로 취소할 수 있습니다.');
+    }
+  };
+  const cancelPlazaEdit = () => {
+    setPlazaDraft(null);
+    info('평지 모양 수정을 취소했습니다. 고친 것은 반영하지 않았습니다.');
+  };
+  const plazaEditView = useMemo<PlazaEditView | null>(() => (plazaDraft ? {
+    rings: plazaDraft.rings,
+    onMove: (ring, index, to) => setPlazaDraft((d) => d && movePlazaCorner(d, ring, index, to)),
+    onInsert: (ring, side, at) => setPlazaDraft((d) => d && insertPlazaCorner(d, ring, side, at)),
+    onRemove: (ring, index) => {
+      const next = removePlazaCorner(plazaDraft, ring, index);
+      if ('error' in next) fail(next.error);
+      else setPlazaDraft(next);
+    },
+  } : null), [plazaDraft]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---- 평지 합치기: 두 평지에서 한 변씩 눌러 그 사이를 채워 하나로 합친다 ----
+
+  const beginPlazaMerge = () => {
+    setPlazaDraft(null);
+    setOutline(null);
+    setLineSel(null);
+    setCtxMenu(null);
+    setLineMenu(null);
+    setPlazaMerge({ first: null });
+    patchUi({ tool: 'select', pickFrom: null, selection: [], scope: { kind: 'outdoor' } });
+    setStrip(initialStrip);
+    setNotice({ text: '평지 합치기: 합칠 두 평지에서 한 변씩 눌러 주세요. 두 변 사이의 공간까지 채워 하나의 평지가 됩니다.', tone: 'info' });
+  };
+  const cancelPlazaMerge = () => {
+    setPlazaMerge(null);
+    info('평지 합치기를 그만두었습니다.');
+  };
+  /** A side was clicked: the first is remembered, the second merges the two plazas into the first one. */
+  const onMergeSide = (hit: PlazaSideHit | null) => {
+    if (!hit) return info('평지의 변을 눌러 주세요. 합칠 평지 테두리 가까이를 누르면 됩니다.');
+    const pick: PlazaEdgePick = { plazaId: hit.plazaId, ring: hit.ring, segment: hit.segment, at: hit.at };
+    const first = plazaMerge?.first ?? null;
+    if (!first) {
+      setPlazaMerge({ first: pick });
+      return info(`${edgePickLabel(state, pick)}을(를) 골랐습니다. 합칠 다른 평지의 변을 눌러 주세요.`);
+    }
+    if (first.plazaId === pick.plazaId) {
+      setPlazaMerge({ first: null });
+      return info('같은 평지의 변을 다시 눌러 골랐던 것을 취소했습니다. 다른 평지의 변을 눌러 주세요.');
+    }
+    if (perform(planMergePlazas(state, first, pick)) !== undefined) return;
+    setPlazaMerge(null);
+    patchUi({ selection: [first.plazaId], panelTab: 'properties' });
+    info('두 평지를 하나로 합쳤습니다. 되돌리기 한 번으로 취소할 수 있습니다.');
+  };
+  const plazaMergeView = useMemo<PlazaMergeView | null>(() => (plazaMerge ? {
+    picks: plazaMerge.first ? [plazaMerge.first] : [],
+    onClick: (hit) => onMergeSide(hit),
+  } : null), [plazaMerge, state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Jump to `scope` (from a list, not the floor picker). A tool that cannot be used there gives way to 선택. */
   const showScope = (scope: Scope, patch: Partial<UiState>) => setUi((u) => ({
@@ -756,6 +856,8 @@ export function Workspace({ session }: { session: Session }) {
   // ---- Keys (SPEC-v0.2 5.3). Tool and operation keys come from the registry; the rest belong to one tool or to the screen. ----
   const onEscape = () => {
     if (outline) cancelOutline();
+    else if (plazaDraft) cancelPlazaEdit();
+    else if (plazaMerge) cancelPlazaMerge();
     else if (copyPanel) setCopyPanel(null);
     else if (lineSel) selectLine(null);
     else if (ui.tool === 'strip' && strip.edgeIds.length > 0) setStrip(initialStrip);
@@ -774,7 +876,8 @@ export function Workspace({ session }: { session: Session }) {
     { key: 'delete', shift: false, when: lineSel !== null, run: () => lineSel && deleteLine(lineSel) },
     { key: 'backspace', shift: false, when: lineSel !== null, run: () => lineSel && deleteLine(lineSel) },
     { key: 'enter', mod: 'any', when: outline !== null, run: finishOutline },
-    { key: 'y', mod: true, when: outline !== null, run: () => stepHistory('redo') },
+    { key: 'enter', mod: 'any', when: plazaDraft !== null, run: finishPlazaEdit },
+    { key: 'y', mod: true, when: outline !== null || plazaDraft !== null, run: () => stepHistory('redo') },
     ...OPERATIONS.flatMap((o) => [o.key, o.aliasKey].flatMap((k): KeyBinding[] => (
       k ? [{ ...parseKey(k), when: !o.onSelection || selecting, run: () => runOperation(o.id) }] : []
     ))),
@@ -897,6 +1000,8 @@ export function Workspace({ session }: { session: Session }) {
             onEdit={(edits) => editPlaza(selectedPlaza.id, edits)}
             onRemoveHole={(index) => perform(planRemovePlazaHole(state, selectedPlaza.id, index))}
             onDelete={() => perform(planDeletePlaza(state, ctx, selectedPlaza.id))}
+            onEditShape={() => beginPlazaEdit(selectedPlaza.id)}
+            onMerge={beginPlazaMerge}
           />
         ) : (
           <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))} />
@@ -980,6 +1085,18 @@ export function Workspace({ session }: { session: Session }) {
             onCancel={cancelOutline}
             onDone={finishOutline}
           />
+        ) : plazaDraft ? (
+          <PlazaEditForm
+            draft={plazaDraft}
+            state={state}
+            problem={draftProblem(plazaDraft)}
+            onUndo={() => stepHistory('undo')}
+            onRedo={() => stepHistory('redo')}
+            onCancel={cancelPlazaEdit}
+            onDone={finishPlazaEdit}
+          />
+        ) : plazaMerge ? (
+          <PlazaMergeForm state={state} first={plazaMerge.first} onCancel={cancelPlazaMerge} />
         ) : inStrip ? (
           <StripForm
             strip={strip}
@@ -1037,6 +1154,10 @@ export function Workspace({ session }: { session: Session }) {
           }}
           onContextMenu={onContextMenu}
           outline={outlineView}
+          plazaEdit={plazaEditView}
+          plazaMerge={plazaMergeView}
+          snapPlaza={ui.tool === 'add-node' && (effectiveAddKind(ui) === 'outdoor' || effectiveAddKind(ui) === 'poi')}
+          plazaPick={ui.tool === 'portal' && ui.pickFrom !== null}
           tilt={view3d || terrain3d}
           deck={deck}
           surface={surface}

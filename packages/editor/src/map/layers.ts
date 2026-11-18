@@ -777,3 +777,98 @@ export const OUTLINE_LAYERS: LayerSpecification[] = [
     },
   },
 ];
+
+// ---- 평지 모양 수정: the plaza rings being edited (outer ring and holes), their sides and their corner handles ----
+
+export const PLAZA_EDIT_SOURCE = 'campo-plaza-edit';
+/** The colour of the shape being edited: the 평지 line colour, made darker so a draft does not look like saved data. */
+export const PLAZA_EDIT_COLOR = '#1f6f3f';
+
+/** What the pointer is over while a plaza is edited: a corner (drag, right-click deletes) or a side (right-click adds). */
+export type PlazaHover = { ring: number; kind: 'corner' | 'side'; index: number } | null;
+
+/** The plaza being edited as it would look: fill (holes cut out), sides, faint mid dots and corner handles. */
+export function plazaEditGeoJSON(rings: readonly (readonly Position[])[], hover: PlazaHover, dragging: { ring: number; index: number } | null): FeatureCollection {
+  const first = rings[0];
+  if (!first || first.length === 0) return { type: 'FeatureCollection', features: [] };
+  const features: FeatureCollection['features'] = [
+    { type: 'Feature', geometry: { type: 'Polygon', coordinates: rings.map((ring) => closeRing(ring)) }, properties: { role: 'fill' } },
+  ];
+  rings.forEach((corners, ring) => {
+    corners.forEach((a, i) => {
+      const b = corners[(i + 1) % corners.length]!;
+      const on = hover?.ring === ring && hover.kind === 'side' && hover.index === i;
+      features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: [a, b] }, properties: { role: 'side', ring, index: i, hover: on } });
+      features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] }, properties: { role: 'mid', ring, index: i, hover: on } });
+    });
+    corners.forEach((c, i) => {
+      const on = (dragging?.ring === ring && dragging.index === i) || (hover?.ring === ring && hover.kind === 'corner' && hover.index === i);
+      features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: { role: 'corner', ring, index: i, hover: on } });
+    });
+  });
+  return { type: 'FeatureCollection', features };
+}
+
+export const PLAZA_EDIT_LAYERS: LayerSpecification[] = [
+  { id: 'campo-plaza-edit-fill', type: 'fill', source: PLAZA_EDIT_SOURCE, filter: outlineRole('fill'), paint: { 'fill-color': PLAZA_EDIT_COLOR, 'fill-opacity': 0.14 } },
+  {
+    id: 'campo-plaza-edit-side-hover', type: 'line', source: PLAZA_EDIT_SOURCE, filter: ['all', outlineRole('side'), ['get', 'hover']],
+    layout: { 'line-cap': 'round' }, paint: { 'line-color': PLAZA_EDIT_COLOR, 'line-width': 9, 'line-opacity': 0.25 },
+  },
+  {
+    id: 'campo-plaza-edit-side', type: 'line', source: PLAZA_EDIT_SOURCE, filter: outlineRole('side'),
+    layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': PLAZA_EDIT_COLOR, 'line-width': 2.5 },
+  },
+  {
+    id: 'campo-plaza-edit-mid', type: 'circle', source: PLAZA_EDIT_SOURCE, filter: outlineRole('mid'),
+    paint: {
+      'circle-radius': ['case', ['get', 'hover'], 4.5, 3] as never,
+      'circle-color': '#ffffff', 'circle-stroke-color': PLAZA_EDIT_COLOR, 'circle-stroke-width': 1.5, 'circle-opacity': 0.9,
+    },
+  },
+  {
+    id: 'campo-plaza-edit-corner', type: 'circle', source: PLAZA_EDIT_SOURCE, filter: outlineRole('corner'),
+    paint: {
+      'circle-radius': ['case', ['get', 'hover'], 8, 6.5] as never,
+      'circle-color': ['case', ['get', 'hover'], PLAZA_EDIT_COLOR, '#ffffff'] as never,
+      'circle-stroke-color': ['case', ['get', 'hover'], '#ffffff', PLAZA_EDIT_COLOR] as never,
+      'circle-stroke-width': 2.5,
+    },
+  },
+];
+
+// ---- 평지 합치기: the sides picked (one on each plaza) and the side under the pointer ----
+
+export const PLAZA_MERGE_SOURCE = 'campo-plaza-merge';
+export const PLAZA_MERGE_COLOR = '#c2410c';
+
+/** 한 변: 그 변의 두 끝점, 이미 골랐는지, 지금 가리키는지. */
+export interface PlazaMergeSide {
+  coordinates: [Position, Position];
+  picked: boolean;
+  hover: boolean;
+}
+
+export function plazaMergeGeoJSON(sides: readonly PlazaMergeSide[]): FeatureCollection {
+  const features: FeatureCollection['features'] = [];
+  for (const s of sides) {
+    features.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: s.coordinates }, properties: { role: 'side', picked: s.picked, hover: s.hover } });
+    if (s.picked) for (const c of s.coordinates) features.push({ type: 'Feature', geometry: { type: 'Point', coordinates: c }, properties: { role: 'mark' } });
+  }
+  return { type: 'FeatureCollection', features };
+}
+
+export const PLAZA_MERGE_LAYERS: LayerSpecification[] = [
+  {
+    id: 'campo-plaza-merge-hover', type: 'line', source: PLAZA_MERGE_SOURCE, filter: ['all', outlineRole('side'), ['get', 'hover']],
+    layout: { 'line-cap': 'round' }, paint: { 'line-color': PLAZA_MERGE_COLOR, 'line-width': 10, 'line-opacity': 0.3 },
+  },
+  {
+    id: 'campo-plaza-merge-side', type: 'line', source: PLAZA_MERGE_SOURCE, filter: ['all', outlineRole('side'), ['get', 'picked']],
+    layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': PLAZA_MERGE_COLOR, 'line-width': 4 },
+  },
+  {
+    id: 'campo-plaza-merge-mark', type: 'circle', source: PLAZA_MERGE_SOURCE, filter: outlineRole('mark'),
+    paint: { 'circle-radius': 5, 'circle-color': PLAZA_MERGE_COLOR, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 },
+  },
+];

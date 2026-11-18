@@ -20,6 +20,7 @@
     "@turf/length": "7.4.0",
     "@turf/line-slice-along": "7.4.0",
     "@turf/nearest-point-on-line": "7.4.0",
+    "@turf/union": "7.4.0",
     "ajv": "8.20.0",
     "immer": "11.2.10",
     "ngraph.graph": "20.1.2",

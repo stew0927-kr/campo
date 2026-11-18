@@ -282,6 +282,7 @@
         "building_from": { "type": "string", "minLength": 1 },
         "building_to": { "type": "string", "minLength": 1 },
         "flat_exact": { "description": "footway / corridor checked on site to be level: the height solver holds the height difference at 0 (docs/ELEVATION_INTEGRATION.md).", "type": "boolean" },
+        "width_m": { "description": "Width of the way on the ground, metres. Missing: 2.0. The height solver flattens a corridor this wide across (docs/ELEVATION_INTEGRATION.md); the 3D view draws it this wide. Routing does not read it. 0.5 to 20 (E19).", "type": "number", "minimum": 0.5, "maximum": 20 },
         "is_breakline": { "description": "A terrain break (kerb, retaining wall, outdoor steps): height interpolation does not smooth across it. Missing: outdoor steps are one; false opts out.", "type": "boolean" },
         "elev_diff_m": { "description": "Derived by the elevation recompute: height of to minus height of from, metres.", "type": "number", "minimum": -200, "maximum": 200 },
         "elev_sigma_m": { "description": "Derived: standard deviation of elev_diff_m, metres.", "type": "number", "exclusiveMinimum": 0 },

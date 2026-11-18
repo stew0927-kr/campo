@@ -22,8 +22,10 @@ import {
 } from './types.ts';
 import { CALIBRATION_FILE, CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
 import { GRADE_CAUTION_MAX_PCT, isStepFreePassable } from './costs.ts';
+import { EDGE_WIDTH_MAX_M, EDGE_WIDTH_MIN_M, isValidEdgeWidth } from './edgeWidth.ts';
 import { outlineProblem } from './outline.ts';
 import { plazaClusters, plazaHoleProblem, plazaRegionsOverlap, plazaRingProblem, plazaTouchesNetwork } from './plaza/geometry.ts';
+import { plazaJoins } from './plaza/joins.ts';
 
 /** Max distance (m) between an edge's line ends and its from/to nodes (§7 error 4). */
 export const ENDPOINT_TOLERANCE_M = 1;
@@ -128,6 +130,14 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
       allIds.add(id);
     }
     if (isValidFeature(feature)) valid.push({ file, feature });
+
+    // ---- E19. An edge's width_m is a number from 0.5 to 20 m. Checked on the raw feature, so a width the schema also
+    // rejects still gets this plain message (the schema error alone does not say which field or range).
+    const props = isRecord(feature) ? feature['properties'] : undefined;
+    if (isRecord(props) && props['kind'] === 'edge' && 'width_m' in props && !isValidEdgeWidth(props['width_m'])) {
+      error(file, id, E.edgeWidthInvalid,
+        `길 폭(width_m)은 ${EDGE_WIDTH_MIN_M} m 이상 ${EDGE_WIDTH_MAX_M} m 이하의 숫자여야 합니다. 지금 값: ${JSON.stringify(props['width_m'])}`);
+    }
   }
 
   const buildings = new Map<string, Located<BuildingFeature>>();
@@ -273,19 +283,35 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
   }
 
   // ---- Warnings ----
+  // A plaza joins the points on it and the ends of the outdoor ways crossing it, as routing does (plaza/joins.ts):
+  // all of them for W1 / W2, only through step-free ways for W4.
+  const joinsOf = (accept: (edge: EdgeFeature) => boolean): string[][] => (goodPlazas.length === 0 ? [] : plazaJoins(
+    goodPlazas.map(({ feature: p }) => ({ id: p.id, polygon: p.geometry.coordinates })),
+    [...nodes.values()].map(({ feature: n }) => ({ id: n.id, coord: n.geometry.coordinates, outdoor: n.properties.building_id === null })),
+    linked.filter(({ edge }) => edge.properties.edge_type !== 'indoor' && edge.properties.highway !== 'elevator' && accept(edge))
+      .map(({ edge }) => ({ from: edge.properties.from, to: edge.properties.to, line: edge.geometry.coordinates })),
+  ));
+  const plazaGroups = joinsOf(() => true);
   const neighbours = new Map<string, Set<string>>();
   for (const id of nodes.keys()) neighbours.set(id, new Set());
   for (const { from, to } of linked) {
     neighbours.get(from.id)!.add(to.id);
     neighbours.get(to.id)!.add(from.id);
   }
+  for (const group of plazaGroups) {
+    for (let i = 0; i + 1 < group.length; i++) {
+      neighbours.get(group[i]!)!.add(group[i + 1]!);
+      neighbours.get(group[i + 1]!)!.add(group[i]!);
+    }
+  }
 
-  // W1. Nodes not used by any edge
+  // W1. Nodes not used by any edge (a point a plaza joins to others is used: routes cross the plaza to it)
   const referenced = new Set<string>();
   for (const { feature: edge } of edges) {
     referenced.add(edge.properties.from);
     referenced.add(edge.properties.to);
   }
+  for (const group of plazaGroups) for (const id of group) referenced.add(id);
   for (const { file, feature: node } of nodes.values()) {
     if (!referenced.has(node.id)) warn(file, node.id, W.isolatedNode, '어떤 구간에도 연결되지 않은 지점입니다.');
   }
@@ -313,6 +339,10 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     if (!isStepFreePassable(edge.properties)) continue;
     stepFreeNext.get(edge.properties.from)!.push(edge.properties.to);
     if (edge.properties.bidirectional) stepFreeNext.get(edge.properties.to)!.push(edge.properties.from);
+  }
+  // A plaza is flat ground with no step: its points reach each other both ways.
+  for (const group of joinsOf((edge) => isStepFreePassable(edge.properties))) {
+    for (const a of group) for (const b of group) if (a !== b) stepFreeNext.get(a)!.push(b);
   }
   const pois = [...nodes.values()].filter(({ feature: n }) => n.properties.node_type === 'poi');
   const doors = [...nodes.values()].filter(({ feature: n }) => isClassroomDoor(n));

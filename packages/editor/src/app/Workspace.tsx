@@ -24,6 +24,7 @@ import {
 } from '../model/plazaEdit.ts';
 import { edgePickLabel, planMergePlazas, type PlazaEdgePick } from '../model/plazaMerge.ts';
 import { buildingAt } from '../model/building.ts';
+import { planEdgeWidth, widthTargets } from '../model/edgeWidth.ts';
 import { breaklinePositions, insertBreaklinePoint, moveBreaklinePoint, planElevationFlag, removeBreaklinePoint, sideLabel } from '../model/elevation.ts';
 import { fetchOsmBuilding, osmCode, planOsmBuilding } from '../model/osm.ts';
 import { embeddedOsmBuilding } from '../model/osmCampusData.ts';
@@ -954,6 +955,8 @@ export function Workspace({ session }: { session: Session }) {
   /** The first click of 연결통로 / 에스컬레이터 while its small window is open. */
   const crossFrom = toolDef(ui.tool).cross && ui.pickFrom ? state.nodes[ui.pickFrom] : undefined;
   const one = ui.selection.length === 1 ? propsOf(state, ui.selection[0]!) : undefined;
+  /** 길 폭: the selected outdoor edges (one or several), set together from the properties panel. */
+  const widthIds = widthTargets(state, ui.selection);
   const editProps = (edits: CommonEdits) => {
     if (!one) return;
     const patch = propsPatch(one.props, edits);
@@ -1007,7 +1010,14 @@ export function Workspace({ session }: { session: Session }) {
             onMerge={beginPlazaMerge}
           />
         ) : (
-          <PropertiesPanel feature={one} selectedCount={ui.selection.length} onEdit={editProps} onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))} />
+          <PropertiesPanel
+            feature={one}
+            selectedCount={ui.selection.length}
+            onEdit={editProps}
+            onFlag={(flag, on) => one && perform(planElevationFlag(state, one.id, flag, on))}
+            widthEdges={widthIds.map((id) => state.edges[id]!.props.width_m)}
+            onWidth={(width) => perform(planEdgeWidth(state, widthIds, width))}
+          />
         )}
         {one && <SurveyNotes notes={surveyNotes(surveys, one.id, state)} />}
         {measure && measureTarget && !selectedPlaza && (

@@ -104,7 +104,7 @@ function newNodeType(buildingId: string | null, highway: string): NodeType {
  * Split an edge in two at the foot of `coord` (SPEC-v0.2 4.1.1). The longer piece keeps the id with rev+1,
  * the other gets a new id at rev 1 (equal length: the from side keeps the id). Parallel edges are left alone.
  * Derived elevation values (elev_diff_m, elev_sigma_m, grade_pct) are dropped from both pieces: they belonged to the whole
- * edge, and the next elevation recompute writes them again. flat_exact and is_breakline are facts and stay on both.
+ * edge, and the next elevation recompute writes them again. flat_exact, is_breakline and width_m are facts and stay on both.
  */
 export function splitEdgeAt(edgeId: string, coord: Position, options: SplitOptions, ctx: EditContext): Action {
   const memo = idMemo();

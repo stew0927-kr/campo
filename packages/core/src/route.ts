@@ -2,10 +2,10 @@
 import { aStar, type PathFinder } from 'ngraph.path';
 import type { Graph, Link, Node, NodeId } from 'ngraph.graph';
 import { gradeClass, isEscalator, isProfile, isStepFreePassable, isStepFreeUnknown, perProfile, type GradeClass, type Profile } from './costs.ts';
-import { straight, type CampusGraph, type GraphLinkData, type GraphNodeData } from './graph.ts';
+import { straight, type CampusGraph, type GraphLinkData, type GraphNodeData, type PlazaCrossing } from './graph.ts';
 import { buildSteps, type Leg, type RouteStep } from './route-text.ts';
 import { computeStepBearings, type LngLat } from './route/bearing.ts';
-import type { NodeFeature } from './types.ts';
+import type { EdgeFeature, NodeFeature } from './types.ts';
 
 /** An edge on the route whose step_free is not known yet (step_free requests only). */
 export interface UncertainSegment {
@@ -62,6 +62,11 @@ export interface Route {
   /** Caution and steep slopes on the route, in order. Empty when no edge on it has a grade. */
   slopeSegments: SlopeSegment[];
   fallback: RouteFallback | null;
+  /**
+   * Only when the route crosses a plaza (평지) between two of its nodes (길 A → 평지 → 길 B), in order. Its walk is in
+   * distanceM, timeSec and cost; the crossing's fromNodeId / toNodeId are consecutive in `nodes`.
+   */
+  viaPlazas?: PlazaCrossing[];
 }
 
 export type NoRoute =
@@ -185,6 +190,24 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
   for (const node of path) {
     if (nodes[nodes.length - 1] !== node.data.nodeId) nodes.push(node.data.nodeId);
   }
+  const viaPlazas: PlazaCrossing[] = [];
+  /** An edge walked (`share` of it, a plaza crossing walks parts of edges) or ridden, from → to in travel direction. */
+  const onEdge = (edge: EdgeFeature, from: string, to: string, gradePct: number | null, walked: boolean) => {
+    edgeIds.push(edge.id);
+    const p = edge.properties;
+    if (walked) {
+      const cls = gradePct === null ? 'gentle' : gradeClass(gradePct);
+      if (gradePct !== null && cls !== 'gentle') {
+        slopeSegments.push({ edgeId: edge.id, from, to, gradePct: round1(gradePct), gradeClass: cls });
+      }
+    }
+    if (isEscalator(p)) escalatorCount++;
+    else if (p.highway === 'steps') stairsCount++;
+    else if (!isStepFreePassable(p)) barrierCount++;
+    if ((requested === 'step_free' || requested === 'wheelchair') && isStepFreeUnknown(p)) {
+      uncertainSegments.push({ edgeId: edge.id, from, to });
+    }
+  };
   for (let i = 0; i + 1 < path.length; i++) {
     const from = path[i]!;
     const to = path[i + 1]!;
@@ -193,23 +216,15 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
     legs.push(leg);
     cost += data.cost[used];
     timeSec += data.timeSec;
-    if (data.kind !== 'walk' && data.kind !== 'hop') continue;
-    const edge = data.edge.properties;
-    edgeIds.push(data.edge.id);
-    if (data.kind === 'walk') {
+    if (data.kind === 'plaza') {
       distanceM += data.lengthM;
-      const grade = data.gradePct;
-      const cls = grade === null ? 'gentle' : gradeClass(grade);
-      if (grade !== null && cls !== 'gentle') {
-        slopeSegments.push({ edgeId: data.edge.id, from: leg.from, to: leg.to, gradePct: round1(grade), gradeClass: cls });
-      }
+      viaPlazas.push(data.crossing());
+      for (const w of data.partials) if (w.share > 0) onEdge(w.edge, w.from, w.to, w.gradePct, true);
+      continue;
     }
-    if (isEscalator(edge)) escalatorCount++;
-    else if (edge.highway === 'steps') stairsCount++;
-    else if (!isStepFreePassable(edge)) barrierCount++;
-    if ((requested === 'step_free' || requested === 'wheelchair') && isStepFreeUnknown(edge)) {
-      uncertainSegments.push({ edgeId: data.edge.id, from: leg.from, to: leg.to });
-    }
+    if (data.kind !== 'walk' && data.kind !== 'hop') continue;
+    if (data.kind === 'walk') distanceM += data.lengthM;
+    onEdge(data.edge, leg.from, leg.to, data.kind === 'walk' ? data.gradePct : null, data.kind === 'walk');
   }
 
   return {
@@ -226,6 +241,7 @@ function toRoute(g: CampusGraph, path: Path, requested: Profile, used: Profile):
     uncertainSegments,
     slopeSegments,
     fallback: used === requested ? null : fallbackInfo(stairsCount, escalatorCount, barrierCount),
+    ...(viaPlazas.length > 0 ? { viaPlazas } : {}),
   };
 }
 

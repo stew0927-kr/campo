@@ -345,6 +345,7 @@ export function findRouteThrough(g: CampusGraph, ends: RouteEnd[], profile: Prof
     uncertainSegments: parts.flatMap((p) => p.uncertainSegments),
     slopeSegments: parts.flatMap((p) => p.slopeSegments),
     fallback: parts.find((p) => p.fallback !== null)?.fallback ?? null,
+    ...(parts.some((p) => p.viaPlazas) ? { viaPlazas: parts.flatMap((p) => p.viaPlazas ?? []) } : {}),
     startFoot: first.startFoot,
     endFoot: last.endFoot,
     ...(first.startPlaza ? { startPlaza: first.startPlaza } : {}),

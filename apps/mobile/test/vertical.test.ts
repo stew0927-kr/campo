@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { checkInvariants, createHistory, type EditState, type LoadedCampus, type Position } from '@campo/core';
 import { OUTDOOR, type Scope } from '../src/model/scope.ts';
 import { planEscalator, planFloorChange, type Plan, type PlanInput, type PlanOk } from '../src/survey/plans.ts';
-import { planElevatorPoint, planEscalatorPoint, planStairPoint, planStepCount, verticalInfo } from '../src/survey/vertical.ts';
+import { multiFloorChoices, planElevatorPoint, planEscalatorPoint, planMultiFloorLink, planStairPoint, planStepCount, verticalInfo, type MultiLink } from '../src/survey/vertical.ts';
 import { SOURCE, campusErrors, ctx, fixture } from './helpers.ts';
 
 let start: EditState;
@@ -137,6 +137,106 @@ describe('엘리베이터 지점', () => {
     expect(verticalInfo(after, stop.id)!.linked).toEqual(['1층', '2층', '3층']);
     // On a floor the shaft already stops at, the button finds that stop.
     expect(ok(planElevatorPoint(input(floor('bldg_A', 2), [127.0008, 37.0005], null))).featureId).toBe('n_A_elevA_L2');
+  });
+});
+
+describe('여러 층 한 번에 연결', () => {
+  const multi = (state: EditState, nodeId: string, levels: number[]) => planMultiFloorLink({ state, ctx: ctx(), source: SOURCE }, nodeId, levels);
+  const done = (r: ReturnType<typeof planMultiFloorLink>): MultiLink => {
+    if ('error' in r) throw new Error(r.error);
+    return r;
+  };
+  const perform = (state: EditState, link: MultiLink): EditState => {
+    expect(link.action.disabled(state)).toBe(false);
+    const after = createHistory(state).perform(link.action);
+    expect(checkInvariants(after)).toEqual([]);
+    expect(campusErrors(loaded, after)).toEqual([]);
+    return after;
+  };
+  const stepsEdges = (s: EditState) => Object.values(s.edges).filter((e) => e.props.highway === 'steps' && e.props.conveying === undefined);
+  const stairLanding = () => {
+    const placed = ok(planStairPoint(input(floor('bldg_A', 1), [127.00065, 37.0005], null)));
+    return { s1: run(placed), id: placed.featureId };
+  };
+
+  it('stairs: chains one flight per floor from the landing, in one action, and the flights stay countable apart', () => {
+    const { s1, id } = stairLanding();
+    const before = stepsEdges(s1).length;
+    const link = done(multi(s1, id, [2, 3, 4]));
+    expect(link.connected).toEqual([2, 3, 4]);
+    const s2 = perform(s1, link);
+    expect(stepsEdges(s2).length - before).toBe(3);
+    expect(verticalInfo(s2, id)).toMatchObject({ kind: 'stairs', linked: ['2층'] });
+    // the landing on the 3rd floor has a flight down and a flight up; each takes its own count (flightList is unchanged)
+    const mid = Object.values(s2.nodes).find((n) => n.props.node_type === 'stair_landing' && n.props.level === 3 && n.coord[0] === s2.nodes[id]!.coord[0])!;
+    const info = verticalInfo(s2, mid.id)!;
+    expect(info.flightList.map((f) => f.to).sort()).toEqual(['2층', '4층']);
+    const down = info.flightList.find((f) => f.to === '2층')!;
+    const up = info.flightList.find((f) => f.to === '4층')!;
+    const a = planStepCount(s2, [down.id], 17);
+    if ('error' in a) throw new Error(a.error);
+    const s3 = createHistory(s2).perform(a);
+    const b = planStepCount(s3, [up.id], 23);
+    if ('error' in b) throw new Error(b.error);
+    const s4 = createHistory(s3).perform(b);
+    const after = verticalInfo(s4, mid.id)!;
+    expect(after.flightList.find((f) => f.id === down.id)!.stepCount).toBe(17);
+    expect(after.flightList.find((f) => f.id === up.id)!.stepCount).toBe(23);
+  });
+
+  it('stairs: floors must run on without a gap, and the floor the landing is on is no target', () => {
+    const { s1, id } = stairLanding();
+    expect(multi(s1, id, [3])).toMatchObject({ error: expect.stringContaining('2층') });
+    expect(multi(s1, id, [])).toHaveProperty('error');
+    expect(multi(s1, id, [1])).toHaveProperty('error');
+    expect(multi(s1, id, [9])).toHaveProperty('error');
+    // the own floor is left out, a floor named twice counts once
+    const link = done(multi(s1, id, [1, 2, 2]));
+    expect(link.connected).toEqual([2]);
+    expect(stepsEdges(perform(s1, link)).length - stepsEdges(s1).length).toBe(1);
+  });
+
+  it('stairs: ticking floors that are already joined makes no second flight', () => {
+    const { s1, id } = stairLanding();
+    const s2 = perform(s1, done(multi(s1, id, [2, 3])));
+    expect(multi(s2, id, [2, 3])).toMatchObject({ error: expect.stringContaining('이미') });
+    const more = done(multi(s2, id, [2, 3, 4]));
+    expect(more.connected).toEqual([4]);
+    expect(more.skipped).toEqual([2, 3]);
+    const s3 = perform(s2, more);
+    expect(stepsEdges(s3).length - stepsEdges(s1).length).toBe(3);
+    const landings = Object.values(s3.nodes).filter((n) => n.props.node_type === 'stair_landing' && n.coord[0] === s3.nodes[id]!.coord[0] && n.coord[1] === s3.nodes[id]!.coord[1]);
+    expect(landings.map((n) => n.props.level).sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it('the checklist knows the floors of the building, the one the point is on, and the ones already joined', () => {
+    const { s1, id } = stairLanding();
+    expect(multiFloorChoices(s1, id)!.map((f) => [f.level, f.here, f.joined])).toEqual([[1, true, false], [2, false, false], [3, false, false], [4, false, false]]);
+    const s2 = perform(s1, done(multi(s1, id, [2])));
+    expect(multiFloorChoices(s2, id)!.filter((f) => f.joined).map((f) => f.level)).toEqual([2]);
+    expect(multiFloorChoices(s2, 'n_A_1_hall')).toBeNull();
+  });
+
+  it('elevator: one stop per ticked floor on the same shaft, joined to the stop it starts from, with no second stop where one is', () => {
+    const placed = ok(planElevatorPoint(input(floor('bldg_A', 1), [127.00065, 37.0005], null)));
+    const s1 = run(placed);
+    const shaft = s1.nodes[placed.featureId]!.props.elevator_id!;
+    const link = done(multi(s1, placed.featureId, [2, 4]));
+    expect(link.connected).toEqual([2, 4]);
+    const s2 = perform(s1, link);
+    const stops = () => Object.values(s2.nodes).filter((n) => n.props.node_type === 'elevator_stop' && n.props.elevator_id === shaft);
+    expect(stops().map((n) => n.props.level).sort()).toEqual([1, 2, 4]);
+    expect(verticalInfo(s2, placed.featureId)!.linked).toEqual(['2층', '4층']);
+    // 3층 is added later; 2층 and 4층 are not made again
+    const more = done(multi(s2, placed.featureId, [2, 3, 4]));
+    expect(more.connected).toEqual([3]);
+    expect(more.skipped).toEqual([2, 4]);
+    const s3 = perform(s2, more);
+    const all = Object.values(s3.nodes).filter((n) => n.props.node_type === 'elevator_stop' && n.props.elevator_id === shaft);
+    expect(all.map((n) => n.props.level).sort()).toEqual([1, 2, 3, 4]);
+    expect(multi(s3, placed.featureId, [2, 3, 4])).toMatchObject({ error: expect.stringContaining('이미') });
+    // a stop that is not a stair landing or an elevator stop is not for this
+    expect(multi(s3, 'n_A_1_hall', [2])).toHaveProperty('error');
   });
 });
 

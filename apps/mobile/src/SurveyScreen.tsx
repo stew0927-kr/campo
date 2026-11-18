@@ -34,7 +34,7 @@ import {
   selectionFloor, selectionSize, stillThere, timingStats, toggled, withBox, type Selection,
 } from './survey/selection.ts';
 import type { Readings, SurveySession } from './survey/session.ts';
-import { planElevatorPoint, planEscalatorPoint, planStairPoint, planStepCount, verticalInfo, type VerticalPointKind } from './survey/vertical.ts';
+import { multiFloorChoices, planElevatorPoint, planEscalatorPoint, planMultiFloorLink, planStairPoint, planStepCount, verticalInfo, type VerticalPointKind } from './survey/vertical.ts';
 import { isoLocal } from './time.ts';
 import { ActionDock, type DockAction, type DockMode } from './ui/ActionDock.tsx';
 import { CameraCapture } from './ui/CameraCapture.tsx';
@@ -707,6 +707,14 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     setSheet(kind === 'escalator' ? 'escalator' : 'floor');
     clearShots();
   };
+  /** [여러 층 한 번에 연결]: join the point to all the ticked floors in one history entry (no trip, no barometer: a survey of structure only). */
+  const linkManyFromPoint = (nodeId: string, levels: number[]): void => {
+    if (trip || escTrip) return notify('다른 층으로 이동하는 중입니다. 메뉴에서 먼저 도착을 기록하거나 이동을 취소해 주세요.', 'error');
+    const plan = planMultiFloorLink({ state, ctx: session.ctx, source: surveySource(session.startedAt) }, nodeId, levels);
+    if ('error' in plan) return notify(plan.error, 'error');
+    const skipped = plan.skipped.length > 0 ? ` (이미 이어진 ${plan.skipped.map(floorLabel).join(', ')}은 그대로 두었습니다.)` : '';
+    apply(plan.action, `${plan.connected.map(floorLabel).join(', ')}을(를) 한 번에 연결했습니다.${skipped}`);
+  };
   /** The point a trip starts from: its own spot and floor, and the point as the walk's anchor (no extra walk edge). */
   const tripStart = (): { coord: Position; scope: Scope; anchorId: string | null } => {
     const from = linkFrom !== null ? state.nodes[linkFrom.nodeId] : undefined;
@@ -721,6 +729,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   const timerEdge = (t: Extract<Tool, { kind: 'timer' }>): string =>
     t.edgeIds.find((id) => rideDirections(state, id).includes(t.direction)) ?? t.edgeIds[0]!;
   const infoVertical = infoNode ? verticalInfo(state, infoNode.id, escSpots) : null;
+  const floorsOfInfo = infoNode ? multiFloorChoices(state, infoNode.id) : null;
 
   // ---- the panel ----
 
@@ -1168,6 +1177,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
                 <VerticalSection
                   info={infoVertical}
                   onLink={() => linkFromPoint(infoNode.id, infoVertical.kind)}
+                  {...(floorsOfInfo ? { floors: floorsOfInfo, onLinkMany: (levels: number[]) => linkManyFromPoint(infoNode.id, levels) } : {})}
                   onTime={infoVertical.belts.length > 0 ? () => startTimer(infoVertical.belts, false) : null}
                   onStepCount={(flightId, count) => apply(planStepCount(state, [flightId], count), count === null ? '계단 칸 수를 지웠습니다.' : `계단 칸 수를 ${count}칸으로 저장했습니다.`)}
                 />

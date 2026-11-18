@@ -9,7 +9,11 @@ import { BottomSheet } from './BottomSheet.tsx';
 import { BigButton, Choice, FieldLabel } from './controls.tsx';
 import { compassWord } from './dial.ts';
 import { STEP_FREE_CHOICES, type StepFree } from './stepFree.ts';
+import { filterBuildings, initialExpanded, isExpanded, toggleExpanded } from './scopeList.ts';
 import { TOUCH, TOUCH_LARGE, color, font, radius, space } from './theme.ts';
+
+/** Rows of the building list are pressed while walking, so they are a little taller than TOUCH (44 dp). */
+const ROW_MIN = 44;
 
 // ---- shared ----
 
@@ -245,21 +249,76 @@ interface ScopeSheetProps {
 }
 
 export function ScopeSheet({ scope, buildings, onPick, onClose }: ScopeSheetProps) {
+  const [query, setQuery] = useState('');
+  // Only the building the surveyor is in starts open; each header then flips its own building.
+  const [expanded, setExpanded] = useState(() => initialExpanded(scope));
+  const shown = filterBuildings(buildings, query);
+  const searching = query.trim() !== '';
   return (
     <BottomSheet title="어디를 조사하나요?" onClose={onClose}>
       <BigButton tone={scope.kind === 'outdoor' ? 'primary' : 'plain'} label="바깥" onPress={() => onPick({ kind: 'outdoor' })} />
-      {buildings.length === 0 && <Text style={styles.note}>등록된 건물이 없습니다. 메뉴의 [건물 외곽선 가져오기]로 OSM 건물을 가져오거나 [외곽선 그리기]로 그려 주세요.</Text>}
-      {buildings.map((b) => (
-        <View key={b.id}>
-          <FieldLabel>{b.props.name}</FieldLabel>
-          <Choice
-            label={`${b.props.name} 층`}
-            value={scope.kind === 'building' && scope.buildingId === b.id ? scope.level : undefined}
-            onChange={(level) => onPick({ kind: 'building', buildingId: b.id, level })}
-            options={levelOptions(b.props.levels)}
+      {buildings.length > 0 && (
+        <View style={styles.search}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="건물 이름이나 코드로 찾기"
+            placeholderTextColor={color.inkSoft}
+            accessibilityLabel="건물 검색"
+            autoCorrect={false}
+            autoCapitalize="none"
+            returnKeyType="search"
+            clearButtonMode="never"
+            style={styles.searchInput}
           />
+          {query !== '' && (
+            <Pressable onPress={() => setQuery('')} accessibilityRole="button" accessibilityLabel="검색어 지우기" hitSlop={4} style={({ pressed }) => [styles.searchClear, pressed && { opacity: 0.6 }]}>
+              <Text style={styles.searchClearLabel}>✕</Text>
+            </Pressable>
+          )}
         </View>
-      ))}
+      )}
+      {buildings.length === 0 && <Text style={styles.note}>등록된 건물이 없습니다. 메뉴의 [건물 외곽선 가져오기]로 OSM 건물을 가져오거나 [외곽선 그리기]로 그려 주세요.</Text>}
+      {buildings.length > 0 && shown.length === 0 && (
+        <Text style={styles.empty}>“{query.trim()}”에 해당하는 건물이 없습니다. 이름이나 코드를 다시 확인해 주세요.</Text>
+      )}
+      {shown.map((b) => {
+        const here = scope.kind === 'building' && scope.buildingId === b.id;
+        const open = isExpanded(expanded, b.id, query);
+        return (
+          <View key={b.id} style={[styles.building, here && styles.buildingHere]}>
+            <Pressable
+              onPress={() => setExpanded((prev) => toggleExpanded(prev, b.id))}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: open }}
+              accessibilityLabel={`${b.props.name} ${open ? '층 목록 접기' : '층 목록 펼치기'}`}
+              style={({ pressed }) => [styles.buildingHead, pressed && { opacity: 0.6 }]}
+            >
+              <Text style={styles.arrow} importantForAccessibility="no">{open ? '▾' : '▸'}</Text>
+              <View style={styles.buildingName}>
+                <Text style={styles.buildingTitle} numberOfLines={1}>{b.props.name}</Text>
+                <Text style={styles.buildingCode} numberOfLines={1}>{b.props.code} · {b.props.levels.length}개 층</Text>
+              </View>
+              {here && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeLabel}>{floorLabel(scope.level)} 조사 중</Text>
+                </View>
+              )}
+            </Pressable>
+            {open && (
+              <View style={styles.floors}>
+                <Choice
+                  label={`${b.props.name} 층`}
+                  value={here ? scope.level : undefined}
+                  onChange={(level) => onPick({ kind: 'building', buildingId: b.id, level })}
+                  options={levelOptions(b.props.levels)}
+                />
+              </View>
+            )}
+          </View>
+        );
+      })}
+      {searching && shown.length > 0 && <Text style={styles.note}>{shown.length}개 건물을 찾았습니다.</Text>}
     </BottomSheet>
   );
 }
@@ -425,6 +484,22 @@ export function ExportSheet({ counts, busy, progress = null, onExport, onReset, 
 }
 
 const styles = StyleSheet.create({
+  // 건물 검색 · 건물 행
+  search: { flexDirection: 'row', alignItems: 'center', marginTop: space.lg, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: 1.5, borderColor: color.line },
+  searchInput: { flex: 1, minHeight: ROW_MIN, paddingHorizontal: space.lg, fontSize: font.label, color: color.ink },
+  searchClear: { minHeight: ROW_MIN, minWidth: ROW_MIN, alignItems: 'center', justifyContent: 'center' },
+  searchClearLabel: { fontSize: font.label, fontWeight: '700', color: color.inkSoft },
+  empty: { fontSize: font.body, lineHeight: 22, color: color.inkSoft, textAlign: 'center', paddingVertical: space.xl * 1.5, paddingHorizontal: space.lg },
+  building: { marginTop: space.md, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: 1.5, borderColor: color.line, overflow: 'hidden' },
+  buildingHere: { borderColor: color.primary },
+  buildingHead: { flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: ROW_MIN + space.md, paddingHorizontal: space.lg, paddingVertical: space.sm },
+  arrow: { width: 16, fontSize: font.title, lineHeight: 22, color: color.inkSoft, textAlign: 'center' },
+  buildingName: { flex: 1 },
+  buildingTitle: { fontSize: font.label, fontWeight: '700', color: color.ink },
+  buildingCode: { fontSize: font.small, color: color.inkSoft, marginTop: 1 },
+  badge: { paddingHorizontal: space.md, paddingVertical: space.xs + 1, borderRadius: radius.pill, backgroundColor: color.primary },
+  badgeLabel: { fontSize: font.small, fontWeight: '700', color: color.onPrimary },
+  floors: { paddingHorizontal: space.lg, paddingBottom: space.lg, paddingTop: space.xs },
   // 개방시간 · 개방조건 · 폐쇄기간 · 메모, folded
   fold: {
     flexDirection: 'row', alignItems: 'center', gap: space.md, minHeight: TOUCH, paddingHorizontal: space.md, paddingVertical: space.sm,

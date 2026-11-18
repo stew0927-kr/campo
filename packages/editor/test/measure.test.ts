@@ -1,9 +1,9 @@
 // 측정 입력 (SPEC-v0.2 3.9): the target a selection stands for, counts and calibration state from core's own functions,
 // and the line a measurement becomes in observations/editor.jsonl.
 import { describe, expect, it } from 'vitest';
-import { buildGraph, parseObservations, type EditState } from '@campo/core';
+import { buildGraph, parseObservations, straight, type EditState } from '@campo/core';
 import { fixtureSession } from './fixture.ts';
-import { kstIso, loadedObservations, makeObservation, measureSummary, measureTargetOf, type MeasureSummary, type MeasureTarget } from '../src/model/measure.ts';
+import { formatLengthM, kstIso, loadedObservations, makeObservation, measureSummary, measureTargetOf, type MeasureSummary, type MeasureTarget } from '../src/model/measure.ts';
 import {
   OBSERVATION_FILE, commitObservations, extrasWithPending, pendingObservationsText, stateToCampus, type Session,
 } from '../src/model/session.ts';
@@ -67,6 +67,19 @@ describe('예측값, 측정 개수, 현재 추정값', () => {
       ['forward', 'edge:e_A_1_hall__A_1_stair', 0, 0],
       ['backward', 'edge:e_A_1_hall__A_1_stair#backward', 1, 1],
     ]);
+  });
+
+  it('shows the length of an edge in metres, from core\'s own straight-line distance; elevators have none', () => {
+    const s = fixtureSession();
+    const st = s.history.current();
+    const edge = st.edges['e_A_1_hall__A_1_stair']!;
+    const expected = straight(st.nodes[edge.props.from]!.coord, st.nodes[edge.props.to]!.coord);
+    const r = summaryOf(s, target(st, 'e_A_1_hall__A_1_stair'));
+    expect(expected).toBeGreaterThan(0);
+    expect(r.lengthM).toBeCloseTo(expected, 5);
+    expect(formatLengthM(12.44)).toBe('12.4 m');
+    expect(formatLengthM(12)).toBe('12 m');
+    expect(summaryOf(s, target(st, 'n_A_elevA_L1')).lengthM).toBeUndefined();
   });
 
   it('is "stale" until calibration.json has the same number of kept measurements; an unsaved one is always stale', () => {

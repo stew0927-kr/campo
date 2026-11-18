@@ -1,6 +1,6 @@
 // "측정" under the 속성 tab: what the selected edge or elevator is predicted to take, how many measurements there are,
 // what the calibration says now, and the button that adds one. The numbers come from core (see model/measure.ts).
-import { directionLabel, type MeasureSummary } from '../model/measure.ts';
+import { directionLabel, formatLengthM, type MeasureSummary } from '../model/measure.ts';
 
 interface Props {
   /** The summary, or why nothing can be measured. */
@@ -21,6 +21,7 @@ export function MeasurePanel({ summary, pending, onAdd, onClearPending }: Props)
       {'target' in summary && (
         <>
           <p className="measure-target">{summary.target.label}</p>
+          {summary.lengthM !== undefined && <p className="measure-length">길이 {formatLengthM(summary.lengthM)}</p>}
           {summary.directions.map((d) => (
             <div key={d.key} className="measure-direction-block" data-direction={d.direction}>
               {summary.target.isEdge && <p className="measure-direction">{directionLabel(d.direction)}</p>}

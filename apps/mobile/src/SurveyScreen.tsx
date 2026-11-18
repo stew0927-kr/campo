@@ -21,7 +21,9 @@ import { projection } from './map/project.ts';
 import { bboxSpanM, campusBbox, createTileCache, tilesInBbox } from './map/tileCache.ts';
 import { TILE_ATTRIBUTION } from './map/tiles.ts';
 import { OUTDOOR, defaultLevel, floorLabel, pointTitle, scopeLabel, type Scope } from './model/scope.ts';
+import { photoUri } from './storage/expoStore.ts';
 import { openElevationRepo, randomId, type LocalElevationRepo } from './storage/elevationRepo.ts';
+import { createPhotoTrash } from './storage/photoTrash.ts';
 import { SURVEY_DIR, clearSnapshot, createSaver, type FileStore } from './storage/store.ts';
 import { lookupOsmBuilding, planDrawnBuilding, planOsmBuilding } from './survey/buildings.ts';
 import { dhRows, type DhRow } from './survey/dhRows.ts';
@@ -214,6 +216,9 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     [store, session, notify],
   );
   useEffect(() => session.subscribe(() => void saver.request()), [session, saver]);
+  // The files of deleted photos follow the session's list: out of the way on a delete, back on a 되돌리기, out again on a 복원.
+  const photoTrash = useMemo(() => createPhotoTrash(store, () => undefined), [store]);
+  useEffect(() => session.subscribe(() => void photoTrash.sync(new Set(Object.values(session.attachments).flatMap((a) => a.photos ?? [])))), [session, photoTrash]);
   // What was picked and is gone (undone, deleted) leaves the selection.
   useEffect(() => setSelection((s) => {
     const kept = stillThere(state, s);
@@ -394,6 +399,20 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     openHeading(node.coord, session.attachments[nodeId]?.photo_meta?.[path]?.heading_deg ?? null, guidesOf(nodeId), (deg) => {
       if (session.setPhotoHeading(nodeId, path, deg)) notify(`사진 방향을 ${deg}°로 저장했습니다.`);
     });
+  };
+  /** Delete a photo already saved on a point: one confirmation; the file waits in photos/deleted so 되돌리기 can bring it back. */
+  const removeSaved = (nodeId: string, path: string): void => {
+    Alert.alert('이 사진을 지울까요?', '이 지점의 사진 목록과 방향 기록에서 지웁니다. 되돌리기로 되살릴 수 있습니다.', [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '삭제',
+        style: 'destructive',
+        onPress: () => {
+          photoTrash.track(path);
+          if (session.removePhoto(nodeId, path)) notify('사진을 지웠습니다. 되돌리기로 되살릴 수 있습니다.');
+        },
+      },
+    ]);
   };
   const headingEdit: HeadingEdit | null = heading
     ? { at: heading.at, deg: heading.deg, guides: heading.guides, onChange: (deg) => setHeading((h) => (h ? { ...h, deg, fromSensor: false } : h)) }
@@ -1225,8 +1244,10 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           <PhotosSheet
             title={`${pointTitle(infoNode)} 사진`}
             photos={(session.attachments[infoNode.id]?.photos ?? []).map((path) => ({ path, heading: session.attachments[infoNode.id]?.photo_meta?.[path]?.heading_deg ?? null }))}
+            uriOf={(path) => photoUri(`${SURVEY_DIR}/${path}`)}
             onAdd={() => setCamera({ kind: 'point', nodeId: infoNode.id })}
             onHeading={(path) => editSaved(infoNode.id, path)}
+            onDelete={(path) => removeSaved(infoNode.id, path)}
             onClose={closeSheet}
           />
         )}

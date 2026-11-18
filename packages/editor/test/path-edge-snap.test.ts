@@ -53,7 +53,7 @@ describe('길 그리기 onto an existing edge (planPath / planCurvePath)', () =>
     let cur = state;
     for (const step of plan.steps) {
       const a = step(cur)!;
-      actions.push(a.annotation);
+      actions.push(typeof a.annotation === 'function' ? a.annotation(cur) : String(a.annotation));
       cur = a.apply(cur);
     }
     expect(actions).toContain('구간 나누기');

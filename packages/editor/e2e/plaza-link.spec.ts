@@ -5,6 +5,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { buildGraph, findRouteBetween, localFrame, plazaAt, validateCampus, type PointRoute } from '@campo/core';
 import { checkSaved, Editor } from './support.ts';
 
+/** Only used inside page.evaluate, where it is the browser's window (this folder is checked without DOM types). */
+declare const window: object;
+
 type Lnglat = [number, number];
 const SHOTS = process.env['CAMPO_SHOTS'] ?? 'test-results';
 // At zoom 19 in the 1440×900 test window 1 px is about 1.3e-6° of longitude and 1.1e-6° of latitude; offsets below are a few pixels.

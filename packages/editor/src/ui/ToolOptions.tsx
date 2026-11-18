@@ -1,6 +1,7 @@
 // The options row of the tools that have choices to make before clicking the map.
 // A tool gets its row by adding a component to TOOL_OPTIONS; tools without one show their hint there.
 import type { ComponentType } from 'react';
+import type { PathShape } from '../model/connect.ts';
 import { ELEVATOR_NOT_DRAWN, type OutdoorKind } from '../model/tools.ts';
 import type { Tool } from './registry.ts';
 import { addKindsIn, effectiveAddKind, type AddKind, type UiState } from './ui-state.ts';
@@ -14,6 +15,11 @@ const OUTDOOR_KINDS: { id: OutdoorKind; label: string; sample: string }[] = [
   { id: 'flat', label: '평지', sample: 'solid-footway' },
   { id: 'steps', label: '계단', sample: 'dash-steps' },
   { id: 'ramp', label: '경사로', sample: 'solid-ramp' },
+];
+
+const PATH_SHAPES: { id: PathShape; label: string; title: string }[] = [
+  { id: 'straight', label: '직선', title: '누른 점을 곧게 잇습니다.' },
+  { id: 'curve', label: '곡선', title: '누른 점을 지나는 부드러운 곡선으로 그립니다. 마우스를 움직이면 모양이 미리 보입니다.' },
 ];
 
 const ADD_KINDS: { id: AddKind; label: string; dot: string }[] = [
@@ -45,6 +51,21 @@ function PathOptions({ ui, onChange }: ToolOptionsProps) {
           엘리베이터
         </label>
       </fieldset>
+      <fieldset className="kinds" data-field="path-shape">
+        <legend className="visually-hidden">길 모양</legend>
+        {PATH_SHAPES.map((k) => (
+          <label key={k.id} className="kind" title={k.title}>
+            <input type="radio" name="path-shape" checked={ui.pathShape === k.id} onChange={() => onChange({ pathShape: k.id })} />
+            {k.label}
+          </label>
+        ))}
+      </fieldset>
+      {ui.pathShape === 'curve' && (
+        <>
+          <button type="button" className="tool" data-action="finish-curve" title="그리던 곡선을 끝냅니다. 더블클릭이나 Enter도 같습니다." onClick={() => onChange({ pathFinish: ui.pathFinish + 1 })}>완료</button>
+          <p className="tool-hint" role="note">점을 차례로 누르고, 더블클릭·Enter·완료로 끝냅니다. Esc는 취소입니다.</p>
+        </>
+      )}
       <p className="tool-hint" role="note">{ELEVATOR_NOT_DRAWN}.</p>
     </>
   );

@@ -22,12 +22,14 @@ import { basemaps, type BasemapId } from './basemaps.ts';
 import {
   BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, PLAZA_COLORS, OUTLINE_LAYERS, OUTLINE_SOURCE,
   PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
-  dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
+  dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, curvePreviewGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
   type BreaklineShape, type OutlineHover, type RouteLine,
 } from './layers.ts';
 import { WebMercatorViewport, type Layer } from '@deck.gl/core';
 import { PathLayer } from '@deck.gl/layers';
 import { MapboxOverlay } from '@deck.gl/mapbox';
+import { curveLine } from '../model/curve.ts';
+import type { PathShape } from '../model/connect.ts';
 import { drapePath, pickSurface, type Ground } from '../model/terrain3d.ts';
 import { registerBeltIcons, registerBreaklineTooth, registerPictograms, registerRoutePins } from './icons.ts';
 import { breaklineSideOf, type BreakLineSide } from '@campo/core/elevation';
@@ -108,6 +110,10 @@ interface Props {
   limits: MapLimits | undefined;
   tool: Tool;
   outdoorKind: OutdoorKind;
+  /** 길 그리기 pen: Terra Draw's straight line, or this file's own curve control points. */
+  pathShape: PathShape;
+  /** Changes when 곡선's 완료 button is pressed. */
+  pathFinish: number;
   basemap: BasemapId;
   scope: Scope;
   highlight: ReadonlySet<string>;
@@ -178,6 +184,8 @@ function applicable(v: ReturnType<typeof viewLimits>) {
 setWorkerUrl(workerUrl);
 
 const KIND_COLOR: Record<OutdoorKind, string> = { flat: WAY_COLORS.footway, steps: WAY_COLORS.steps, ramp: WAY_COLORS.ramp };
+const dist2 = (a: ScreenPoint, b: ScreenPoint) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+
 const DRAW_MODE: Partial<Record<Tool, string>> = { path: 'linestring', building: 'polygon', plaza: 'polygon', breakline: 'linestring' };
 
 interface ActiveDrag {
@@ -188,7 +196,7 @@ interface ActiveDrag {
 }
 
 export function MapView(props: Props) {
-  const { state, scope, tool, outdoorKind, basemap, highlight, broken, routeFocus, routes, focus, limits } = props;
+  const { state, scope, tool, outdoorKind, pathShape, basemap, highlight, broken, routeFocus, routes, focus, limits } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
@@ -201,6 +209,11 @@ export function MapView(props: Props) {
   /** The scope the first click of the path being drawn fixed (null between paths). */
   const pathScope = useRef<Scope | null>(null);
   const hoverShapes = useRef<FeatureCollection | null>(null);
+  /** 곡선 길 being drawn: the control points clicked so far (snapped or not) and the scope the first one fixed. */
+  const curve = useRef<{ vertices: PathVertex[]; scope: Scope } | null>(null);
+  const curveShapes = useRef<FeatureCollection | null>(null);
+  const finishCurve = useRef<() => void>(() => undefined);
+  const cancelCurve = useRef<() => void>(() => undefined);
   const badgeEl = useRef<HTMLDivElement | null>(null);
   /** The drag visuals (temporary source, hidden originals) are cleared once the main source has the new data. */
   const clearDragAfterData = useRef(false);
@@ -213,7 +226,7 @@ export function MapView(props: Props) {
   // Map and Terra Draw callbacks are registered once; they read the latest props through this ref.
   const latest = useRef(props);
   latest.current = props;
-  const pushPreview = () => whenReady((map) => (map.getSource(PREVIEW_SOURCE) as GeoJSONSource).setData(previewGeoJSON(latest.current.previewShapes, hoverShapes.current)));
+  const pushPreview = () => whenReady((map) => (map.getSource(PREVIEW_SOURCE) as GeoJSONSource).setData(previewGeoJSON(latest.current.previewShapes, hoverShapes.current, curveShapes.current)));
   /** 외곽선 수정: the corner or side under the pointer, and the corners while one is being dragged. */
   const outlineHover = useRef<OutlineHover>(null);
   /** 고도 단절선 being edited: the side under the pointer, and its points while one is pulled (kept until the store has them). */
@@ -295,6 +308,58 @@ export function MapView(props: Props) {
     const autoScope = (at: Position) => scopeAt(latest.current.state, at, latest.current.scope, oHeld);
     /** 길 그리기 attaches to nodes of the path's own scope, and to entrances from the outdoors (SPEC-v0.2 5.2), within SNAP_PX. */
     const snapPath = (point: ScreenPoint, scope: Scope) => nearestNode(point, (n) => snappable(n, scope));
+    // ---- 곡선 길: this file takes the clicks itself (Terra Draw stays 'static') and keeps the control points ----
+    const curvePen = () => latest.current.tool === 'path' && latest.current.pathShape === 'curve';
+    const vertexPosition = (v: PathVertex): Position => ('nodeId' in v ? latest.current.state.nodes[v.nodeId]!.coord : v.position);
+    /** The same snap a click gets (snapPath), as a control point. */
+    const curvePoint = (point: ScreenPoint, sc: Scope): PathVertex => {
+      const node = snapPath(point, sc);
+      if (node) return { nodeId: node.id };
+      const at = toMap(point);
+      return { position: [at[0], at[1]] };
+    };
+    /** The curve through the control points plus the pointer (when given), drawn dashed; the finished path uses the same curveLine samples. */
+    const showCurve = (cursor: PathVertex | null) => {
+      const c = curve.current;
+      const controls = c ? c.vertices.map(vertexPosition) : [];
+      const through = cursor ? [...controls, vertexPosition(cursor)] : controls;
+      const line = curveLine(through);
+      curveShapes.current = c ? curvePreviewGeoJSON(controls, cursor ? vertexPosition(cursor) : null, line) : null;
+      pushPreview();
+      const surface = latest.current.surface;
+      if (surface && c && line.length >= 2) {
+        draftLayers.current = [new PathLayer({
+          id: 'draw-draft', data: [drapePath(line, surface.ground, 2, 0.6)], getPath: (d: [number, number, number][]) => d,
+          getColor: hexColor(KIND_COLOR[latest.current.outdoorKind]), getWidth: 4, widthUnits: 'pixels', capRounded: true, jointRounded: true, parameters: { depthCompare: 'always' },
+        })];
+        pushDeck();
+      } else if (draftLayers.current.length > 0) {
+        draftLayers.current = [];
+        pushDeck();
+      }
+    };
+    cancelCurve.current = () => {
+      if (!curve.current && !curveShapes.current) return;
+      curve.current = null;
+      showCurve(null);
+    };
+    finishCurve.current = () => {
+      const c = curve.current;
+      if (!c) return;
+      curve.current = null;
+      showCurve(null);
+      if (c.vertices.length >= 2) latest.current.onPathDrawn(c.vertices, c.scope);
+    };
+    const addCurvePoint = (point: ScreenPoint) => {
+      const c = (curve.current ??= { vertices: [], scope: pathScope.current ?? autoScope(toMap(point)) });
+      pathScope.current = c.scope;
+      const v = curvePoint(point, c.scope);
+      const last = c.vertices[c.vertices.length - 1];
+      // The second click of a double click lands on the point the first one put down: not a new control point.
+      if (last && dist2(toScreen(vertexPosition(last)), toScreen(vertexPosition(v))) < 4 * 4) return showCurve(null);
+      c.vertices.push(v);
+      showCurve(null);
+    };
     const clearDragVisuals = () => {
       for (const [id, filter] of hideInData([])) map.setFilter(id, filter ?? null);
       (map.getSource(DRAG_SOURCE) as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: [] });
@@ -439,9 +504,10 @@ export function MapView(props: Props) {
     };
     map.on('click', (e) => {
       if (latest.current.outline) return; // 외곽선 수정 works with drags and right-clicks only
+      if (curvePen()) return addCurvePoint(e.point);
       const at: Position = toMap(e.point);
       const { tool, breaklineEdit: be } = latest.current;
-      const drawTool = DRAW_MODE[tool] !== undefined;
+      const drawTool = DRAW_MODE[tool] !== undefined && !curvePen();
       if (drawTool && drawingAtPress) return; // Terra Draw is adding a point to the shape being drawn
       // 고도 단절선: a segment of the selected line takes a point, another line is selected, a side becomes the low side.
       const editing = LINE_EDIT_TOOLS.has(tool);
@@ -468,6 +534,12 @@ export function MapView(props: Props) {
       const plaza = !node && !edge && !building && latest.current.scope.kind === 'outdoor' ? plazaAt(latest.current.state, at) : undefined;
       latest.current.onMapClick({ position: at, node, edge, building, ...(plaza ? { plaza } : {}), shift: e.originalEvent.shiftKey, scope: autoScope(at) });
     });
+    // 곡선: a double click ends the curve (and must not zoom the map).
+    map.on('dblclick', (e) => {
+      if (!curvePen() || !curve.current) return;
+      e.preventDefault();
+      finishCurve.current();
+    });
     // Right-click: the browser's own menu is blocked on the map only (this listener sits on MapLibre's container), and the editor's menu opens.
     map.on('contextmenu', (e) => {
       e.originalEvent.preventDefault();
@@ -479,7 +551,7 @@ export function MapView(props: Props) {
         return;
       }
       // A drawing tool keeps the right button to itself only while a shape is being drawn.
-      if (DRAW_MODE[latest.current.tool] && drawingNow()) return;
+      if (DRAW_MODE[latest.current.tool] && (curvePen() ? curve.current !== null : drawingNow())) return;
       const { node, edge, building } = pickAt(e.point, (n) => nodeStrong(n, latest.current.scope), true);
       const plaza = !node && !edge && !building && latest.current.scope.kind === 'outdoor' ? plazaAt(latest.current.state, toMap(e.point)) : undefined;
       let breakline: BreaklineHit | undefined;
@@ -783,6 +855,11 @@ export function MapView(props: Props) {
     let moveRaf: number | null = null;
     const refreshHover = () => {
       moveRaf = null;
+      if (curvePen()) {
+        badge.hidden = true;
+        if (curve.current && lastMove) showCurve(curvePoint(lastMove.point, curve.current.scope));
+        return;
+      }
       const { tool, state: st, hover } = latest.current;
       if (!lastMove || !toolDef(tool).placing) {
         badge.hidden = true;
@@ -821,6 +898,11 @@ export function MapView(props: Props) {
         if (lineDrag) endLineDrag(false);
         cancelDrag();
         pathScope.current = null;
+        cancelCurve.current();
+      }
+      if (e.key === 'Enter' && curvePen() && curve.current && !typing(e)) {
+        e.preventDefault();
+        finishCurve.current();
       }
       if ((e.key === 'o' || e.key === 'O') && !typing(e) && !e.ctrlKey && !e.metaKey && !e.altKey && !oHeld) {
         oHeld = true;
@@ -1018,13 +1100,21 @@ export function MapView(props: Props) {
   }, [focus]);
 
   useEffect(() => {
-    whenReady(() => drawRef.current?.setMode(DRAW_MODE[tool] ?? 'static'));
+    whenReady(() => drawRef.current?.setMode(tool === 'path' && pathShape === 'curve' ? 'static' : DRAW_MODE[tool] ?? 'static'));
+    cancelCurve.current(); // changing the tool or the pen drops the curve being drawn
     pathScope.current = null;
     plazaDraft.current = false;
     hoverShapes.current = null;
     if (badgeEl.current) badgeEl.current.hidden = true;
     pushPreview();
-  }, [tool]);
+  }, [tool, pathShape]);
+  // 곡선's 완료 button.
+  const finishSeen = useRef(props.pathFinish);
+  useEffect(() => {
+    if (finishSeen.current === props.pathFinish) return;
+    finishSeen.current = props.pathFinish;
+    finishCurve.current();
+  }, [props.pathFinish]);
   // While a 고도 단절선 is selected in its own tool, clicks edit it instead of drawing (a line just started is dropped).
   const lineSelected = props.breaklineEdit.selected !== null;
   useEffect(() => {

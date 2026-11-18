@@ -16,6 +16,7 @@ function line(e1: ReturnType<typeof edge>, e2: ReturnType<typeof edge>): EditSta
     edges: { [e1.id]: e1, [e2.id]: e2 },
     buildings: {},
     rooms: {},
+    plazas: {},
   });
 }
 

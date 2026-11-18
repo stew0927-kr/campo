@@ -24,6 +24,7 @@ def test_defaults_match_the_design():
     assert (s.decay_length_m, s.adaptive, s.decay_min_m, s.decay_max_m, s.side_slope) == (3.0, True, 2.0, 8.0, 0.5)
     assert s.band_factor * s.decay_length_m == 15.0
     assert (s.cg_rtol, s.cg_maxiter) == (1e-6, 500)
+    assert (s.wall_high_share, s.wall_tip_slope, s.wall_min_step_m) == (0.5, 0.5, 0.001)
     b = c.building
     assert (b.apron_m, b.cut_slope, b.fill_slope, b.smooth_k_m, b.alpha_b, b.step_max_m) == (1.0, 0.67, 0.5, 0.3, 4.0, 0.5)
     assert (b.sigma_meas_m, b.up_share_point_below, b.up_share_point_above) == (0.02, 0.95, 0.80)
@@ -89,3 +90,17 @@ def test_validate():
     for key, v in bad.items():
         msgs = validate(with_overrides(SolverConfig(), {key: v}))
         assert len(msgs) == 1, (key, msgs)
+
+
+def test_plaza_section():
+    c = SolverConfig()
+    pz = c.plaza
+    assert (pz.ref_percentile, pz.min_cells, pz.erode_cells, pz.relief_warn_m, pz.node_tol_m) == (50.0, 4, 1, 3.0, 0.1)
+    cfg = with_overrides(c, parse_set_args(["plaza.min_cells=9", "plaza.ref_percentile=40"]))
+    assert cfg.plaza.min_cells == 9 and isinstance(cfg.plaza.min_cells, int) and cfg.plaza.ref_percentile == 40.0
+    assert config_from_dict(json.loads(json.dumps(config_to_dict(cfg)))) == cfg
+    assert config_from_dict({"format": CONFIG_FORMAT, "plaza": {"node_tol_m": 0.2}}).plaza.node_tol_m == 0.2
+    with pytest.raises(ValueError):
+        config_from_dict({"plaza": {"height": 1}})
+    for key, v in {"plaza.ref_percentile": 101.0, "plaza.min_cells": -1, "plaza.relief_warn_m": -0.5}.items():
+        assert len(validate(with_overrides(SolverConfig(), {key: v}))) == 1, key

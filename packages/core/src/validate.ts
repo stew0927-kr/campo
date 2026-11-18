@@ -14,6 +14,7 @@ import {
   type NodeFeature,
   type Observation,
   type Override,
+  type PlazaFeature,
   type Position,
   type ValidationIssue,
   type ValidationResult,
@@ -22,6 +23,7 @@ import {
 import { CALIBRATION_FILE, CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
 import { GRADE_CAUTION_MAX_PCT, isStepFreePassable } from './costs.ts';
 import { outlineProblem } from './outline.ts';
+import { plazaHoleProblem, plazaRegionsOverlap, plazaRingProblem, plazaTouchesNetwork } from './plaza/geometry.ts';
 
 /** Max distance (m) between an edge's line ends and its from/to nodes (§7 error 4). */
 export const ENDPOINT_TOLERANCE_M = 1;
@@ -131,11 +133,13 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
   const buildings = new Map<string, Located<BuildingFeature>>();
   const nodes = new Map<string, Located<NodeFeature>>();
   const edges: Located<EdgeFeature>[] = [];
+  const plazas: Located<PlazaFeature>[] = [];
   for (const item of valid) {
     const f = item.feature;
     if (f.properties.kind === 'building') buildings.set(f.id, item as Located<BuildingFeature>);
     else if (f.properties.kind === 'node') nodes.set(f.id, item as Located<NodeFeature>);
     else if (f.properties.kind === 'edge') edges.push(item as Located<EdgeFeature>);
+    else if (f.properties.kind === 'plaza') plazas.push(item as Located<PlazaFeature>);
     // Room outlines (kind "room") are only schema-checked for now.
   }
 
@@ -222,6 +226,34 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
       }
       const problem = outlineProblem(polygon);
       if (problem) error(file, building.id, E.floorOutlineInvalid, `floor_outlines "${key}": ${problem}`);
+    }
+  }
+
+  // ---- E16 / E17. Plaza rings: closed, 4+ positions, not crossing themselves; holes inside, 0.1 m clear, apart ----
+  /** Plazas whose rings are usable, for the overlap checks below. */
+  const goodPlazas: Located<PlazaFeature>[] = [];
+  for (const item of plazas) {
+    const rings = item.feature.geometry.coordinates;
+    const ringProblem = plazaRingProblem(rings);
+    if (ringProblem) {
+      error(item.file, item.feature.id, E.plazaRingInvalid, ringProblem);
+      continue;
+    }
+    const holeProblem = plazaHoleProblem(rings);
+    if (holeProblem) {
+      error(item.file, item.feature.id, E.plazaHoleInvalid, holeProblem);
+      continue;
+    }
+    goodPlazas.push(item);
+  }
+  // ---- E18. The solid areas of two plazas may not overlap (one inside the other's hole is fine) ----
+  for (let i = 0; i < goodPlazas.length; i++) {
+    for (let j = i + 1; j < goodPlazas.length; j++) {
+      const a = goodPlazas[i]!;
+      const b = goodPlazas[j]!;
+      if (plazaRegionsOverlap(a.feature.geometry.coordinates, b.feature.geometry.coordinates)) {
+        error(b.file, b.feature.id, E.plazaOverlap, `평지 "${a.feature.id}"와 겹칩니다. 겹치는 쪽을 줄이거나 구멍으로 바꿔 주세요.`);
+      }
     }
   }
 
@@ -471,6 +503,28 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
     }
     if (p.highway === 'ramp' && p.grade_pct !== undefined && Math.abs(p.grade_pct) > GRADE_CAUTION_MAX_PCT) {
       warn(file, edge.id, W.steepRamp, `경사로의 계산한 경사가 ${Math.abs(p.grade_pct).toFixed(1)}%로 ${GRADE_CAUTION_MAX_PCT}%를 넘습니다. 현장에서 확인해 주세요.`);
+    }
+  }
+
+  // W17. A plaza that touches no outdoor node and no walkable outdoor edge: a route cannot get on or off it.
+  // (A simplified version of the routing contacts, kept here so the checks do not depend on routing.)
+  const outdoorNodes = [...nodes.values()].filter(({ feature: n }) => n.properties.building_id === null).map(({ feature: n }) => n.geometry.coordinates);
+  const walkLines = edges
+    .filter(({ feature: e }) => e.properties.highway !== 'elevator' && e.properties.edge_type !== 'indoor')
+    .map(({ feature: e }) => e.geometry.coordinates);
+  for (const { file, feature: plaza } of goodPlazas) {
+    if (!plazaTouchesNetwork(plaza.geometry.coordinates, outdoorNodes, walkLines)) {
+      warn(file, plaza.id, W.plazaNoContact, '평지가 어떤 길과도 닿지 않아 길찾기에서 이 평지를 지날 수 없습니다. 바깥 지점이나 구간을 평지에 이어 주세요.');
+    }
+  }
+
+  // W18. A plaza over a building: the solver keeps the building's pad, so the plaza is not flat there. The building's own
+  // geometry is used, not a floor outline.
+  for (const { file, feature: plaza } of goodPlazas) {
+    for (const { feature: building } of buildings.values()) {
+      if (plazaRegionsOverlap(plaza.geometry.coordinates, building.geometry.coordinates)) {
+        warn(file, plaza.id, W.plazaOverlapsBuilding, `건물 "${building.properties.name}"(${building.properties.code})과 겹칩니다. 건물 자리에는 구멍을 뚫어 주세요.`);
+      }
     }
   }
 

@@ -6,7 +6,29 @@ enablePatches();
 export * from './types.ts';
 export * from './access.ts';
 export { findNearestRestroom, isRestroomFor, isWheelchairRestroom } from './restroom.ts';
-export { findNearestRestroomFrom, findRouteBetween, snapToRoutes, type PointRoute, type PointRouteResult, type RouteEnd, type RouteSnap } from './routing/fromPoint.ts';
+export {
+  endAtPoint,
+  findNearestRestroomFrom,
+  findRouteBetween,
+  findRouteThrough,
+  snapToRoutes,
+  type PlazaLeg,
+  type PointRoute,
+  type PointRouteResult,
+  type RouteEnd,
+  type RouteSnap,
+} from './routing/fromPoint.ts';
+export {
+  PLAZA_CONTACT_MERGE_M,
+  PLAZA_NODE_TOL_M,
+  plazaAt,
+  plazaContacts,
+  plazaDistance,
+  plazaGeodesics,
+  type PlazaContact,
+  type PlazaGeodesic,
+  type PlazaPoint,
+} from './routing/plaza.ts';
 export { CAMPUS_META_FILE, CALIBRATION_FILE, OBSERVATIONS_DIR, OVERRIDES_FILE, isCampusFile, parseCampus } from './load.ts';
 export { formatFeatureCollection, formatMeta } from './format.ts';
 export { migrateCampusFiles, type MigrateProblem, type MigrateResult, type MigrateSummary } from './migrate.ts';
@@ -47,6 +69,34 @@ export {
 export type { RouteStep, RouteStepKind } from './route-text.ts';
 export { STEEP_NOTE } from './route-text.ts';
 export * from './edit/index.ts';
+export {
+  PLAZA_EPS_M,
+  PLAZA_MAX_POSITIONS,
+  PLAZA_MIN_GAP_M,
+  classifyPlazaRing,
+  closeRingPositions,
+  framePlaza,
+  localFrame,
+  locateInPlaza,
+  locateXY,
+  normalizePlazaRings,
+  plazaAreaM2,
+  plazaPerimeterM,
+  plazaHoleProblem,
+  plazaProblem,
+  plazaRingProblem,
+  plazaRegionsOverlap,
+  plazaTouchesNetwork,
+  pointInRingXY,
+  ringAreaXY,
+  segmentInPlazaDomain,
+  signedAreaM2,
+  type FramedPlaza,
+  type LocalFrame as PlazaLocalFrame,
+  type PlazaDraw,
+  type PlazaHit,
+  type XY,
+} from './plaza/geometry.ts';
 export * from './changeset/index.ts';
 export * from './reports/index.ts';
 export * from './survey/index.ts';

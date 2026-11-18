@@ -46,7 +46,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Optional, Sequence
 
 import numpy as np
 import scipy.sparse as sp
@@ -714,10 +714,14 @@ def breakline_boxes(req: dict, project: Optional[Callable[[float, float], tuple[
     RecomputeRequest.breaklines[].boxes (WGS84 [minLng, minLat, maxLng, maxLat]: where a 고도 단절선 was drawn, changed or
     removed, before and after) → 격자 CRS의 (xmin, ymin, xmax, ymax). 투영 함수가 없으면 빈 목록.
     """
+    return _request_boxes(req, project, "breaklines")
+
+
+def _request_boxes(req: dict, project, key: str) -> list[tuple[float, float, float, float]]:
     out = []
     if project is None:
         return out
-    for line in req.get("breaklines", []) or []:
+    for line in req.get(key, []) or []:
         for b in line.get("boxes", []) or []:
             if len(b) != 4:
                 continue
@@ -737,7 +741,8 @@ def dirty_seeds(req: dict, cm: Optional[CampusModel], keys: Iterable[str],
         seeds |= {cm.var_of[n] for n in req.get("campusNodes", []) if n in cm.var_of}
         for eid in req.get("campusEdges", []):
             seeds |= set(cm.edge_vars.get(eid, ()))
-        for x0, y0, x1, y1 in breakline_boxes(req, project):
+        # 평지가 그려지거나 바뀌거나 지워진 곳(req.plazas, 선택 키)도 같은 방식: 그 상자를 지나는 구간의 변수
+        for x0, y0, x1, y1 in breakline_boxes(req, project) + _request_boxes(req, project, "plazas"):
             for eid, ((ax, ay), (bx, by)) in cm.edge_xy.items():
                 if max(ax, bx) >= x0 and min(ax, bx) <= x1 and max(ay, by) >= y0 and min(ay, by) <= y1:
                     seeds |= set(cm.edge_vars.get(eid, ()))
@@ -1096,6 +1101,9 @@ def main(argv=None):
     return _run_v1(a)
 
 
+PLAZA_V1_WARNING = "평지는 높이 솔버 v2에서만 반영됩니다(--engine v2)"
+
+
 def _run_v1(a: argparse.Namespace):
     import time
     import uuid
@@ -1107,8 +1115,13 @@ def _run_v1(a: argparse.Namespace):
     bl_log: list[str] = []
     breaklines = store_breaklines(store, tf.transform, bl_log)
     cm, soft, scale = None, [], {}
+    v1_warnings: list[str] = []
     if a.campus:
-        cm = campus_model(read_campus_features(a.campus), tf.transform, a.floor_height_default, a.floor_prior_sigma)
+        v1_features = read_campus_features(a.campus)
+        if any(_kind(f) == "plaza" for f in v1_features):
+            v1_warnings.append(PLAZA_V1_WARNING)
+            print(PLAZA_V1_WARNING)
+        cm = campus_model(v1_features, tf.transform, a.floor_height_default, a.floor_prior_sigma)
         known = {n.key for n in nodes}
         nodes += [n for n in cm.nodes if n.key not in known]
         drops, off_soft, drop_scale, drop_log = breakline_drop_edges(breaklines, cm)
@@ -1168,8 +1181,10 @@ def _run_v1(a: argparse.Namespace):
         out / "corrected_dem", source=f"{grid.meta.get('source', '')} + CAMPO residual ({a.method})", extra=dem_id)
     Grid(z, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(out / "residual_field", extra=dem_id)
     run_id, now_ms = str(uuid.uuid4()), int(time.time() * 1000)
-    (out / "store.solved.json").write_text(
-        json.dumps(write_back(store, res, run_id, now_ms), ensure_ascii=False, indent=2), encoding="utf-8")
+    solved_store = write_back(store, res, run_id, now_ms)
+    if v1_warnings:
+        solved_store["lastSolve"]["warnings"] = v1_warnings
+    (out / "store.solved.json").write_text(json.dumps(solved_store, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"wrote {out}/corrected_dem.(json|bin), residual_field.*, store.solved.json")
     if a.derived_out:
         if cm is None:
@@ -1291,12 +1306,109 @@ def campus_corridors(features: list[dict], cm: CampusModel, project, heights: di
     return Corridors(np.array(xy, float), np.array(z, float), np.array(tr, float), np.array(steps, np.int32), tuple(ids))
 
 
+# ---- 평지 (plaza, docs/ELEVATION_SOLVER_V2.md 평지) ----
+
+
+def campus_plazas(features: list[dict], project, grid: Grid, cfg, log: list[str]) -> list:
+    """grid_grading.Plaza per campus plaza feature (rings in grid CRS m). fixed_height_m -> h, h_source 'fixed'."""
+    from grid_grading import Plaza
+
+    out = []
+    for f in features:
+        if _kind(f) != "plaza":
+            continue
+        pid = f.get("id")
+        geom = f.get("geometry") or {}
+        coords = geom.get("coordinates") if geom.get("type") == "Polygon" else None
+        rings = []
+        ok = isinstance(pid, str) and isinstance(coords, list) and len(coords) > 0
+        for ring in coords if ok else []:
+            try:
+                pts = np.array([project(float(p[0]), float(p[1])) for p in ring], float)
+            except (TypeError, ValueError, IndexError):
+                ok = False
+                break
+            if pts.ndim != 2 or len(pts) < 4 or not np.all(np.isfinite(pts)):
+                ok = False
+                break
+            rings.append(pts)
+        if not ok or not rings:
+            log.append(f"plaza {pid}: rings are not usable -> skipped")
+            continue
+        p = f.get("properties") or {}
+        fixed = _num(p.get("fixed_height_m"))
+        name = p.get("name") if isinstance(p.get("name"), str) else ""
+        out.append(Plaza(pid, tuple(rings), fixed, "fixed" if fixed is not None else "dem_median", name))
+    return out
+
+
+def _on_plaza(rings, x: float, y: float, tol: float) -> bool:
+    from grid_grading import _point_in_rings
+
+    if _point_in_rings(rings, x, y):
+        return True
+    for r in rings:
+        a, b = r[:-1], r[1:]
+        ab = b - a
+        L2 = (ab ** 2).sum(axis=1)
+        t = np.clip(((x - a[:, 0]) * ab[:, 0] + (y - a[:, 1]) * ab[:, 1]) / np.where(L2 > 0, L2, 1.0), 0.0, 1.0)
+        d = np.hypot(a[:, 0] + t * ab[:, 0] - x, a[:, 1] + t * ab[:, 1] - y)
+        if d.size and float(d.min()) <= tol:
+            return True
+    return False
+
+
+def plaza_clusters(plazas: list, features: list[dict], cm: Optional[CampusModel], project, grid: Grid, cfg) -> tuple[list, dict[str, list[str]]]:
+    """
+    node_wls.PlazaCluster per plaza that has outdoor nodes on it (solid area, or within plaza.node_tol_m of its edge):
+    one merged variable. Prior: fixed_height_m with sigma 1e-3 m, else the DEM_0 median of the plaza cells with the
+    cluster sigma (node_wls.cluster_prior). Also returns plaza id -> member variable keys.
+    """
+    from grid_grading import rasterize_polygon
+    from node_wls import PlazaCluster, cluster_prior
+
+    if cm is None:
+        return [], {}
+    pts = []
+    for f in features:
+        if _kind(f) != "node" or (f.get("properties") or {}).get("building_id") is not None:
+            continue
+        key = cm.var_of.get(f.get("id"))
+        c = (f.get("geometry") or {}).get("coordinates")
+        if key is None or not isinstance(c, list) or len(c) < 2:
+            continue
+        pts.append((key, *project(float(c[0]), float(c[1]))))
+    out, members_of = [], {}
+    taken: set[str] = set()
+    for p in plazas:
+        rings = [np.asarray(r, float)[:, :2] for r in p.rings]
+        mem = sorted({k for k, x, y in pts if k not in taken and _on_plaza(rings, x, y, cfg.plaza.node_tol_m)})
+        if not mem:
+            continue
+        taken.update(mem)
+        members_of[p.plaza_id] = mem
+        if p.h is not None:
+            prior = (float(p.h), 1e-3)
+        else:
+            v = np.asarray(grid.data, float)[rasterize_polygon(grid, rings)]
+            v = v[np.isfinite(v)]
+            prior = cluster_prior(v, grid.res ** 2, cfg.wls) if v.size else (None, None)
+        out.append(PlazaCluster(p.plaza_id, tuple(mem), *prior))
+    return out, members_of
+
+
 def building_pads(features: list[dict], project, sidecar: dict, grid: Grid, cm: Optional[CampusModel], cfg,
-                  log: list[str], previous: Optional[dict[str, float]] = None):
+                  log: list[str], previous: Optional[dict[str, float]] = None, meta: Optional[dict[str, dict]] = None,
+                  floor_height_default: float = DEFAULT_FLOOR_HEIGHT_M):
     """
     Building pads: pad level = sidecar padLevel or min(ground_levels); polygon = sidecar polygon, floor_outlines[level] or
-    the building geometry; H_1F^0 = sidecar h1fM ("survey") or the ring DEM (entrance side median, else the percentile).
-    Returns (BuildingPad list, building id -> rings in grid CRS).
+    the building geometry. Plinth floors (ext.plinth_floors, a number >= 0) are one solid block under the lowest floor, so
+    the ground plane is H(pad level) - plinth_m, plinth_m = plinth_floors x floor height (ext.floor_height_m or the default).
+    Reference: sidecar h1fM ("survey") is H_1F^0 and the ground plane reference is h1fM - plinth_m; otherwise the ring DEM
+    (entrance side median, else the percentile) is the ground plane reference and H_1F^0 = it + plinth_m. The lower bound
+    is on the ground plane (BuildingPad.lower_bound), so plinth_m = 0 is the old H_1F >= H_1F^0.
+    Returns (BuildingPad list, building id -> rings in grid CRS); meta (if given) gets per building the pad level and its
+    source, ground levels, floor height, plinth and the pad polygon mask.
     """
     from grid_grading import rasterize_polygon, reference_height
     from node_wls import BuildingPad
@@ -1341,6 +1453,11 @@ def building_pads(features: list[dict], project, sidecar: dict, grid: Grid, cm: 
             log.append(f"building {bid}: polygon covers no grid cell -> no pad")
             continue
         key = f"fp:{bid}:{floor_id_of_level(level)}"
+        ext = p.get("ext") or {}
+        fh = ext.get("floor_height_m") if _is_number(ext.get("floor_height_m")) and ext.get("floor_height_m") > 0 else None
+        fh = float(fh or floor_height_default)
+        plinth_floors = max(0.0, float(ext["plinth_floors"])) if _is_number(ext.get("plinth_floors")) else 0.0
+        plinth_m = plinth_floors * fh
         if _is_number(s.get("h1fM")):
             h_ref, src = float(s["h1fM"]), "survey"
         else:
@@ -1352,16 +1469,186 @@ def building_pads(features: list[dict], project, sidecar: dict, grid: Grid, cm: 
                 log.append(f"building {bid}: no DEM on the pad ring -> no pad")
                 continue
             h_ref, src = ref
-        lower = h_ref
+            h_ref += plinth_m  # the ring DEM is the ground plane reference; the floor sits plinth_m above it
+        lower = h_ref - plinth_m  # on the ground plane
         if cfg.building.ratchet and previous and _is_number(previous.get(key)):
-            lower = max(h_ref, float(previous[key]))
-        pads.append(BuildingPad(bid, key, h_ref, src, lower))
+            lower = max(lower, float(previous[key]) - plinth_m)
+        pads.append(BuildingPad(bid, key, h_ref, src, lower, plinth_m))
         rings_of[bid] = tuple(rings)
+        if plinth_m > 0:
+            log.append(f"building {bid}: plinth {plinth_floors:g} floor(s) x {fh:.2f} m = {plinth_m:.2f} m, "
+                       f"ground plane reference {h_ref - plinth_m:.2f} m")
+        if meta is not None:
+            meta[bid] = {"level": level, "level_source": "sidecar" if "padLevel" in s else "ground_level",
+                         "ground_levels": sorted(set(gl)), "floor_height_m": fh, "plinth_floors": plinth_floors,
+                         "plinth_m": plinth_m, "mask": mask}
     return pads, rings_of
 
 
+@dataclass(frozen=True)
+class PortalContact:
+    """One door of a building: a portal edge between a floor node of the building and the outside (or another building)."""
+    edge_id: str
+    level: int  # level of the building side node
+    door_xy: tuple[float, float]  # building side node, grid CRS
+    outside_xy: tuple[float, float]  # the other end
+    outside_var: str  # height variable of the other end (cn:... or fp:<other building>:...)
+    role: Optional[str]  # door_role: front | back | other | None
+    step_free: bool
+    outside_dem_m: Optional[float] = None  # original DEM_0 at the outside point (bilinear)
+
+
+def building_portals(features: list[dict], cm: CampusModel, project,
+                     dem_at: Optional[Callable[[float, float], float]] = None) -> dict[str, list[PortalContact]]:
+    """
+    Doors per building: edges with edge_type "portal" that are in cm.edge_vars, one end a floor node of the building
+    (building_id and level), the other an outdoor node or a floor node of another building. dem_at reads the original DEM_0.
+    """
+    nfeat = {f["id"]: f for f in features if _kind(f) == "node"}
+    out: dict[str, list[PortalContact]] = {}
+    for f in features:
+        p = f.get("properties") or {}
+        eid = f.get("id")
+        if _kind(f) != "edge" or p.get("edge_type") != "portal" or eid not in cm.edge_vars:
+            continue
+        for side, other in ((p.get("from"), p.get("to")), (p.get("to"), p.get("from"))):
+            ns, no = nfeat.get(side), nfeat.get(other)
+            if ns is None or no is None or other not in cm.var_of:
+                continue
+            ps, po = ns.get("properties") or {}, no.get("properties") or {}
+            bid, lv = ps.get("building_id"), ps.get("level")
+            if bid is None or not isinstance(lv, int) or isinstance(lv, bool) or lv == 0:
+                continue
+            if po.get("building_id") == bid and po.get("level") is not None:
+                continue  # both ends inside the same building
+            door = project(*ns["geometry"]["coordinates"][:2])
+            outside = project(*no["geometry"]["coordinates"][:2])
+            z = float(dem_at(*outside)) if dem_at is not None else math.nan
+            role = p.get("door_role", ps.get("door_role"))
+            out.setdefault(bid, []).append(PortalContact(
+                eid, int(lv), (float(door[0]), float(door[1])), (float(outside[0]), float(outside[1])), cm.var_of[other],
+                role if isinstance(role, str) else None, p.get("step_free") is True, z if math.isfinite(z) else None))
+    return out
+
+
+def terraced_pads(grid: Grid, pads, rings_of: dict, meta: dict[str, dict], portals: dict[str, list[PortalContact]],
+                  heights: dict[str, float], cfg, log: list[str]):
+    """
+    grid_grading.Pad per building pad with its supported upper terraces. Candidates: the pad level, the door levels and the
+    ground levels; plane(pad level) = H - plinth_m, plane(L) = H(L) above. Returns (Pad list, building id -> report rows).
+    """
+    from grid_grading import Pad, TerraceCandidate, plan_terraces
+
+    out, plans = [], {}
+    for bp in pads:
+        if bp.var not in heights:
+            continue
+        bid = bp.building_id
+        m = meta.get(bid)
+        base = bp.h_pad(heights[bp.var])
+        if m is None:
+            out.append(Pad(bid, rings_of[bid], base))
+            continue
+        level = m["level"]
+        by_level: dict[int, list[PortalContact]] = {}
+        for c in portals.get(bid, []):
+            by_level.setdefault(c.level, []).append(c)
+        cands = []
+        for lv in sorted({level, *by_level, *m["ground_levels"]} - {0}):
+            cs = by_level.get(lv, [])
+            if lv == level:
+                plane, src = base, m["level_source"]
+            else:
+                hv = heights.get(f"fp:{bid}:{floor_id_of_level(lv)}")
+                plane = float(hv) if hv is not None and math.isfinite(hv) else math.nan
+                src = "portal" if cs else "ground_level"
+            storeys = storeys_between(level, lv) + m["plinth_floors"] if lv > level else (0.0 if lv == level else math.nan)
+            cands.append(TerraceCandidate(lv, plane, src, tuple(c.door_xy for c in cs), tuple(c.outside_xy for c in cs),
+                                          tuple(c.outside_dem_m for c in cs), storeys))
+        accepted, rows, plog = plan_terraces(grid, m["mask"], level, cands, cfg.building)
+        log += [f"building {bid}: {line}" for line in plog]
+        plans[bid] = rows
+        out.append(Pad(bid, rings_of[bid], base, tuple(accepted), level, m["floor_height_m"],
+                       tuple(c.door_xy for c in by_level.get(level, []))))
+    return out, plans
+
+
+def _cell_value(grid: Grid, data: np.ndarray, x: float, y: float) -> Optional[float]:
+    """Value of the cell that contains (x, y) (None outside the grid or missing)."""
+    c = int(math.floor((x - grid.origin_x) / grid.res))
+    r = int(math.floor((grid.origin_y - y) / grid.res))
+    if not (0 <= r < grid.height and 0 <= c < grid.width):
+        return None
+    v = float(data[r, c])
+    return v if math.isfinite(v) else None
+
+
+def building_extras(grid: Grid, g, pads, pad_list, rings_of: dict, meta: dict[str, dict],
+                    portals: dict[str, list[PortalContact]], plans: dict[str, list[dict]], heights: dict[str, float],
+                    cfg, log: list[str]) -> dict[str, dict]:
+    """
+    Per building report values after the grid: buried area on the ground plane (each ring cell against the terrace it
+    faces; the reference is the same partition at the reference ground plane), terraces and door residuals.
+    """
+    from grid_grading import buried_area, pad_ring, rasterize_polygon, ring_planes
+
+    good = [p.building_id for p in pad_list if np.isfinite(p.h)]
+    gidx = {bid: i for i, bid in enumerate(good)}
+    out: dict[str, dict] = {}
+    for bp in pads:
+        bid = bp.building_id
+        if bp.var not in heights:
+            continue
+        mask = rasterize_polygon(grid, rings_of[bid])
+        ring = pad_ring(mask)
+        h_pad, h_pad_ref = bp.h_pad(heights[bp.var]), bp.h_pad_ref
+        t_info = [t for t in (g.terraces or []) if t["building_id"] == bid]
+        rows = [dict(r) for r in plans.get(bid, [])]
+        e = {"plinth_m": float(bp.plinth_m), "h_pad_m": float(h_pad), "h_pad_ref_m": float(h_pad_ref),
+             "buried_single_plane_m2": buried_area(grid.data, ring, h_pad, grid.res)}
+        if len(t_info) <= 1 or bid not in gidx or g.terrace_of is None:
+            e["buried_ref_m2"] = buried_area(grid.data, ring, h_pad_ref, grid.res)
+            e["buried_m2"] = buried_area(grid.data, ring, h_pad, grid.res)
+            planes = None
+        else:
+            own = g.pad_id == gidx[bid]
+            cell_plane = np.where(own, g.terrace_h[np.maximum(g.terrace_of, 0)], np.nan)
+            planes = ring_planes(own, cell_plane)
+            shift = h_pad - h_pad_ref
+            e["buried_ref_m2"] = buried_area(grid.data, ring, planes - shift, grid.res)
+            e["buried_m2"] = buried_area(grid.data, ring, planes, grid.res)
+        for r in rows:
+            ti = next((t for t in t_info if t["level"] == r["level"]), None)
+            if ti is not None and r["supported"]:
+                r.update(plane_m=ti["plane_m"], cells=ti["cells"], boundary_step_m=ti["boundary_step_m"])
+                if ti["cells"] == 0:  # every pad cell went to another terrace: nothing is drawn at this plane
+                    r.update(supported=False, reason=f"{floor_id_of_level(r['level'])} terrace keeps no pad cell")
+                elif planes is not None:
+                    face = ring & (planes == ti["plane_m"])
+                    r["buried_m2"] = buried_area(grid.data, face, ti["plane_m"], grid.res)
+                    r["buried_ref_m2"] = buried_area(grid.data, face, ti["plane_m"] - (h_pad - h_pad_ref), grid.res)
+            elif r["supported"]:
+                r.update(supported=False, cells=0, reason=f"{floor_id_of_level(r['level'])} terrace keeps no pad cell")
+        e["terraces"] = rows
+        contacts = []
+        for c in portals.get(bid, []):
+            hv = heights.get(f"fp:{bid}:{floor_id_of_level(c.level)}")
+            front = _cell_value(grid, g.h, *c.outside_xy)
+            resid = float(hv) - front if hv is not None and math.isfinite(hv) and front is not None else None
+            if resid is not None and abs(resid) > cfg.building.door_sill_tol_m:
+                log.append(f"building {bid}: door {c.edge_id} ({floor_id_of_level(c.level)}) floor {hv:.2f} m vs terrain in "
+                           f"front {front:.2f} m: sill residual {resid:+.2f} m over door_sill_tol_m "
+                           f"{cfg.building.door_sill_tol_m:g} m")
+            contacts.append({"edge_id": c.edge_id, "level": c.level, "role": c.role, "step_free": c.step_free,
+                             "outside": c.outside_var, "door_residual_m": resid})
+        e["portal_contacts"] = contacts
+        out[bid] = e
+    return out
+
+
 def wls_problem(nodes: list[Node], edges: list[Edge], cm: Optional[CampusModel], features: list[dict],
-                soft: list[SoftFlat], scale: dict[str, float], pads, sidecar: dict, cfg, log: list[str], project=None):
+                soft: list[SoftFlat], scale: dict[str, float], pads, sidecar: dict, cfg, log: list[str], project=None,
+                plazas: Sequence = ()):
     """v1 structures -> node_wls.WlsProblem (stairs and ramps rebuilt from the campus features)."""
     from node_wls import BuildingMeasurement, DiffRow, FlatLink, HeightVar, Ramp, SoftFlatCand, Stair, WlsProblem
 
@@ -1438,7 +1725,7 @@ def wls_problem(nodes: list[Node], edges: list[Edge], cm: Optional[CampusModel],
         meas.append(BuildingMeasurement(mid, bid, key, float(d), float(sig) if _is_number(sig) and sig > 0 else None))
     return WlsProblem([HeightVar(n.key, n.kind, n.x, n.y) for n in nodes], rows, flats,
                       [SoftFlatCand(s.id, s.frm, s.to, s.length) for s in soft], stairs, ramps, list(pads), meas,
-                      dict(scale), only)
+                      dict(scale), only, list(plazas))
 
 
 def to_solve_result(w, solved: set[str], nodes: Optional[list[Node]] = None,
@@ -1482,13 +1769,44 @@ def resolve_config(a: argparse.Namespace):
     return cfg
 
 
-def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: dict[str, float]) -> dict:
+def _json_val(v):
+    """Report values: finite floats rounded through _num, ints / bools / strings / None as they are, lists and dicts deep."""
+    if isinstance(v, bool) or v is None or isinstance(v, str):
+        return v
+    if isinstance(v, (int, np.integer)):
+        return int(v)
+    if isinstance(v, (float, np.floating)):
+        return _num(float(v))
+    if isinstance(v, dict):
+        return {k: _json_val(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_json_val(x) for x in v]
+    return v
+
+
+def plaza_report_rows(g) -> list[dict]:
+    """solve_report plazas[]: one row per rasterised plaza (grid_grading.measure_plazas), JSON numbers only."""
+    keys = ("h_m", "area_m2", "cut_m3", "fill_m3", "max_cut_m", "max_fill_m", "flat_error_m")
+    out = []
+    for r in g.plaza_report:
+        row = {"id": r["id"], "name": r["name"], "h_source": r["h_source"]}
+        row.update({k: _num(r[k]) for k in keys})
+        row.update({k: int(r[k]) for k in ("cells", "hole_cells", "nodes", "overlap_pad_cells")})
+        row["bbox_xy"] = [_num(v) for v in r["bbox_xy"]]
+        out.append({k: row[k] for k in ("id", "name", "h_m", "h_source", "cells", "hole_cells", "area_m2", "cut_m3", "fill_m3",
+                                        "max_cut_m", "max_fill_m", "flat_error_m", "nodes", "overlap_pad_cells", "bbox_xy")})
+    return out
+
+
+def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: dict[str, float],
+                 extra_log: Sequence[str] = ()) -> dict:
     from solver_config import config_to_dict
 
     conf = config_to_dict(cfg)
     conf.pop("format", None)
     counts = {"road_cells", "pad_cells", "apron_cells", "island_cells", "mid_cells", "shoulder_unknowns", "cg_iterations",
-              "cg_converged", "vertical_steps_over_limit"}
+              "cg_converged", "vertical_steps_over_limit", "terraces", "terrace_wall_pairs", "drop_walls", "drop_wall_links",
+              "drop_wall_pins", "plazas", "plaza_cells"}
     grid_stats = {k: (int(v) if k in counts else _num(v)) for k, v in g.stats.items()}
     b_out = {}
     for bid, b in sorted(w.buildings.items()):
@@ -1498,7 +1816,13 @@ def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: di
                       "sigma_b_m": _num(b.sigma_b), "up_share": _num(b.up_share),
                       "buried_ref_m2": _num(extra.get("buried_ref_m2")), "buried_m2": _num(extra.get("buried_m2")),
                       "measurement_residuals_m": {k: _num(v) for k, v in sorted(b.measurement_residuals.items())}}
-    return {
+        # terraced pads / plinth floors (optional keys, campo-solve-report/1 unchanged)
+        b_out[bid].update({"plinth_m": _num(b.plinth_m), "h_pad_m": _num(b.h_pad), "h_pad_ref_m": _num(b.h_pad_ref),
+                           "pad_lower_bound_m": _num(b.pad_lower_bound), "lower_bound_basis": b.lower_bound_basis})
+        for k in ("buried_single_plane_m2", "terraces", "portal_contacts"):
+            if k in extra:
+                b_out[bid][k] = _json_val(extra[k])
+    out = {
         "format": REPORT_FORMAT, "engine": ENGINE_V2, "runId": run_id, "config": conf,
         "timings": {k: _num(v) for k, v in timings.items()},
         "grid": grid_stats,
@@ -1506,10 +1830,18 @@ def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: di
         "stairs": {sid.split(":", 1)[1]: {"riser_m": _num(s.riser_m), "sign": int(s.sign), "direction_source": s.direction_source}
                    for sid, s in sorted(w.stairs.items())},
         "ramps_capped": [rid.split(":", 1)[1] for rid in w.ramps_capped],
+        # drawn break lines with a drop (optional key, campo-solve-report/1 unchanged)
+        "dropWalls": [{"id": e["id"], "dropM": _num(e["drop_m"]), "measuredMin": _num(e["measured_min_m"]),
+                       "measuredMedian": _num(e["measured_median_m"]), "measuredMax": _num(e["measured_max_m"]),
+                       "links": int(e["links"]), "conflicts": int(e["conflicts"])}
+                      for e in g.wall_report],
         "outliers": [{"id": o.id, "kind": o.kind, "residual_m": _num(o.residual_m), "sigma_m": _num(o.sigma_m),
                       "ratio": _num(o.ratio)} for o in w.outliers],
-        "log": [_ascii(line) for line in g.log],
+        "log": [_ascii(line) for line in [*extra_log, *g.log]],
     }
+    if g.plaza_report:  # optional key, only with plazas: reports of a campus without them stay as they were
+        out["plazas"] = plaza_report_rows(g)
+    return out
 
 
 def _run_v2(a: argparse.Namespace):
@@ -1518,8 +1850,7 @@ def _run_v2(a: argparse.Namespace):
 
     from pyproj import Transformer
 
-    from grid_grading import Corridors, Pad, SoftPoint, buried_area, corridor_dem_values, effective_half_width, grade_grid
-    from grid_grading import pad_ring, rasterize_polygon
+    from grid_grading import Corridors, DropWall, SoftPoint, corridor_dem_values, effective_half_width, grade_grid
     from node_wls import solve_nodes
 
     t_start = time.perf_counter()
@@ -1543,7 +1874,7 @@ def _run_v2(a: argparse.Namespace):
         for line in cm.log:
             _say(line)
     elif any(b.low_side is not None and b.drop_m is not None for b in breaklines):
-        bl_log.append("breaklines with lowSide/dropM: height constraints need --campus (side separation only)")
+        bl_log.append("breaklines with lowSide/dropM: node height constraints need --campus (the grid still makes the drop)")
     for line in bl_log:
         _say(line)
     if a.method != "fusion":
@@ -1558,14 +1889,18 @@ def _run_v2(a: argparse.Namespace):
         auto = Path(a.store).parent / "buildings.json"
         sidecar = load_buildings_sidecar(auto, log) if auto.exists() else {}
     previous_h = {e["key"]: e.get("hM") for e in store.get("estimates", []) or [] if isinstance(e, dict) and "key" in e}
-    pads, rings_of = (building_pads(features, tf.transform, sidecar, grid, cm, cfg, log, previous_h)
-                      if cm is not None else ([], {}))
+    meta: dict[str, dict] = {}
+    pads, rings_of = (building_pads(features, tf.transform, sidecar, grid, cm, cfg, log, previous_h, meta,
+                                    a.floor_height_default) if cm is not None else ([], {}))
     keys = {n.key for n in nodes}
     for p in pads:
         if p.var not in keys:
             nodes.append(Node(p.var, "floor_plane"))
             keys.add(p.var)
-    problem = wls_problem(nodes, edges, cm, features, soft, drop_scale, pads, sidecar, cfg, log, project=tf.transform)
+    plazas = campus_plazas(features, tf.transform, grid, cfg, log)
+    pz_clusters, pz_members = plaza_clusters(plazas, features, cm, tf.transform, grid, cfg)
+    problem = wls_problem(nodes, edges, cm, features, soft, drop_scale, pads, sidecar, cfg, log, project=tf.transform,
+                          plazas=pz_clusters)
     for line in log:
         _say(line)
 
@@ -1596,21 +1931,33 @@ def _run_v2(a: argparse.Namespace):
 
     heights = {k: h for k, h in w.h.items() if not w.floating[k]}
     corr = campus_corridors(features, cm, tf.transform, heights) if cm is not None else Corridors.empty()
-    pad_list = [Pad(p.building_id, rings_of[p.building_id], w.h[p.var]) for p in pads if p.var in w.h]
+    dem0_at = lambda x, y: float(grid.sample_bilinear(x, y)[0])  # noqa: E731  (original DEM_0)
+    portals = building_portals(features, cm, tf.transform, dem0_at) if cm is not None else {}
+    t_log: list[str] = []
+    pad_list, plans = terraced_pads(grid, pads, rings_of, meta, portals, w.h, cfg, t_log)
+    for line in t_log:
+        _say(line)
     points = [SoftPoint(n.x, n.y, w.h[n.key], n.influence_r) for n in nodes
               if n.key.startswith("op:") and n.kind == "outdoor_point" and n.x is not None and n.key in w.h
               and not w.floating[n.key]]
     segs = [np.array([p0, p1], float) for bl in drawn for p0, p1 in zip(bl.coords[:-1], bl.coords[1:])]
+    # drawn lines with lowSide and dropM > 0 also make the drop on the grid (campus edge lines have no lowSide)
+    drop_walls = [DropWall(bl.id, bl.coords, bl.low_side, bl.drop_m) for bl in drawn
+                  if bl.low_side in ("left", "right") and bl.drop_m is not None and bl.drop_m > 0]
+    import dataclasses
+    plazas = [dataclasses.replace(p, nodes=len(pz_members.get(p.plaza_id, ())),
+                                  **({"h": w.plaza_h[f"pz:{p.plaza_id}"], "h_source": "wls"}
+                                     if p.h is None and f"pz:{p.plaza_id}" in w.plaza_h else {}))
+              for p in plazas]
     g = grade_grid(grid, corr, pad_list, cfg, breaklines=np.array(segs).reshape(-1, 2, 2) if segs else None,
-                   breakline_attenuation=a.breakline_attenuation, soft_points=points)
+                   breakline_attenuation=a.breakline_attenuation, soft_points=points, drop_walls=drop_walls,
+                   plazas=plazas)
     for line in g.log:
         _say(line)
-    b_extra = {}
-    for p in pads:
-        mask = rasterize_polygon(grid, rings_of[p.building_id])
-        ring = pad_ring(mask)
-        b_extra[p.building_id] = {"buried_ref_m2": buried_area(grid.data, ring, p.h_ref, grid.res),
-                                  "buried_m2": buried_area(grid.data, ring, w.h[p.var], grid.res)}
+    x_log: list[str] = []
+    b_extra = building_extras(grid, g, pads, pad_list, rings_of, meta, portals, plans, w.h, cfg, x_log)
+    for line in x_log:
+        _say(line)
 
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -1623,8 +1970,9 @@ def _run_v2(a: argparse.Namespace):
     (out / "store.solved.json").write_text(
         json.dumps(write_back(store, res, run_id, now_ms), ensure_ascii=False, indent=2), encoding="utf-8")
     timings = {"wls": t_wls, **g.timings, "run": time.perf_counter() - t_start}
-    (out / "solve_report.json").write_text(json.dumps(solve_report(cfg, w, g, b_extra, run_id, timings), indent=2) + "\n",
-                                           encoding="utf-8")
+    (out / "solve_report.json").write_text(
+        json.dumps(solve_report(cfg, w, g, b_extra, run_id, timings, extra_log=[*t_log, *x_log]), indent=2) + "\n",
+        encoding="utf-8")
     _say(f"grid: {int(g.stats['road_cells'])} road, {int(g.stats['pad_cells'])} pad, {int(g.stats['island_cells'])} island, "
          f"{int(g.stats['shoulder_unknowns'])} shoulder cells, CG {int(g.stats['cg_iterations'])} iteration(s), "
          f"{g.timings['total']:.2f} s")

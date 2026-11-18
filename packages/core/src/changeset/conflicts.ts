@@ -29,6 +29,10 @@ export function featureOf(state: EditState, id: string): CampoFeature | undefine
       const r = state.rooms[id]!;
       return { type: 'Feature', id, geometry: { type: 'Polygon', coordinates: clone(r.polygon) }, properties: clone(r.props) };
     }
+    case 'plazas': {
+      const p = state.plazas[id]!;
+      return { type: 'Feature', id, geometry: { type: 'Polygon', coordinates: clone(p.polygon) }, properties: clone(p.props) };
+    }
     case 'edges': {
       const e = state.edges[id]!;
       const from = state.nodes[e.props.from];
@@ -199,6 +203,9 @@ export function writeChanges(draft: EditState, cs: Changeset): void {
         break;
       case 'room':
         draft.rooms[f.id] = { id: f.id, polygon: f.geometry.coordinates as Position[][], props: f.properties };
+        break;
+      case 'plaza':
+        draft.plazas[f.id] = { id: f.id, polygon: f.geometry.coordinates as Position[][], props: f.properties };
         break;
       case 'edge': {
         const coords = f.geometry.coordinates as Position[];

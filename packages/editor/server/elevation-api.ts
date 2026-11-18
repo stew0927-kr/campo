@@ -3,7 +3,8 @@
 //   PUT  /api/elevation/:id/store      ← { text }    the ElevationStore (break lines drawn in the editor). No absolute pressure.
 //   POST /api/elevation/:id/recompute  ← { request, files }  recomputeRequest JSON and the campus as it would be saved
 //        → { derived, mode: 'solved' | 'existing', log }
-//   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null }  solve/corrected_dem first, else dem.json (server/terrain.ts)
+//   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null, walls: TerrainWall[] }  solve/corrected_dem first, else dem.json;
+//        walls: 1 m sections across the store's break lines with lowSide and dropM > 0 (server/terrain.ts terrainWalls)
 // Per campus folder <elevationDir>/<id>/ (default derived/<id>/, git-ignored):
 //   store.json      ElevationStore (copy the survey app's elevation_store.json here)
 //   dem.json        campo-grid DEM meta (dem_prep.py output, read only). CAMPO_ELEVATION_DEM overrides it.
@@ -23,7 +24,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { HttpError, writeCampusFiles } from './campus-api.ts';
 import { findPython, outputTail, parseCommand, pythonCandidates, showCommand, type Probe, type PythonCommand } from './python.ts';
-import { GridFormatError, readGridFile } from './terrain.ts';
+import { GridFormatError, readTerrain } from './terrain.ts';
 
 const CAMPUS_ID = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_BODY_BYTES = 50 * 1024 * 1024;
@@ -193,9 +194,13 @@ export function createElevationApi(opts: ElevationApiOptions) {
       }
       if (m[2] === '/terrain' && req.method === 'GET') {
         const corrected = join(paths.solve, 'corrected_dem.json');
-        if (await exists(corrected)) return send(res, 200, { grid: await readGridFile(corrected, 'corrected') });
-        if (await exists(paths.dem)) return send(res, 200, { grid: await readGridFile(paths.dem, 'dem') });
-        return send(res, 200, { grid: null });
+        // The walls come from the store's drawn lines; a store that cannot be read gives none, the relief still comes.
+        const store = await readIfExists(paths.store).catch(() => null);
+        // 평지 heights come from the solver's report; a report that cannot be read gives none, the relief still comes.
+        const report = await readIfExists(join(paths.solve, 'solve_report.json')).catch(() => null);
+        if (await exists(corrected)) return send(res, 200, await readTerrain(corrected, 'corrected', store, undefined, report));
+        if (await exists(paths.dem)) return send(res, 200, await readTerrain(paths.dem, 'dem', store, undefined, report));
+        return send(res, 200, { grid: null, walls: [] });
       }
       if (m[2] === '/store' && req.method === 'PUT') {
         const body = JSON.parse(await readBody(req)) as { text?: unknown };
@@ -244,6 +249,8 @@ export function createElevationApi(opts: ElevationApiOptions) {
             const out = join(work, 'solve');
             const derivedOut = join(work, 'elevation.json');
             const args = [
+              // 평지 is held flat by height solver v2 only: a campus with one always runs v2.
+              ...(campusHasPlaza(files) ? ['--engine', 'v2'] : []),
               '--store', paths.store, '--dem', paths.dem, ...(opts.sigmaDem ? ['--sigma-dem', opts.sigmaDem] : []),
               '--campus', campus, '--out', out, '--derived-out', derivedOut, '--dirty', dirty,
               ...(await exists(previousResidual) ? ['--previous-residual', previousResidual] : []),
@@ -276,6 +283,19 @@ export function createElevationApi(opts: ElevationApiOptions) {
       return send(res, status, { error: (err as Error).message });
     }
   };
+}
+
+/** Whether the campus files hold a plaza (평지) Feature. Files that are not FeatureCollection JSON are skipped. */
+export function campusHasPlaza(files: Readonly<Record<string, string>>): boolean {
+  return Object.entries(files).some(([path, text]) => {
+    if (!path.endsWith('.geojson') || !text.includes('plaza')) return false;
+    try {
+      const fc = JSON.parse(text) as { features?: { properties?: { kind?: unknown } }[] };
+      return (fc.features ?? []).some((f) => f?.properties?.kind === 'plaza');
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Replace the folder `to` by `from` (same file system): the old one is moved aside first, then removed. */

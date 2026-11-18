@@ -26,6 +26,7 @@ import {
   type NodeProperties,
   type Observation,
   type Override,
+  type PlazaProperties,
   type RoomProperties,
 } from '@campo/core';
 
@@ -169,7 +170,7 @@ export function stateToCampus(state: EditState, meta: CampusMeta, passthrough: r
 }
 
 /** Properties of any Feature by id (for the 속성 tab). */
-export type AnyProps = NodeProperties | EdgeProperties | BuildingProperties | RoomProperties;
+export type AnyProps = NodeProperties | EdgeProperties | BuildingProperties | RoomProperties | PlazaProperties;
 
 export function propsOf(state: EditState, id: string): { id: string; props: AnyProps } | undefined {
   const where = findFeature(state, id);
@@ -179,5 +180,6 @@ export function propsOf(state: EditState, id: string): { id: string; props: AnyP
     case 'edges': return { id, props: state.edges[where.key]!.props };
     case 'buildings': return { id, props: state.buildings[where.key]!.props };
     case 'rooms': return { id, props: state.rooms[where.key]!.props };
+    case 'plazas': return { id, props: state.plazas[where.key]!.props };
   }
 }

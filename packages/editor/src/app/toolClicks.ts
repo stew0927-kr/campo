@@ -47,8 +47,8 @@ export type ToolClick = (click: MapClick) => void;
 export function toolClicks(env: ToolEnv): Record<Tool, ToolClick | null> {
   const { state, ctx, ui, strip, perform, patchUi, setStrip, openDialog, followScope, info, fail, clearNotice } = env;
 
-  const onSelect: ToolClick = ({ node, edge, building, shift }) => {
-    const hit = node?.id ?? edge?.id ?? building?.id ?? null;
+  const onSelect: ToolClick = ({ node, edge, building, plaza, shift }) => {
+    const hit = node?.id ?? edge?.id ?? building?.id ?? plaza?.id ?? null;
     patchUi((u) => ({ selection: nextSelection(u.selection, hit, shift), ...(hit ? { panelTab: 'properties' as const } : {}) }));
     clearNotice();
   };
@@ -177,6 +177,7 @@ export function toolClicks(env: ToolEnv): Record<Tool, ToolClick | null> {
     breakline: null,
     outline: null,
     building: null,
+    plaza: null,
     'osm-building': ({ position }) => env.importOsm(position),
     'add-node': onAddNode,
     // An edge between two points linked to other floors is made on those floors too (sync.ts).

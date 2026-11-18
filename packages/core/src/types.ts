@@ -198,7 +198,32 @@ export interface RoomFeature {
   properties: RoomProperties;
 }
 
-export type CampoFeature = BuildingFeature | NodeFeature | EdgeFeature | RoomFeature;
+/** Surface of a plaza (평지). Display only: routing never reads it. */
+export const PLAZA_SURFACES = ['paved', 'gravel', 'grass', 'deck', 'other'] as const;
+export type PlazaSurface = (typeof PLAZA_SURFACES)[number];
+
+/**
+ * A flat ground area (평지, SPEC-v0.2 §2.8): an outline drawn on the map that the height solver v2 grades to one height.
+ * Rings after the first are holes. Routing walks straight across it to where it meets the path network.
+ */
+export interface PlazaProperties extends CommonProperties {
+  kind: 'plaza';
+  name?: string;
+  /** Display only. Routing never reads it. */
+  surface?: PlazaSurface;
+  /** Orthometric height (m). When set the solver holds the plaza at it (H_plaza). */
+  fixed_height_m?: number;
+}
+
+export interface PlazaFeature {
+  type: 'Feature';
+  id: string;
+  /** [outer, ...holes] */
+  geometry: { type: 'Polygon'; coordinates: Position[][] };
+  properties: PlazaProperties;
+}
+
+export type CampoFeature = BuildingFeature | NodeFeature | EdgeFeature | RoomFeature | PlazaFeature;
 
 export interface CampoFeatureCollection {
   type: 'FeatureCollection';
@@ -302,6 +327,12 @@ export const ERROR_CODES = {
   mapLimitsInvalid: 'map-limits-invalid',
   /** E15: a floor outline of a building is for a level it does not have, or a ring is not closed (4+ positions, first = last). */
   floorOutlineInvalid: 'floor-outline-invalid',
+  /** E16: a plaza ring is not closed, has fewer than 4 positions, crosses itself, or the plaza has more than 500 positions. */
+  plazaRingInvalid: 'plaza-ring-invalid',
+  /** E17: a plaza hole leaves the outline, comes within 0.1 m of another ring, or overlaps another hole. */
+  plazaHoleInvalid: 'plaza-hole-invalid',
+  /** E18: the solid areas of two plazas overlap. */
+  plazaOverlap: 'plaza-overlap',
 } as const;
 
 export const WARNING_CODES = {
@@ -331,6 +362,10 @@ export const WARNING_CODES = {
   flatExactNotFlat: 'flat-exact-not-flat',
   /** W16 */
   steepRamp: 'steep-ramp',
+  /** W17: a plaza touches no outdoor node and no walkable edge, so routes cannot cross it. */
+  plazaNoContact: 'plaza-no-contact',
+  /** W18: a plaza's solid area overlaps a building outline. */
+  plazaOverlapsBuilding: 'plaza-overlaps-building',
 } as const;
 
 // ---- Overrides (SPEC-v0.2 §2.5) ----

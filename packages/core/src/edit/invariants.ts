@@ -66,7 +66,7 @@ export function checkInvariants(state: EditState, codes?: readonly InvariantCode
       if (first !== undefined) push('I3', [id], `id "${id}"가 ${first}와 ${where}에 겹칩니다.`);
       else seen.set(id, where);
     };
-    for (const [coll, record] of [['nodes', state.nodes], ['edges', state.edges], ['rooms', state.rooms]] as const) {
+    for (const [coll, record] of [['nodes', state.nodes], ['edges', state.edges], ['rooms', state.rooms], ['plazas', state.plazas]] as const) {
       for (const [key, f] of Object.entries(record)) {
         if (f.id !== key) push('I3', [key, f.id], `${coll}의 키 "${key}"와 id "${f.id}"가 다릅니다.`);
         see(f.id, coll);

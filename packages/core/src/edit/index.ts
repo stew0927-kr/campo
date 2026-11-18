@@ -17,6 +17,7 @@ export {
   type EditBuilding,
   type EditEdge,
   type EditNode,
+  type EditPlaza,
   type EditRoom,
   type EditState,
   type Scope,
@@ -38,7 +39,7 @@ export { deleteBuilding, previewDeleteBuilding, type DeleteBuildingPreview } fro
 export { moveNode, movedTogether } from './actions/moveNode.ts';
 export { mergeNodes, mergeSurvivor, IMPORTANT_NODE_TYPES } from './actions/mergeNodes.ts';
 export { splitEdgeAt, splitPlan, type SplitOptions, type SplitPlan } from './actions/splitEdgeAt.ts';
-export { setProps, LOCKED_PROPS, type PropsPatch } from './actions/setProps.ts';
+export { setProps, LOCKED_PROPS, PLAZA_EDITABLE_PROPS, PLAZA_HEIGHT_MAX_M, PLAZA_HEIGHT_MIN_M, type PropsPatch } from './actions/setProps.ts';
 export { addBuilding, type NewBuilding } from './actions/addBuilding.ts';
 export { BUILDING_CODE, renameBuilding, renamedElevatorId } from './actions/renameBuilding.ts';
 export { setBuildingLevels } from './actions/setBuildingLevels.ts';
@@ -48,6 +49,10 @@ export { setEdgeElevation, type EdgeElevationValues } from './actions/setEdgeEle
 export { compose, type ComposeStep } from './compose.ts';
 export { addRoom, type NewRoom } from './actions/addRoom.ts';
 export { deleteRooms, doorsOfRoom } from './actions/deleteRooms.ts';
+export { addPlaza, overlappingPlaza, type NewPlaza } from './actions/addPlaza.ts';
+export { addPlazaHole } from './actions/addPlazaHole.ts';
+export { removePlazaHole } from './actions/removePlazaHole.ts';
+export { deletePlazas } from './actions/deletePlazas.ts';
 export { applyChangeset } from './actions/applyChangeset.ts';
 export * from './macros/index.ts';
 export * from './overrides.ts';

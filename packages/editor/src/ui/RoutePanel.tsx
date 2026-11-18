@@ -1,5 +1,6 @@
 import { useId, type KeyboardEvent } from 'react';
 import type { PointRouteResult } from '@campo/core';
+import { plazaLines } from '../model/plazaRoute.ts';
 import { GRADE_LIMITS, slopeSummary } from '../model/elevation.ts';
 import type { Place } from '../model/places.ts';
 import type { RouteKind } from './ui-state.ts';
@@ -35,6 +36,10 @@ interface Props {
   nearest: { kind: 'any' | 'wheelchair'; result: PointRouteResult } | null;
   /** buildGraph's graph.warnings: edges the route search had to leave out. Shown when there is no route. */
   warnings: string[];
+  /** Notes about the picked ends (a point in a plaza's hole). */
+  notices?: readonly string[];
+  /** A plaza's name for the route card's plaza line ('평지 …을 가로질러 …'); its id when it has none. */
+  plazaName?: (plazaId: string) => string;
   onPick: (end: End, id: string | null) => void;
   onDirect: (end: End) => void;
   onNearest: (kind: 'any' | 'wheelchair') => void;
@@ -43,7 +48,8 @@ interface Props {
 
 /** Routes come straight from core (findRouteBetween, findNearestRestroomFrom); this only shows them. */
 export function RoutePanel(p: Props) {
-  const { places, fromId, toId, fromPoint, toPoint, picking, results, shown, nearest, warnings } = p;
+  const { places, fromId, toId, fromPoint, toPoint, picking, results, shown, nearest, warnings, notices = [] } = p;
+  const nameOf = p.plazaName ?? ((id: string) => id);
   const fromList = useId();
   const toList = useId();
   const hasFrom = fromId !== null || fromPoint;
@@ -100,6 +106,7 @@ export function RoutePanel(p: Props) {
       {places.length === 0 && <p className="route-note">이름 있는 장소가 아직 없습니다. [직접 선택]으로 지도에서 출발·도착 위치를 눌러 바로 경로를 볼 수 있습니다.</p>}
       {field('from', '출발', fromId, fromPoint)}
       {field('to', '도착', toId, toPoint)}
+      {notices.map((n) => <p key={n} className="route-note route-notice" role="status">{n}</p>)}
       <div className="nearest" role="group" aria-label="가장 가까운 화장실">
         <button type="button" className="nearest-any" disabled={!hasFrom} title={hasFrom ? undefined : '출발 지점을 먼저 고르세요'} onClick={() => p.onNearest('any')}>{NEAREST.any}</button>
         <button type="button" className="nearest-wheelchair" disabled={!hasFrom} title={hasFrom ? undefined : '출발 지점을 먼저 고르세요'} onClick={() => p.onNearest('wheelchair')}>{NEAREST.wheelchair}</button>
@@ -109,6 +116,7 @@ export function RoutePanel(p: Props) {
           title={nearest.kind === 'wheelchair' ? '가장 가까운 휠체어 화장실 (휠체어 경로)' : '가장 가까운 화장실'}
           className={nearest.kind === 'wheelchair' ? 'route-wheelchair' : 'route-shortest'}
           result={nearest.result}
+          nameOf={nameOf}
         />
       )}
       {hasFrom && hasTo && !nearest && results.length > 0 && (
@@ -122,6 +130,7 @@ export function RoutePanel(p: Props) {
           result={result}
           badge={kind === fastest ? '가장 빠름' : undefined}
           toggle={{ on: shown.includes(kind), onChange: () => p.onToggle(kind) }}
+          nameOf={nameOf}
         />
       ))}
       {warnings.length > 0 && (
@@ -143,9 +152,12 @@ interface CardProps {
   badge?: string | undefined;
   /** 지도에 표시: draw this route on the map. */
   toggle?: { on: boolean; onChange: () => void };
+  nameOf: (plazaId: string) => string;
 }
 
-function RouteCard({ title, className, result: r, badge, toggle }: CardProps) {
+function RouteCard({ title, className, result: r, badge, toggle, nameOf }: CardProps) {
+  const plaza = r.found ? plazaLines(r, nameOf) : [];
+  const direct = r.found && r.startPlaza?.contact.kind === 'direct';
   // With a toggle the whole card is the switch: a press anywhere on it shows or hides the route on the map.
   const switchable = toggle !== undefined && r.found;
   const on = switchable && toggle.on;
@@ -183,9 +195,10 @@ function RouteCard({ title, className, result: r, badge, toggle }: CardProps) {
             <p className="route-note">계단·턱 여부를 확인하지 못한 구간 {r.uncertainSegments.length}곳을 지납니다.</p>
           )}
           <SlopeRow segments={r.slopeSegments} />
+          {plaza.map((line) => <p key={line} className="route-note route-plaza">{line}</p>)}
           {r.steps.length > 0 ? (
             <ol className="route-steps">{r.steps.map((s, i) => <li key={i} className={s.steep ? 'step-steep' : undefined}>{s.text}</li>)}</ol>
-          ) : <p className="route-note">출발지와 도착지가 같은 지점에 이어져 있습니다.</p>}
+          ) : direct ? null : <p className="route-note">출발지와 도착지가 같은 지점에 이어져 있습니다.</p>}
         </>
       ) : <p className="route-note">경로 없음. {r.message}</p>}
     </section>

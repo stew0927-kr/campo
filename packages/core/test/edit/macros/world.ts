@@ -68,6 +68,7 @@ export function world(): EditState {
     rooms: {
       r_T_1_101: { id: 'r_T_1_101', polygon: [ring(5, 2, 15, 10)], props: { kind: 'room', building_id: B, level: 1, room_ref: '101', source: 'x', rev: 1 } },
     },
+    plazas: {},
   });
 }
 

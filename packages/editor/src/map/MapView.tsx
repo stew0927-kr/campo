@@ -5,7 +5,8 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { TerraDraw, TerraDrawLineStringMode, TerraDrawPolygonMode, type TerraDrawMouseEvent } from 'terra-draw';
 import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
 import type { FeatureCollection } from 'geojson';
-import { edgeCoords, scopeOfNode, type EditBuilding, type EditEdge, type EditNode, type EditState, type Position } from '@campo/core';
+import { edgeCoords, scopeOfNode, type EditBuilding, type EditEdge, type EditNode, type EditPlaza, type EditState, type Position } from '@campo/core';
+import { plazaAt } from '../model/plaza.ts';
 import type { DragResult, DropTarget, HandleDrag, NodeDrag } from '../model/drag.ts';
 import type { Preview } from '../model/doors.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
@@ -19,7 +20,7 @@ import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } fro
 import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
 import {
-  BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, OUTLINE_LAYERS, OUTLINE_SOURCE,
+  BREAKLINE_LAYERS, DATA_LAYERS, DATA_SOURCE, DRAG_LAYERS, DRAG_SOURCE, ELEVATION_COLORS, ELEVATION_SOURCE, PLAZA_COLORS, OUTLINE_LAYERS, OUTLINE_SOURCE,
   PREVIEW_LAYERS, PREVIEW_SOURCE, ROUTE_LAYERS, ROUTE_SOURCE, SLOPE_LAYERS, WAY_COLORS,
   dragGeoJSON, dragMembers, elevationGeoJSON, hideInData, outlineGeoJSON, previewGeoJSON, routesGeoJSON, toDisplayGeoJSON,
   type BreaklineShape, type OutlineHover, type RouteLine,
@@ -86,6 +87,8 @@ export interface MapClick {
   edge: EditEdge | undefined;
   /** Outline of a building within PICK_PX, when neither was hit. */
   building: EditBuilding | undefined;
+  /** The plaza (평지) whose solid area holds the click, when none of the above was hit (outdoors only). */
+  plaza?: EditPlaza;
   /** Shift was held (add to / remove from the selection). */
   shift: boolean;
   /** The scope of the clicked place: the building floor under the pointer, the outdoors, or the outdoors forced by the O key. */
@@ -128,9 +131,11 @@ interface Props {
   /** Preview that stays (the doors of a 강의실 자동 연결). */
   previewShapes: FeatureCollection | null;
   onPolygonDrawn: (ring: Position[]) => void;
+  /** 평지: the first corner of the ring being drawn was put down (the status line says whether it will be a hole). */
+  onPlazaDraft?: (first: Position) => void;
   onMapClick: (click: MapClick) => void;
   /** Right-click: the node, drawn 고도 단절선 or edge under the pointer (if any) and where the menu goes (page coordinates). */
-  onContextMenu: (hit: { node: EditNode | undefined; edge: EditEdge | undefined; building?: EditBuilding; breakline?: BreaklineHit; x: number; y: number }) => void;
+  onContextMenu: (hit: { node: EditNode | undefined; edge: EditEdge | undefined; building?: EditBuilding; plaza?: EditPlaza; breakline?: BreaklineHit; x: number; y: number }) => void;
   /** 고도 단절선 selection and editing. */
   breaklineEdit: BreaklineEditView;
   /** Shift + drag on the map: the nodes inside the box. */
@@ -173,7 +178,7 @@ function applicable(v: ReturnType<typeof viewLimits>) {
 setWorkerUrl(workerUrl);
 
 const KIND_COLOR: Record<OutdoorKind, string> = { flat: WAY_COLORS.footway, steps: WAY_COLORS.steps, ramp: WAY_COLORS.ramp };
-const DRAW_MODE: Partial<Record<Tool, string>> = { path: 'linestring', building: 'polygon', breakline: 'linestring' };
+const DRAW_MODE: Partial<Record<Tool, string>> = { path: 'linestring', building: 'polygon', plaza: 'polygon', breakline: 'linestring' };
 
 interface ActiveDrag {
   ctl: NodeDrag | HandleDrag;
@@ -191,6 +196,8 @@ export function MapView(props: Props) {
   const draftLayers = useRef<Layer[]>([]);
   const pushDeck = () => overlayRef.current?.setProps({ layers: [...latest.current.deck, ...draftLayers.current] });
   const drawRef = useRef<TerraDraw | null>(null);
+  /** 평지: the first corner of the ring being drawn was reported (onPlazaDraft). */
+  const plazaDraft = useRef(false);
   /** The scope the first click of the path being drawn fixed (null between paths). */
   const pathScope = useRef<Scope | null>(null);
   const hoverShapes = useRef<FeatureCollection | null>(null);
@@ -458,7 +465,8 @@ export function MapView(props: Props) {
       if (tool === 'path' && !pathScope.current) pathScope.current = autoScope(at);
       if (drawTool) return; // Terra Draw owns clicks while drawing
       const { node, edge, building } = picked ?? pickAt(e.point, latest.current.canPick, true);
-      latest.current.onMapClick({ position: at, node, edge, building, shift: e.originalEvent.shiftKey, scope: autoScope(at) });
+      const plaza = !node && !edge && !building && latest.current.scope.kind === 'outdoor' ? plazaAt(latest.current.state, at) : undefined;
+      latest.current.onMapClick({ position: at, node, edge, building, ...(plaza ? { plaza } : {}), shift: e.originalEvent.shiftKey, scope: autoScope(at) });
     });
     // Right-click: the browser's own menu is blocked on the map only (this listener sits on MapLibre's container), and the editor's menu opens.
     map.on('contextmenu', (e) => {
@@ -473,6 +481,7 @@ export function MapView(props: Props) {
       // A drawing tool keeps the right button to itself only while a shape is being drawn.
       if (DRAW_MODE[latest.current.tool] && drawingNow()) return;
       const { node, edge, building } = pickAt(e.point, (n) => nodeStrong(n, latest.current.scope), true);
+      const plaza = !node && !edge && !building && latest.current.scope.kind === 'outdoor' ? plazaAt(latest.current.state, toMap(e.point)) : undefined;
       let breakline: BreaklineHit | undefined;
       if (!node) {
         const sel = drawnLine(latest.current.breaklineEdit.selected);
@@ -488,7 +497,7 @@ export function MapView(props: Props) {
       }
       const x = e.originalEvent.clientX;
       const y = e.originalEvent.clientY;
-      latest.current.onContextMenu(breakline ? { node: undefined, edge: undefined, breakline, x, y } : { node, edge, ...(building ? { building } : {}), x, y });
+      latest.current.onContextMenu(breakline ? { node: undefined, edge: undefined, breakline, x, y } : { node, edge, ...(building ? { building } : {}), ...(plaza ? { plaza } : {}), x, y });
     });
 
     // ---- node drag and box select (선택 tool) ----
@@ -896,6 +905,7 @@ export function MapView(props: Props) {
       draw.on('finish', (id) => {
         const drawn = draw.getSnapshotFeature(id);
         draw.removeFeatures([id]);
+        plazaDraft.current = false;
         if (drawn?.geometry.type === 'LineString' && latest.current.tool === 'breakline') {
           latest.current.onBreaklineDrawn((drawn.geometry.coordinates as Position[]).map(([x, y]) => [x!, y!]));
         } else if (drawn?.geometry.type === 'LineString') {
@@ -913,6 +923,15 @@ export function MapView(props: Props) {
       });
       // With 지형 3D on, the relief hides the map's own drawing: the shape being drawn is shown on it as well.
       draw.on('change', () => {
+        // 평지: tell once, when the first corner of a ring goes down, whether the ring will be a hole.
+        if (latest.current.tool === 'plaza' && !plazaDraft.current) {
+          const poly = draw.getSnapshot().find((f) => f.geometry.type === 'Polygon');
+          const first = poly?.geometry.type === 'Polygon' ? (poly.geometry.coordinates[0]?.[0] as Position | undefined) : undefined;
+          if (first) {
+            plazaDraft.current = true;
+            latest.current.onPlazaDraft?.([first[0], first[1]]);
+          }
+        }
         const surface = latest.current.surface;
         const shapes = surface ? draw.getSnapshot().flatMap((f) => {
           if (f.geometry.type === 'LineString') return [f.geometry.coordinates as Position[]];
@@ -921,7 +940,7 @@ export function MapView(props: Props) {
         }).filter((c) => c.length >= 2) : [];
         if (shapes.length === 0 && draftLayers.current.length === 0) return;
         const { tool: t, outdoorKind: kind } = latest.current;
-        const color = t === 'breakline' ? ELEVATION_COLORS.breakline : t === 'building' ? '#1e2933' : KIND_COLOR[kind];
+        const color = t === 'breakline' ? ELEVATION_COLORS.breakline : t === 'building' ? '#1e2933' : t === 'plaza' ? PLAZA_COLORS.line : KIND_COLOR[kind];
         draftLayers.current = shapes.length === 0 || !surface ? [] : [new PathLayer({
           id: 'draw-draft', data: shapes.map((c) => drapePath(c, surface.ground, 2, 0.6)), getPath: (d: [number, number, number][]) => d,
           getColor: hexColor(color), getWidth: 4, widthUnits: 'pixels', capRounded: true, jointRounded: true, parameters: { depthCompare: 'always' },
@@ -1001,6 +1020,7 @@ export function MapView(props: Props) {
   useEffect(() => {
     whenReady(() => drawRef.current?.setMode(DRAW_MODE[tool] ?? 'static'));
     pathScope.current = null;
+    plazaDraft.current = false;
     hoverShapes.current = null;
     if (badgeEl.current) badgeEl.current.hidden = true;
     pushPreview();
@@ -1042,6 +1062,14 @@ export function MapView(props: Props) {
   useEffect(() => {
     whenReady(() => drawRef.current?.setModeStyles('linestring', lineStyles(tool === 'breakline' ? ELEVATION_COLORS.breakline : KIND_COLOR[outdoorKind])));
   }, [outdoorKind, tool]);
+  // 평지 draws its ring in the plaza colour, 건물 외곽선 in the dark outline colour.
+  useEffect(() => {
+    const ink = tool === 'plaza' ? PLAZA_COLORS.line : '#1e2933';
+    whenReady(() => drawRef.current?.setModeStyles('polygon', {
+      fillColor: tool === 'plaza' ? PLAZA_COLORS.fill : '#1e2933', fillOpacity: tool === 'plaza' ? 0.25 : 0.08, outlineColor: ink, outlineWidth: 2,
+      closingPointColor: '#ffffff', closingPointOutlineColor: ink, closingPointWidth: 6, closingPointOutlineWidth: 2,
+    }));
+  }, [tool]);
 
   useEffect(() => {
     whenReady((map) => {

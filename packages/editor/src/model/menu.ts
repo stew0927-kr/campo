@@ -53,7 +53,7 @@ export function menuFields(state: EditState, ids: readonly string[]): MenuFields
   const sel = classify(state, ids);
   const nodes = sel.nodes.map((id) => state.nodes[id]!);
   const edges = sel.edges.map((id) => state.edges[id]!);
-  const pure = sel.rooms.length === 0 && sel.buildings.length === 0;
+  const pure = sel.rooms.length === 0 && sel.buildings.length === 0 && sel.plazas.length === 0;
   let kinds: Option[] | null = null;
   if (pure && nodes.length > 0 && edges.length === 0) {
     const indoor = nodes.every((n) => n.props.building_id !== null);
@@ -132,5 +132,6 @@ export function selectionSummary(state: EditState, ids: readonly string[]): stri
   if (sel.edges.length > 0) parts.push(`구간 ${sel.edges.length}개`);
   if (sel.rooms.length > 0) parts.push(`강의실 영역 ${sel.rooms.length}개`);
   if (sel.buildings.length > 0) parts.push(`건물 ${sel.buildings.length}개`);
+  if (sel.plazas.length > 0) parts.push(`평지 ${sel.plazas.length}개`);
   return parts.join(', ');
 }

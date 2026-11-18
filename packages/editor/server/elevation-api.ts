@@ -196,8 +196,10 @@ export function createElevationApi(opts: ElevationApiOptions) {
         const corrected = join(paths.solve, 'corrected_dem.json');
         // The walls come from the store's drawn lines; a store that cannot be read gives none, the relief still comes.
         const store = await readIfExists(paths.store).catch(() => null);
-        if (await exists(corrected)) return send(res, 200, await readTerrain(corrected, 'corrected', store));
-        if (await exists(paths.dem)) return send(res, 200, await readTerrain(paths.dem, 'dem', store));
+        // 평지 heights come from the solver's report; a report that cannot be read gives none, the relief still comes.
+        const report = await readIfExists(join(paths.solve, 'solve_report.json')).catch(() => null);
+        if (await exists(corrected)) return send(res, 200, await readTerrain(corrected, 'corrected', store, undefined, report));
+        if (await exists(paths.dem)) return send(res, 200, await readTerrain(paths.dem, 'dem', store, undefined, report));
         return send(res, 200, { grid: null, walls: [] });
       }
       if (m[2] === '/store' && req.method === 'PUT') {
@@ -247,6 +249,8 @@ export function createElevationApi(opts: ElevationApiOptions) {
             const out = join(work, 'solve');
             const derivedOut = join(work, 'elevation.json');
             const args = [
+              // 평지 is held flat by height solver v2 only: a campus with one always runs v2.
+              ...(campusHasPlaza(files) ? ['--engine', 'v2'] : []),
               '--store', paths.store, '--dem', paths.dem, ...(opts.sigmaDem ? ['--sigma-dem', opts.sigmaDem] : []),
               '--campus', campus, '--out', out, '--derived-out', derivedOut, '--dirty', dirty,
               ...(await exists(previousResidual) ? ['--previous-residual', previousResidual] : []),
@@ -279,6 +283,19 @@ export function createElevationApi(opts: ElevationApiOptions) {
       return send(res, status, { error: (err as Error).message });
     }
   };
+}
+
+/** Whether the campus files hold a plaza (평지) Feature. Files that are not FeatureCollection JSON are skipped. */
+export function campusHasPlaza(files: Readonly<Record<string, string>>): boolean {
+  return Object.entries(files).some(([path, text]) => {
+    if (!path.endsWith('.geojson') || !text.includes('plaza')) return false;
+    try {
+      const fc = JSON.parse(text) as { features?: { properties?: { kind?: unknown } }[] };
+      return (fc.features ?? []).some((f) => f?.properties?.kind === 'plaza');
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Replace the folder `to` by `from` (same file system): the old one is moved aside first, then removed. */

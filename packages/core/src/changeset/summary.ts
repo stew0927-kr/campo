@@ -30,6 +30,8 @@ export function groupOf(state: EditState, id: string): ChangeGroupKey {
       return state.nodes[id]!.props.building_id ?? OUTDOOR_GROUP;
     case 'rooms':
       return state.rooms[id]!.props.building_id;
+    case 'plazas':
+      return OUTDOOR_GROUP;
     case 'edges': {
       const e = state.edges[id]!;
       const from = state.nodes[e.props.from];

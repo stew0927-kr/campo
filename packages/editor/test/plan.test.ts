@@ -244,7 +244,7 @@ describe('삭제, heal 삭제, 합치기 (5.3)', () => {
     const s = fixtureSession();
     expect(planDelete(s.history.current(), s.ctx, [], false)).toEqual({ error: '먼저 지울 지점이나 구간을 골라 주세요.' });
     expect(classify(s.history.current(), ['n_out_0001', 'e_out_0001__out_0002', 'bldg_A', 'gone'])).toEqual({
-      nodes: ['n_out_0001'], edges: ['e_out_0001__out_0002'], rooms: [], buildings: ['A'],
+      nodes: ['n_out_0001'], edges: ['e_out_0001__out_0002'], rooms: [], buildings: ['A'], plazas: [],
     });
   });
 });

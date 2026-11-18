@@ -131,6 +131,19 @@ class BuildingMeasurement:
     sigma: Optional[float] = None
 
 
+@dataclass(frozen=True)
+class PlazaCluster:
+    """
+    평지 (a drawn flat ground area): its outdoor nodes merge into one height variable pz:<plaza_id> (like a flat_exact
+    cluster). The cluster prior is prior_h / prior_sigma: the plaza cells' DEM_0 median with the cluster sigma, or
+    fixed_height_m with a tight sigma (never lb == ub: the bounded solver may not take an equality box).
+    """
+    plaza_id: str
+    members: tuple[str, ...]  # variable keys of the nodes on the plaza
+    prior_h: Optional[float] = None
+    prior_sigma: Optional[float] = None
+
+
 @dataclass
 class WlsProblem:
     vars: list[HeightVar]
@@ -143,6 +156,7 @@ class WlsProblem:
     measurements: list[BuildingMeasurement] = field(default_factory=list)
     sigma_scale: dict[str, float] = field(default_factory=dict)
     stair_or_ramp_only: set[str] = field(default_factory=set)
+    plazas: list[PlazaCluster] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -209,6 +223,7 @@ class WlsResult:
     cov: list[tuple[dict[str, int], np.ndarray]]
     comp_of: dict[str, int]
     log: list[str]
+    plaza_h: dict[str, float] = field(default_factory=dict)  # "pz:<plaza id>" -> the merged height (plazas with nodes)
 
 
 # ------------------------------------------------------------------ #
@@ -381,7 +396,10 @@ def solve_nodes(
 
     # ---- 1. merge flat clusters ------------------------------------------------------------------------------------
     flats = [f for f in problem.flats if f.frm in by_key and f.to in by_key]
-    rep = flat_clusters(keys, [(f.frm, f.to) for f in flats])
+    plaza_members = [(pz, [m for m in pz.members if m in by_key]) for pz in problem.plazas]
+    plaza_members = [(pz, mem) for pz, mem in plaza_members if mem]
+    plaza_links = [(mem[0], m) for _, mem in plaza_members for m in mem[1:]]
+    rep = flat_clusters(keys, [(f.frm, f.to) for f in flats] + plaza_links)
     cl_index: dict[str, int] = {}
     cl_rep: list[str] = []
     members: list[list[str]] = []
@@ -444,6 +462,20 @@ def solve_nodes(
                     prior_s[c] = cfg.sigma_stair_mid_m
                 else:
                     prior_s[c] = cfg.sigma_dem_m * problem.sigma_scale.get(k, 1.0)
+
+    # plazas: the cluster prior is the plaza's own (a fixed height wins over a DEM median when two plazas share a cluster)
+    plaza_prior_set: dict[int, str] = {}
+    for pz, mem in plaza_members:
+        c = ci[mem[0]]
+        if pz.prior_h is None or pz.prior_sigma is None:
+            continue
+        other = plaza_prior_set.get(c)
+        if other is not None:
+            log.append(f"plaza {pz.plaza_id}: shares a flat cluster with plaza {other}")
+            if prior_s[c] is not None and prior_s[c] <= pz.prior_sigma:
+                continue
+        prior_h[c], prior_s[c] = float(pz.prior_h), float(pz.prior_sigma)
+        plaza_prior_set[c] = pz.plaza_id
 
     # ---- fixed rows ------------------------------------------------------------------------------------------------
     base: list[_Row] = []
@@ -831,8 +863,10 @@ def solve_nodes(
         log.append(f"global chi2 = {chi2_total:.2f}, dof = {dof_total}, 95% range [{lo:.2f}, {hi:.2f}] -> "
                    f"{'PASS' if passed else 'FAIL'}")
     prior_out = {k: prior_h[ci[k]] for k in keys}
+    plaza_h = {f"pz:{pz.plaza_id}": h_out[mem[0]] for pz, mem in plaza_members if mem[0] in h_out and not fl_out.get(mem[0], False)}
     return WlsResult(h_out, s_out, sr_out, fl_out, prior_out, {k: rep[k] for k in keys}, reports, soft_report,
-                     stair_solve, capped, buildings, outliers, chi2_total, dof_total, passed, comps, cov, comp_of, log)
+                     stair_solve, capped, buildings, outliers, chi2_total, dof_total, passed, comps, cov, comp_of, log,
+                     plaza_h)
 
 
 def _plain_solve(rows: list[_Row], n: int, cfg: WlsConfig) -> tuple[np.ndarray, np.ndarray]:

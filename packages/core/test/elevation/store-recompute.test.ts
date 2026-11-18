@@ -230,3 +230,27 @@ describe('lazy recompute: edits only mark, the explicit trigger asks for the dir
     expect(() => readDerivedElevation({ format: 'campo-derived-elevation/1', nodes: {}, edges: { e: { elev_diff_m: 'a' } } })).toThrow('숫자가 아닙니다');
   });
 });
+
+describe('lazy recompute: 평지 (plaza) changes', () => {
+  it('a plaza added, reshaped, given a height or removed marks its areas; name and surface do not', async () => {
+    const { addPlaza, addPlazaHole, deletePlazas: del, emptyState: empty, localFrame } = await import('../../src/index.ts');
+    const { emptyDirty: none, markStateChange: mark, recomputeRequest: request, clearDirty: clear, dirtyCount: count } = await import('../../src/elevation/index.ts');
+    const f = localFrame([127, 37]);
+    const ring = (x0: number, y0: number, x1: number, y1: number) => [f.toPos(x0, y0), f.toPos(x1, y0), f.toPos(x1, y1), f.toPos(x0, y1), f.toPos(x0, y0)];
+    const s0 = empty();
+    const s1 = addPlaza({ id: 'plaza_a', polygon: [ring(0, 0, 20, 20)], props: { kind: 'plaza', source: 't' } }).apply(s0);
+    const d1 = mark(none(), s0, s1);
+    expect(count(d1)).toBe(1);
+    const req = request(d1, s1);
+    expect(req.plazas).toEqual([{ id: 'plaza_a', boxes: [[127, 37, f.toPos(20, 20)[0], f.toPos(20, 20)[1]]] }]);
+    const cleared = clear(d1, req);
+    expect(count(cleared)).toBe(0);
+    expect(mark(cleared, s1, setProps(['plaza_a'], { name: '광장', surface: 'grass' }).apply(s1)).plazas.size).toBe(0);
+    expect(mark(cleared, s1, setProps(['plaza_a'], { fixed_height_m: 40 }).apply(s1)).plazas.size).toBe(1);
+    expect(mark(cleared, s1, addPlazaHole('plaza_a', ring(5, 5, 10, 10)).apply(s1)).plazas.size).toBe(1);
+    const gone = mark(cleared, s1, del(['plaza_a']).apply(s1));
+    expect(gone.plazas.get('plaza_a')).toHaveLength(1); // the area it covered before
+    // without plazas the request keeps its old shape
+    expect('plazas' in request(none(), s0)).toBe(false);
+  });
+});

@@ -714,10 +714,14 @@ def breakline_boxes(req: dict, project: Optional[Callable[[float, float], tuple[
     RecomputeRequest.breaklines[].boxes (WGS84 [minLng, minLat, maxLng, maxLat]: where a 고도 단절선 was drawn, changed or
     removed, before and after) → 격자 CRS의 (xmin, ymin, xmax, ymax). 투영 함수가 없으면 빈 목록.
     """
+    return _request_boxes(req, project, "breaklines")
+
+
+def _request_boxes(req: dict, project, key: str) -> list[tuple[float, float, float, float]]:
     out = []
     if project is None:
         return out
-    for line in req.get("breaklines", []) or []:
+    for line in req.get(key, []) or []:
         for b in line.get("boxes", []) or []:
             if len(b) != 4:
                 continue
@@ -737,7 +741,8 @@ def dirty_seeds(req: dict, cm: Optional[CampusModel], keys: Iterable[str],
         seeds |= {cm.var_of[n] for n in req.get("campusNodes", []) if n in cm.var_of}
         for eid in req.get("campusEdges", []):
             seeds |= set(cm.edge_vars.get(eid, ()))
-        for x0, y0, x1, y1 in breakline_boxes(req, project):
+        # 평지가 그려지거나 바뀌거나 지워진 곳(req.plazas, 선택 키)도 같은 방식: 그 상자를 지나는 구간의 변수
+        for x0, y0, x1, y1 in breakline_boxes(req, project) + _request_boxes(req, project, "plazas"):
             for eid, ((ax, ay), (bx, by)) in cm.edge_xy.items():
                 if max(ax, bx) >= x0 and min(ax, bx) <= x1 and max(ay, by) >= y0 and min(ay, by) <= y1:
                     seeds |= set(cm.edge_vars.get(eid, ()))
@@ -1096,6 +1101,9 @@ def main(argv=None):
     return _run_v1(a)
 
 
+PLAZA_V1_WARNING = "평지는 높이 솔버 v2에서만 반영됩니다(--engine v2)"
+
+
 def _run_v1(a: argparse.Namespace):
     import time
     import uuid
@@ -1107,8 +1115,13 @@ def _run_v1(a: argparse.Namespace):
     bl_log: list[str] = []
     breaklines = store_breaklines(store, tf.transform, bl_log)
     cm, soft, scale = None, [], {}
+    v1_warnings: list[str] = []
     if a.campus:
-        cm = campus_model(read_campus_features(a.campus), tf.transform, a.floor_height_default, a.floor_prior_sigma)
+        v1_features = read_campus_features(a.campus)
+        if any(_kind(f) == "plaza" for f in v1_features):
+            v1_warnings.append(PLAZA_V1_WARNING)
+            print(PLAZA_V1_WARNING)
+        cm = campus_model(v1_features, tf.transform, a.floor_height_default, a.floor_prior_sigma)
         known = {n.key for n in nodes}
         nodes += [n for n in cm.nodes if n.key not in known]
         drops, off_soft, drop_scale, drop_log = breakline_drop_edges(breaklines, cm)
@@ -1168,8 +1181,10 @@ def _run_v1(a: argparse.Namespace):
         out / "corrected_dem", source=f"{grid.meta.get('source', '')} + CAMPO residual ({a.method})", extra=dem_id)
     Grid(z, grid.origin_x, grid.origin_y, grid.res, grid.crs, grid.vertical_datum).save(out / "residual_field", extra=dem_id)
     run_id, now_ms = str(uuid.uuid4()), int(time.time() * 1000)
-    (out / "store.solved.json").write_text(
-        json.dumps(write_back(store, res, run_id, now_ms), ensure_ascii=False, indent=2), encoding="utf-8")
+    solved_store = write_back(store, res, run_id, now_ms)
+    if v1_warnings:
+        solved_store["lastSolve"]["warnings"] = v1_warnings
+    (out / "store.solved.json").write_text(json.dumps(solved_store, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"wrote {out}/corrected_dem.(json|bin), residual_field.*, store.solved.json")
     if a.derived_out:
         if cm is None:
@@ -1289,6 +1304,97 @@ def campus_corridors(features: list[dict], cm: CampusModel, project, heights: di
     if not ids:
         return Corridors.empty()
     return Corridors(np.array(xy, float), np.array(z, float), np.array(tr, float), np.array(steps, np.int32), tuple(ids))
+
+
+# ---- 평지 (plaza, docs/ELEVATION_SOLVER_V2.md 평지) ----
+
+
+def campus_plazas(features: list[dict], project, grid: Grid, cfg, log: list[str]) -> list:
+    """grid_grading.Plaza per campus plaza feature (rings in grid CRS m). fixed_height_m -> h, h_source 'fixed'."""
+    from grid_grading import Plaza
+
+    out = []
+    for f in features:
+        if _kind(f) != "plaza":
+            continue
+        pid = f.get("id")
+        geom = f.get("geometry") or {}
+        coords = geom.get("coordinates") if geom.get("type") == "Polygon" else None
+        rings = []
+        ok = isinstance(pid, str) and isinstance(coords, list) and len(coords) > 0
+        for ring in coords if ok else []:
+            try:
+                pts = np.array([project(float(p[0]), float(p[1])) for p in ring], float)
+            except (TypeError, ValueError, IndexError):
+                ok = False
+                break
+            if pts.ndim != 2 or len(pts) < 4 or not np.all(np.isfinite(pts)):
+                ok = False
+                break
+            rings.append(pts)
+        if not ok or not rings:
+            log.append(f"plaza {pid}: rings are not usable -> skipped")
+            continue
+        p = f.get("properties") or {}
+        fixed = _num(p.get("fixed_height_m"))
+        name = p.get("name") if isinstance(p.get("name"), str) else ""
+        out.append(Plaza(pid, tuple(rings), fixed, "fixed" if fixed is not None else "dem_median", name))
+    return out
+
+
+def _on_plaza(rings, x: float, y: float, tol: float) -> bool:
+    from grid_grading import _point_in_rings
+
+    if _point_in_rings(rings, x, y):
+        return True
+    for r in rings:
+        a, b = r[:-1], r[1:]
+        ab = b - a
+        L2 = (ab ** 2).sum(axis=1)
+        t = np.clip(((x - a[:, 0]) * ab[:, 0] + (y - a[:, 1]) * ab[:, 1]) / np.where(L2 > 0, L2, 1.0), 0.0, 1.0)
+        d = np.hypot(a[:, 0] + t * ab[:, 0] - x, a[:, 1] + t * ab[:, 1] - y)
+        if d.size and float(d.min()) <= tol:
+            return True
+    return False
+
+
+def plaza_clusters(plazas: list, features: list[dict], cm: Optional[CampusModel], project, grid: Grid, cfg) -> tuple[list, dict[str, list[str]]]:
+    """
+    node_wls.PlazaCluster per plaza that has outdoor nodes on it (solid area, or within plaza.node_tol_m of its edge):
+    one merged variable. Prior: fixed_height_m with sigma 1e-3 m, else the DEM_0 median of the plaza cells with the
+    cluster sigma (node_wls.cluster_prior). Also returns plaza id -> member variable keys.
+    """
+    from grid_grading import rasterize_polygon
+    from node_wls import PlazaCluster, cluster_prior
+
+    if cm is None:
+        return [], {}
+    pts = []
+    for f in features:
+        if _kind(f) != "node" or (f.get("properties") or {}).get("building_id") is not None:
+            continue
+        key = cm.var_of.get(f.get("id"))
+        c = (f.get("geometry") or {}).get("coordinates")
+        if key is None or not isinstance(c, list) or len(c) < 2:
+            continue
+        pts.append((key, *project(float(c[0]), float(c[1]))))
+    out, members_of = [], {}
+    taken: set[str] = set()
+    for p in plazas:
+        rings = [np.asarray(r, float)[:, :2] for r in p.rings]
+        mem = sorted({k for k, x, y in pts if k not in taken and _on_plaza(rings, x, y, cfg.plaza.node_tol_m)})
+        if not mem:
+            continue
+        taken.update(mem)
+        members_of[p.plaza_id] = mem
+        if p.h is not None:
+            prior = (float(p.h), 1e-3)
+        else:
+            v = np.asarray(grid.data, float)[rasterize_polygon(grid, rings)]
+            v = v[np.isfinite(v)]
+            prior = cluster_prior(v, grid.res ** 2, cfg.wls) if v.size else (None, None)
+        out.append(PlazaCluster(p.plaza_id, tuple(mem), *prior))
+    return out, members_of
 
 
 def building_pads(features: list[dict], project, sidecar: dict, grid: Grid, cm: Optional[CampusModel], cfg,
@@ -1541,7 +1647,8 @@ def building_extras(grid: Grid, g, pads, pad_list, rings_of: dict, meta: dict[st
 
 
 def wls_problem(nodes: list[Node], edges: list[Edge], cm: Optional[CampusModel], features: list[dict],
-                soft: list[SoftFlat], scale: dict[str, float], pads, sidecar: dict, cfg, log: list[str], project=None):
+                soft: list[SoftFlat], scale: dict[str, float], pads, sidecar: dict, cfg, log: list[str], project=None,
+                plazas: Sequence = ()):
     """v1 structures -> node_wls.WlsProblem (stairs and ramps rebuilt from the campus features)."""
     from node_wls import BuildingMeasurement, DiffRow, FlatLink, HeightVar, Ramp, SoftFlatCand, Stair, WlsProblem
 
@@ -1618,7 +1725,7 @@ def wls_problem(nodes: list[Node], edges: list[Edge], cm: Optional[CampusModel],
         meas.append(BuildingMeasurement(mid, bid, key, float(d), float(sig) if _is_number(sig) and sig > 0 else None))
     return WlsProblem([HeightVar(n.key, n.kind, n.x, n.y) for n in nodes], rows, flats,
                       [SoftFlatCand(s.id, s.frm, s.to, s.length) for s in soft], stairs, ramps, list(pads), meas,
-                      dict(scale), only)
+                      dict(scale), only, list(plazas))
 
 
 def to_solve_result(w, solved: set[str], nodes: Optional[list[Node]] = None,
@@ -1677,6 +1784,20 @@ def _json_val(v):
     return v
 
 
+def plaza_report_rows(g) -> list[dict]:
+    """solve_report plazas[]: one row per rasterised plaza (grid_grading.measure_plazas), JSON numbers only."""
+    keys = ("h_m", "area_m2", "cut_m3", "fill_m3", "max_cut_m", "max_fill_m", "flat_error_m")
+    out = []
+    for r in g.plaza_report:
+        row = {"id": r["id"], "name": r["name"], "h_source": r["h_source"]}
+        row.update({k: _num(r[k]) for k in keys})
+        row.update({k: int(r[k]) for k in ("cells", "hole_cells", "nodes", "overlap_pad_cells")})
+        row["bbox_xy"] = [_num(v) for v in r["bbox_xy"]]
+        out.append({k: row[k] for k in ("id", "name", "h_m", "h_source", "cells", "hole_cells", "area_m2", "cut_m3", "fill_m3",
+                                        "max_cut_m", "max_fill_m", "flat_error_m", "nodes", "overlap_pad_cells", "bbox_xy")})
+    return out
+
+
 def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: dict[str, float],
                  extra_log: Sequence[str] = ()) -> dict:
     from solver_config import config_to_dict
@@ -1685,7 +1806,7 @@ def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: di
     conf.pop("format", None)
     counts = {"road_cells", "pad_cells", "apron_cells", "island_cells", "mid_cells", "shoulder_unknowns", "cg_iterations",
               "cg_converged", "vertical_steps_over_limit", "terraces", "terrace_wall_pairs", "drop_walls", "drop_wall_links",
-              "drop_wall_pins"}
+              "drop_wall_pins", "plazas", "plaza_cells"}
     grid_stats = {k: (int(v) if k in counts else _num(v)) for k, v in g.stats.items()}
     b_out = {}
     for bid, b in sorted(w.buildings.items()):
@@ -1701,7 +1822,7 @@ def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: di
         for k in ("buried_single_plane_m2", "terraces", "portal_contacts"):
             if k in extra:
                 b_out[bid][k] = _json_val(extra[k])
-    return {
+    out = {
         "format": REPORT_FORMAT, "engine": ENGINE_V2, "runId": run_id, "config": conf,
         "timings": {k: _num(v) for k, v in timings.items()},
         "grid": grid_stats,
@@ -1718,6 +1839,9 @@ def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: di
                       "ratio": _num(o.ratio)} for o in w.outliers],
         "log": [_ascii(line) for line in [*extra_log, *g.log]],
     }
+    if g.plaza_report:  # optional key, only with plazas: reports of a campus without them stay as they were
+        out["plazas"] = plaza_report_rows(g)
+    return out
 
 
 def _run_v2(a: argparse.Namespace):
@@ -1773,7 +1897,10 @@ def _run_v2(a: argparse.Namespace):
         if p.var not in keys:
             nodes.append(Node(p.var, "floor_plane"))
             keys.add(p.var)
-    problem = wls_problem(nodes, edges, cm, features, soft, drop_scale, pads, sidecar, cfg, log, project=tf.transform)
+    plazas = campus_plazas(features, tf.transform, grid, cfg, log)
+    pz_clusters, pz_members = plaza_clusters(plazas, features, cm, tf.transform, grid, cfg)
+    problem = wls_problem(nodes, edges, cm, features, soft, drop_scale, pads, sidecar, cfg, log, project=tf.transform,
+                          plazas=pz_clusters)
     for line in log:
         _say(line)
 
@@ -1817,8 +1944,14 @@ def _run_v2(a: argparse.Namespace):
     # drawn lines with lowSide and dropM > 0 also make the drop on the grid (campus edge lines have no lowSide)
     drop_walls = [DropWall(bl.id, bl.coords, bl.low_side, bl.drop_m) for bl in drawn
                   if bl.low_side in ("left", "right") and bl.drop_m is not None and bl.drop_m > 0]
+    import dataclasses
+    plazas = [dataclasses.replace(p, nodes=len(pz_members.get(p.plaza_id, ())),
+                                  **({"h": w.plaza_h[f"pz:{p.plaza_id}"], "h_source": "wls"}
+                                     if p.h is None and f"pz:{p.plaza_id}" in w.plaza_h else {}))
+              for p in plazas]
     g = grade_grid(grid, corr, pad_list, cfg, breaklines=np.array(segs).reshape(-1, 2, 2) if segs else None,
-                   breakline_attenuation=a.breakline_attenuation, soft_points=points, drop_walls=drop_walls)
+                   breakline_attenuation=a.breakline_attenuation, soft_points=points, drop_walls=drop_walls,
+                   plazas=plazas)
     for line in g.log:
         _say(line)
     x_log: list[str] = []

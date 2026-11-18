@@ -97,10 +97,13 @@ export async function readGridFile(jsonPath: string, source: TerrainGridJson['so
   return decodeGrid(meta, bytes, source, maxCells);
 }
 
-/** GET /terrain's answer: the thinned grid and the 1 m sections across the store's walls (none when the store is missing or broken). */
+/**
+ * GET /terrain's answer: the thinned grid, the 1 m sections across the store's walls (none when the store is missing or
+ * broken), and the height the solver held each 평지 at (solve_report.json plazas[]: id → h_m; empty without a report).
+ */
 export async function readTerrain(
-  jsonPath: string, source: TerrainGridJson['source'], storeText: string | null, maxCells = MAX_CELLS,
-): Promise<{ grid: TerrainGridJson; walls: TerrainWallJson[] }> {
+  jsonPath: string, source: TerrainGridJson['source'], storeText: string | null, maxCells = MAX_CELLS, reportText: string | null = null,
+): Promise<{ grid: TerrainGridJson; walls: TerrainWallJson[]; plazaHeights: Record<string, number> }> {
   const { meta, bytes } = await readGridBytes(jsonPath);
   const grid = decodeGrid(meta, bytes, source, maxCells);
   let walls: TerrainWallJson[] = [];
@@ -109,7 +112,23 @@ export async function readTerrain(
   } catch {
     walls = []; // a wall that cannot be read never keeps the relief from being drawn
   }
-  return { grid, walls };
+  return { grid, walls, plazaHeights: plazaHeightsFromReport(reportText) };
+}
+
+/** 평지 heights from a solve_report.json text: { plaza id → h_m }. A missing or broken report, or one without plazas, gives {}. */
+export function plazaHeightsFromReport(text: string | null): Record<string, number> {
+  if (text === null) return {};
+  try {
+    const rows = (JSON.parse(text) as { plazas?: unknown }).plazas;
+    if (!Array.isArray(rows)) return {};
+    const out: Record<string, number> = {};
+    for (const r of rows as { id?: unknown; h_m?: unknown }[]) {
+      if (typeof r?.id === 'string' && typeof r.h_m === 'number' && Number.isFinite(r.h_m)) out[r.id] = r.h_m;
+    }
+    return out;
+  } catch {
+    return {}; // a report that cannot be read never keeps the relief from being drawn
+  }
 }
 
 // ---- 옹벽: sections across the drawn walls, read from the grid at its own resolution ----

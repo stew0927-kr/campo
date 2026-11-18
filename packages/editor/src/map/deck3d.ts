@@ -9,12 +9,13 @@ import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer } 
 import { PICTOGRAM_COLORS, STACK_COLORS, beltEndIds, buildingById, edgeCoords, outlineOfLevel, pictogramOf, stackLayout, type EditState, type Level, type Position, type StackMode } from '@campo/core';
 import type { Scope } from '../model/scope.ts';
 import {
-  ROUTE_LIFT_M, buildingGround, buildingSegments, drapePath, floorBases, groundOf, nodeHeights, routePath3D, terrainMesh, terrainWire,
-  wallCells, wallMesh, type Ground, type RouteRef, type Segment3D, type TerrainGrid, type TerrainWall, type WallTriangle,
+  ROUTE_LIFT_M, buildingGround, buildingSegments, drapePath, floorBases, groundOf, nodeHeights, plazaGround, plazaHeight, plazaSkirt,
+  routePath3D, terrainBase, terrainMesh, terrainWire, wallCells, wallMesh, type Ground, type PlazaFlat, type PlazaSurface, type RouteRef,
+  type Segment3D, type TerrainGrid, type TerrainWall, type WallTriangle,
 } from '../model/terrain3d.ts';
 import type { SlopeLine } from '../model/elevation.ts';
 import { pictogramDataUrl, routePinDataUrl } from './iconUrls.ts';
-import { ELEVATION_COLORS, ROUTE_COLORS, ROUTE_PIN_COLORS, WAY_COLORS, type RouteLine } from './layers.ts';
+import { ELEVATION_COLORS, PLAZA_COLORS, ROUTE_COLORS, ROUTE_PIN_COLORS, WAY_COLORS, type RouteLine } from './layers.ts';
 
 type RGBA = [number, number, number, number];
 const rgb = (hex: string, alpha = 255): RGBA => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16), alpha];
@@ -43,6 +44,13 @@ const ON_TOP = { depthCompare: 'always' as const };
 const WALL_LIFT_M = 0.03;
 /** The face of a wall: concrete grey, apart from the relief's sage-sand-clay. */
 const WALL_FACE = rgb('#8d8f8c');
+/**
+ * 평지: the plane floats this far (× 높이 과장) over the relief it replaces, so the two never flicker where they meet.
+ * (depthBias was not used: it could not be checked on screen here, and lines do not take it; the lift works for both.)
+ */
+const PLAZA_LIFT_M = 0.03;
+/** The plaza's outline floats a little higher still, over its own plane. */
+const PLAZA_OUTLINE_LIFT_M = 0.08;
 
 export interface Deck3DInput {
   state: EditState;
@@ -59,6 +67,9 @@ export interface Deck3DInput {
   /** 경로 테스트: the routes, their pins and dashed feet as the 2D map draws them, and their caution / steep parts. */
   routes: readonly RouteLine[];
   slopes: readonly SlopeLine[];
+  /** 평지 (id and rings) and the heights the solver held them at (/terrain plazaHeights; a plaza missing there takes the relief's median). */
+  plazas?: readonly Pick<PlazaSurface, 'id' | 'rings'>[];
+  plazaHeights?: Readonly<Record<string, number>>;
 }
 
 interface Slab {
@@ -67,15 +78,27 @@ interface Slab {
   role: 'floor' | 'below' | 'selected' | 'ground' | 'plinth';
 }
 
-export function deckLayers({ state, scope, grid, walls = [], terrain, buildings, measured, exaggeration: k, routes, slopes }: Deck3DInput): Layer[] {
+export function deckLayers({
+  state, scope, grid, walls = [], terrain, buildings, measured, exaggeration: k, routes, slopes, plazas = [], plazaHeights = {},
+}: Deck3DInput): Layer[] {
   const layers: Layer[] = [];
-  const ground: Ground = terrain ? groundOf(grid, k) : () => 0;
+  const bare: Ground = terrain ? groundOf(grid, k) : () => 0;
+  // 평지: each plane at (H − the grid's lowest height) × k; paths, buildings and routes stand on it (plazaGround).
+  const flats: PlazaFlat[] = [];
+  if (terrain && grid) {
+    const base = terrainBase(grid);
+    for (const p of plazas) {
+      const h = plazaHeight(grid, { id: p.id, rings: p.rings, h: plazaHeights[p.id] ?? null });
+      if (h !== null) flats.push({ id: p.id, rings: p.rings, z: (h - base) * k });
+    }
+  }
+  const ground: Ground = plazaGround(bare, flats);
   const mode: StackMode = terrain ? 'terrain' : 'flat';
 
   if (terrain && grid) {
     // The thinned cells a wall crosses are left out: the wall's 1 m section is drawn there instead.
     const cut = walls.length > 0 ? wallCells(grid, walls) : undefined;
-    const cells = terrainMesh(grid, 1, k, cut);
+    const cells = terrainMesh(grid, 1, k, cut, flats);
     const top = Math.max(1, ...cells.map((c) => c.z));
     layers.push(new SolidPolygonLayer({
       id: 'terrain-mesh', data: cells, _full3d: true, filled: true, extruded: false, opacity: 0.93,
@@ -98,11 +121,31 @@ export function deckLayers({ state, scope, grid, walls = [], terrain, buildings,
       );
     }
     // A light wire every few cells: the eye reads slope from how the lines bend.
-    const lines = terrainWire(grid, Math.max(2, Math.round(grid.width / 24)), k, cut);
+    const lines = terrainWire(grid, Math.max(2, Math.round(grid.width / 24)), k, cut, flats);
     layers.push(new PathLayer({
       id: 'terrain-wire', data: lines, getPath: (l: [number, number, number][]) => l,
       getColor: [255, 255, 255, 80], getWidth: 1, widthUnits: 'pixels',
     }));
+    if (flats.length > 0) {
+      // The plane as its own exact mesh: deck.gl's SolidPolygonLayer cuts the holes ([outer, ...holes]) itself.
+      const lift = PLAZA_LIFT_M * k;
+      const skirts = flats.flatMap((f) => plazaSkirt(f, bare));
+      layers.push(
+        new SolidPolygonLayer({
+          id: 'plaza-skirt', data: skirts, _full3d: true, filled: true, extruded: false, opacity: 1,
+          getPolygon: (q: (typeof skirts)[number]) => q.polygon, getFillColor: WALL_FACE,
+        }),
+        new SolidPolygonLayer({
+          id: 'plaza-surface', data: flats, _full3d: true, filled: true, extruded: false, opacity: 0.95,
+          getPolygon: (f: PlazaFlat) => f.rings.map((ring) => ring.map((p): [number, number, number] => [p[0], p[1], f.z + lift])),
+          getFillColor: rgb(PLAZA_COLORS.fill),
+        }),
+        new PathLayer({
+          id: 'plaza-outline', data: flats.flatMap((f) => f.rings.map((ring) => ({ path: ring.map((p): [number, number, number] => [p[0], p[1], f.z + PLAZA_OUTLINE_LIFT_M * k]) }))),
+          getPath: (d: { path: [number, number, number][] }) => d.path, getColor: rgb(PLAZA_COLORS.line, 230), getWidth: 2, widthUnits: 'pixels', jointRounded: true,
+        }),
+      );
+    }
   }
 
   if (terrain) {

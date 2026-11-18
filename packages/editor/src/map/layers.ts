@@ -12,6 +12,8 @@ export const DATA_SOURCE = 'campo-data';
 
 /** Line colours per kind of way. Same values as the CSS tokens --footway / --steps / --ramp. */
 export const WAY_COLORS = { footway: '#2463a6', corridor: '#3d4c5a', steps: '#d4461a', ramp: '#1f8f68', elevator: '#6a4fc4', other: '#5b6875' } as const;
+/** 평지(plaza): a light green fill and a darker ring (ELEVATION_COLORS below is the other ground colour set; this one is up here because DATA_LAYERS reads it). */
+export const PLAZA_COLORS = { fill: '#8bc98f', line: '#2f7d45' } as const;
 
 /** Image id of a point badge (icons.ts registerPictograms); a restroom's carries its wheelchair answer too. */
 export const pictogramImage = (kind: PictogramKind, wheelchair: Wheelchair | null): string => (wheelchair ? `pict-${kind}-${wheelchair}` : `pict-${kind}`);
@@ -63,6 +65,18 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       id: r.id,
       geometry: { type: 'Polygon', coordinates: r.polygon },
       properties: { id: r.id, kind: 'room', highway: null, node_type: null, classroom: false, emphasis: roomInScope(r, scope) ? 1 : 0, selected: false, highlight: highlight.has(r.id) },
+    });
+  }
+  // 평지: the rings as drawn (outer, then holes); MapLibre's fill leaves the second ring on out as holes.
+  for (const p of Object.values(state.plazas)) {
+    features.push({
+      type: 'Feature',
+      id: p.id,
+      geometry: { type: 'Polygon', coordinates: p.polygon },
+      properties: {
+        id: p.id, kind: 'plaza', highway: null, node_type: null, classroom: false,
+        emphasis: scope.kind === 'outdoor' ? 1 : 0, selected: false, highlight: highlight.has(p.id),
+      },
     });
   }
   const pairs = pairOffsets(state);
@@ -168,6 +182,25 @@ const nodeColor = [
 ] as const;
 
 export const DATA_LAYERS: LayerSpecification[] = [
+  // 평지 first: ground under the buildings and the paths.
+  {
+    id: 'campo-plaza-fill',
+    type: 'fill',
+    source: DATA_SOURCE,
+    filter: ['==', ['get', 'kind'], 'plaza'],
+    paint: { 'fill-color': PLAZA_COLORS.fill, 'fill-opacity': ['case', ['get', 'highlight'], 0.45, strong, 0.3, 0.12] as never },
+  },
+  {
+    id: 'campo-plaza-line',
+    type: 'line',
+    source: DATA_SOURCE,
+    filter: ['==', ['get', 'kind'], 'plaza'],
+    paint: {
+      'line-color': ['case', ['get', 'highlight'], '#f2b705', PLAZA_COLORS.line] as never,
+      'line-width': ['case', ['get', 'highlight'], 3.5, 1.5] as never,
+      'line-opacity': ['case', strong, 0.9, 0.35] as never,
+    },
+  },
   {
     id: 'campo-buildings-fill',
     type: 'fill',

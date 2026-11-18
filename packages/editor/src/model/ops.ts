@@ -7,6 +7,7 @@ import {
   deleteBuilding,
   deleteEdges,
   deleteNodes,
+  deletePlazas,
   deleteRooms,
   mergeNodes,
   previewDeleteBuilding,
@@ -26,15 +27,17 @@ export interface SelectionParts {
   rooms: string[];
   /** Building codes. */
   buildings: string[];
+  plazas: string[];
 }
 
 /** Split selected ids by kind, in the order they were picked. Ids that are gone are dropped. */
 export function classify(state: EditState, ids: readonly string[]): SelectionParts {
-  const out: SelectionParts = { nodes: [], edges: [], rooms: [], buildings: [] };
+  const out: SelectionParts = { nodes: [], edges: [], rooms: [], buildings: [], plazas: [] };
   for (const id of ids) {
     if (id in state.nodes) out.nodes.push(id);
     else if (id in state.edges) out.edges.push(id);
     else if (id in state.rooms) out.rooms.push(id);
+    else if (id in state.plazas) out.plazas.push(id);
     else {
       const b = buildingById(state, id);
       if (b) out.buildings.push(b.props.code);
@@ -59,7 +62,7 @@ export function buildingsToDelete(state: EditState, ids: readonly string[]): Bui
  */
 export function planDelete(state: EditState, ctx: EditContext, ids: readonly string[], heal: boolean): PlanResult {
   const sel = classify(state, ids);
-  if (sel.nodes.length + sel.edges.length + sel.rooms.length + sel.buildings.length === 0) {
+  if (sel.nodes.length + sel.edges.length + sel.rooms.length + sel.buildings.length + sel.plazas.length === 0) {
     return { error: '먼저 지울 지점이나 구간을 골라 주세요.' };
   }
   const parts: string[] = [];
@@ -67,6 +70,7 @@ export function planDelete(state: EditState, ctx: EditContext, ids: readonly str
   if (sel.edges.length > 0) parts.push(`구간 ${sel.edges.length}개 삭제`);
   if (sel.rooms.length > 0) parts.push(`강의실 영역 ${sel.rooms.length}개 삭제`);
   for (const code of sel.buildings) parts.push(`건물 ${code} 삭제`);
+  if (sel.plazas.length > 0) parts.push(`평지 ${sel.plazas.length}개 삭제`);
 
   const steps: Plan['steps'] = [];
   if (sel.nodes.length > 0) steps.push(() => deleteNodes(sel.nodes, { heal }, ctx));
@@ -79,6 +83,7 @@ export function planDelete(state: EditState, ctx: EditContext, ids: readonly str
   }
   if (sel.rooms.length > 0) steps.push(() => deleteRooms(sel.rooms, ctx));
   for (const code of sel.buildings) steps.push((s) => (s.buildings[code] ? deleteBuilding(code, ctx) : null));
+  if (sel.plazas.length > 0) steps.push(() => deletePlazas(sel.plazas, ctx));
   return { annotation: parts.join(', '), steps };
 }
 
@@ -139,7 +144,7 @@ export function propsPatch(props: AnyProps, edits: CommonEdits): Record<string, 
 }
 
 export function planSetProps(state: EditState, id: string, patch: Record<string, unknown>): PlanResult {
-  if (!(id in state.nodes) && !(id in state.edges) && !(id in state.rooms) && !buildingById(state, id)) {
+  if (!(id in state.nodes) && !(id in state.edges) && !(id in state.rooms) && !(id in state.plazas) && !buildingById(state, id)) {
     return { error: '속성을 바꿀 대상을 찾을 수 없습니다.' };
   }
   return { annotation: '속성 바꾸기', steps: [() => setProps([id], patch)] };

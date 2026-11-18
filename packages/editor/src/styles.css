@@ -705,3 +705,13 @@ button.check-item:hover { background: var(--chrome); }
 /* deck.gl puts its canvas in the top-left control slot, after the zoom buttons: lift them over it. */
 .map .maplibregl-ctrl-top-left > .maplibregl-ctrl { position: relative; z-index: 1; }
 .floors { z-index: 3; }
+
+/* 평지 상세 정보: the facts in two columns, the holes as a short list with their delete buttons. */
+.plaza-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.plaza-facts div { display: flex; flex-direction: column; gap: 2px; }
+.plaza-facts dt { color: var(--muted); font-size: var(--text-s); }
+.plaza-facts dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.plaza-holes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.plaza-holes li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--text-s); }
+.plaza-panel .field-help { margin: 0; }
+.plaza-panel .field-error { margin: 0; color: var(--danger, #c92a2a); font-size: var(--text-s); }

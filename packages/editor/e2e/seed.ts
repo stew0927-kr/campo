@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 export const PORT = 5199;
 export const E2E_DIR = join(tmpdir(), 'campo-e2e');
-export const CAMPUS_IDS = ['e2e-floor', 'e2e-scope', 'e2e-escalator', 'e2e-copy', 'e2e-building', 'e2e-sync', 'e2e-osm'] as const;
+export const CAMPUS_IDS = ['e2e-floor', 'e2e-scope', 'e2e-escalator', 'e2e-copy', 'e2e-building', 'e2e-sync', 'e2e-osm', 'e2e-plaza'] as const;
 
 /** The map centre and the building outline (lng, lat). */
 export const CENTER: [number, number] = [127.0005, 37.0003];

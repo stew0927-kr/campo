@@ -35,14 +35,28 @@ export interface ElevationDirty {
    * campus point is near the line.
    */
   readonly breaklines: ReadonlyMap<string, readonly LngLatBox[]>;
+  /** 평지 drawn, reshaped, given or cleared a fixed height, or removed: plaza id → its areas before and after. */
+  readonly plazas: ReadonlyMap<string, readonly LngLatBox[]>;
 }
 
 export function emptyDirty(): ElevationDirty {
-  return { nodes: new Set(), edges: new Set(), buildings: new Set(), heightNodes: new Set(), breaklines: new Map() };
+  return { nodes: new Set(), edges: new Set(), buildings: new Set(), heightNodes: new Set(), breaklines: new Map(), plazas: new Map() };
 }
 
 export function isClean(d: ElevationDirty): boolean {
-  return d.nodes.size === 0 && d.edges.size === 0 && d.buildings.size === 0 && d.heightNodes.size === 0 && d.breaklines.size === 0;
+  return d.nodes.size === 0 && d.edges.size === 0 && d.buildings.size === 0 && d.heightNodes.size === 0 && d.breaklines.size === 0 &&
+    d.plazas.size === 0;
+}
+
+function withBoxes(map: ReadonlyMap<string, readonly LngLatBox[]>, id: string, boxes: readonly (LngLatBox | null)[]): Map<string, readonly LngLatBox[]> {
+  const merged = [...(map.get(id) ?? [])];
+  for (const b of boxes) if (b && !merged.some((m) => m.every((v, i) => v === b[i]))) merged.push(b);
+  return new Map(map).set(id, merged);
+}
+
+/** The box of a plaza's outer ring (null: no points). */
+export function plazaBox(polygon: readonly (readonly (readonly [number, number])[])[] | undefined): LngLatBox | null {
+  return boxOf((polygon?.[0] ?? []).map(([lng, lat]) => ({ lng, lat })));
 }
 
 /** The area of a line's points as a box (null: no points). */
@@ -56,15 +70,20 @@ export function boxOf(points: readonly { lng: number; lat: number }[]): LngLatBo
 
 /** Mark a 고도 단절선 change: the line id and the areas it covered (before and after; boxes already marked for the id are kept). */
 export function markBreakline(d: ElevationDirty, id: string, boxes: readonly (LngLatBox | null)[]): ElevationDirty {
-  const merged = [...(d.breaklines.get(id) ?? [])];
-  for (const b of boxes) if (b && !merged.some((m) => m.every((v, i) => v === b[i]))) merged.push(b);
-  return { ...d, breaklines: new Map(d.breaklines).set(id, merged) };
+  return { ...d, breaklines: withBoxes(d.breaklines, id, boxes) };
+}
+
+/** Mark a 평지 change: the plaza id and the areas it covered (before and after). */
+export function markPlaza(d: ElevationDirty, id: string, boxes: readonly (LngLatBox | null)[]): ElevationDirty {
+  return { ...d, plazas: withBoxes(d.plazas, id, boxes) };
 }
 
 /** Edge properties the height solver reads. Anything else (hours, covered, the derived values themselves) is not an input. */
 const EDGE_INPUTS: readonly string[] = ['from', 'to', 'highway', 'edge_type', 'flat_exact', 'is_breakline', 'step_count', 'incline'];
 const NODE_INPUTS: readonly string[] = ['node_type', 'building_id', 'level'];
 const BUILDING_INPUTS: readonly string[] = ['levels', 'ground_levels', 'ext'];
+/** A plaza's rings and its fixed height are solver inputs; its name and surface are not. */
+const PLAZA_INPUTS: readonly string[] = ['fixed_height_m'];
 
 /**
  * Mark what an edit changed, from its Immer patches (History entries; path[0] is the collection, path[1] the record
@@ -75,6 +94,7 @@ export function markEditPatches(d: ElevationDirty, patches: readonly Patch[], st
   const nodes = new Set(d.nodes);
   const edges = new Set(d.edges);
   const buildings = new Set(d.buildings);
+  let plazas: ReadonlyMap<string, readonly LngLatBox[]> = d.plazas;
   for (const { path } of patches) {
     const [collection, key, field, prop] = path;
     if (typeof key !== 'string') continue;
@@ -83,9 +103,11 @@ export function markEditPatches(d: ElevationDirty, patches: readonly Patch[], st
     else if (collection === 'edges' && (whole || field === 'vertices' || (field === 'props' && EDGE_INPUTS.includes(String(prop))))) edges.add(key);
     else if (collection === 'buildings' && (whole || (field === 'props' && BUILDING_INPUTS.includes(String(prop))))) {
       buildings.add(state.buildings[key]?.id ?? `bldg_${key}`);
+    } else if (collection === 'plazas' && (whole || field === 'polygon' || (field === 'props' && PLAZA_INPUTS.includes(String(prop))))) {
+      plazas = withBoxes(plazas, key, [plazaBox(state.plazas[key]?.polygon)]);
     }
   }
-  return { ...d, nodes, edges, buildings };
+  return { ...d, nodes, edges, buildings, plazas };
 }
 
 /**
@@ -128,12 +150,17 @@ export function statePatches(prev: EditState, next: EditState): Patch[] {
 
 /** markEditPatches for the change from `prev` to `next` (statePatches). */
 export function markStateChange(d: ElevationDirty, prev: EditState, next: EditState): ElevationDirty {
-  return prev === next ? d : markEditPatches(d, statePatches(prev, next), next);
+  if (prev === next) return d;
+  const out = markEditPatches(d, statePatches(prev, next), next);
+  // The area a plaza covered before the change (a removed or reshaped plaza) is dirty too.
+  let plazas = out.plazas;
+  for (const id of out.plazas.keys()) if (!d.plazas.has(id) || out.plazas.get(id) !== d.plazas.get(id)) plazas = withBoxes(plazas, id, [plazaBox(prev.plazas[id]?.polygon)]);
+  return plazas === out.plazas ? out : { ...out, plazas };
 }
 
 /** How many places wait for a recompute: nodes, edges, buildings, measured height variables and changed 고도 단절선. */
 export function dirtyCount(d: ElevationDirty): number {
-  return d.nodes.size + d.edges.size + d.buildings.size + d.heightNodes.size + d.breaklines.size;
+  return d.nodes.size + d.edges.size + d.buildings.size + d.heightNodes.size + d.breaklines.size + d.plazas.size;
 }
 
 /** Mark the height variables a measurement touched: both ends of every new edge and of every superseded one. */
@@ -162,6 +189,8 @@ export interface RecomputeRequest {
   buildings: string[];
   /** 고도 단절선 changed (drawn, edited, removed) and the areas they covered: the solver redoes the crossing edges and the residual field there. */
   breaklines: { id: string; boxes: LngLatBox[] }[];
+  /** 평지 drawn, reshaped or removed and the areas they covered. Only present when there is one (older requests stay as they were). */
+  plazas?: { id: string; boxes: LngLatBox[] }[];
 }
 
 /** What to send to the solver for `d`, expanded over `state`: a changed node dirties its edges, a changed edge its ends. */
@@ -182,6 +211,9 @@ export function recomputeRequest(d: ElevationDirty, state: EditState): Recompute
     campusEdges: sorted(edges),
     buildings: sorted(d.buildings),
     breaklines: [...d.breaklines].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, boxes]) => ({ id, boxes: boxes.map((b): LngLatBox => [...b]) })),
+    ...(d.plazas.size > 0
+      ? { plazas: [...d.plazas].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([id, boxes]) => ({ id, boxes: boxes.map((b): LngLatBox => [...b]) })) }
+      : {}),
   };
 }
 
@@ -196,6 +228,10 @@ export function clearDirty(d: ElevationDirty, req: RecomputeRequest): ElevationD
     // A line edited again while the solver ran (other areas than the request's) stays marked.
     breaklines: new Map([...d.breaklines].filter(([id, boxes]) => {
       const sent = req.breaklines.find((b) => b.id === id);
+      return !sent || JSON.stringify(sent.boxes) !== JSON.stringify(boxes);
+    })),
+    plazas: new Map([...d.plazas].filter(([id, boxes]) => {
+      const sent = req.plazas?.find((b) => b.id === id);
       return !sent || JSON.stringify(sent.boxes) !== JSON.stringify(boxes);
     })),
   };

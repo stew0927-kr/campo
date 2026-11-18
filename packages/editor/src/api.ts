@@ -126,11 +126,12 @@ export type { TerrainWall } from './model/terrain3d.ts';
  * 지형 3D's height grid: the solver's corrected grid, else the DEM, else null (the view then offers a sample); and the
  * 1 m sections across the drawn retaining walls (none from an older server).
  */
-export async function fetchTerrain(campusId: string): Promise<{ grid: TerrainGrid | null; walls: TerrainWall[] }> {
+export async function fetchTerrain(campusId: string): Promise<{ grid: TerrainGrid | null; walls: TerrainWall[]; plazaHeights: Record<string, number> }> {
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/terrain`);
-  const body = (await res.json()) as { grid?: TerrainGrid | null; walls?: TerrainWall[]; error?: string };
+  const body = (await res.json()) as { grid?: TerrainGrid | null; walls?: TerrainWall[]; plazaHeights?: Record<string, number>; error?: string };
   if (!res.ok) throw new Error(body.error ?? `고도 그리드를 불러오지 못했습니다 (HTTP ${res.status}).`);
-  return { grid: body.grid ?? null, walls: Array.isArray(body.walls) ? body.walls : [] };
+  const plazaHeights = typeof body.plazaHeights === 'object' && body.plazaHeights !== null ? body.plazaHeights : {};
+  return { grid: body.grid ?? null, walls: Array.isArray(body.walls) ? body.walls : [], plazaHeights };
 }
 
 export async function fetchElevation(campusId: string): Promise<ElevationInfo> {

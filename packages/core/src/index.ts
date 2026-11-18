@@ -115,6 +115,7 @@ export {
   type XY,
 } from './plaza/geometry.ts';
 export * from './plaza/merge.ts';
+export { PLAZA_JOIN_TOL_M, plazaJoins, type JoinEdge, type JoinNode } from './plaza/joins.ts';
 export * from './changeset/index.ts';
 export * from './reports/index.ts';
 export * from './survey/index.ts';

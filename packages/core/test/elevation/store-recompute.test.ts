@@ -1,6 +1,6 @@
 import { produceWithPatches } from 'immer';
 import { describe, expect, it } from 'vitest';
-import { moveNode, setEdgeElevation, setProps, type Action, type EditState } from '../../src/index.ts';
+import { moveNode, setEdgeElevation, setEdgeWidth, setProps, type Action, type EditState } from '../../src/index.ts';
 import {
   PressureSessionBuffer,
   addMeasurement,
@@ -149,6 +149,19 @@ describe('lazy recompute: edits only mark, the explicit trigger asks for the dir
     expect([...markEditPatches(emptyDirty(), flat.patches, flat.next).edges]).toEqual([GATE_PATH]);
     const floor = patchesOf(s, setProps(['bldg_A'], { ext: { floor_height_m: 4.2 } }));
     expect([...markEditPatches(emptyDirty(), floor.patches, floor.next).buildings]).toEqual(['bldg_A']);
+  });
+
+  it('a width change marks the edge for the height solver (set, clear, undo); a name change still marks nothing', async () => {
+    const s = await fixtureState();
+    const set = patchesOf(s, setEdgeWidth([GATE_PATH], 3));
+    expect([...markEditPatches(emptyDirty(), set.patches, set.next).edges]).toEqual([GATE_PATH]);
+    expect([...markStateChange(emptyDirty(), set.next, s).edges]).toEqual([GATE_PATH]); // the undo
+    const cleared = patchesOf(set.next, setEdgeWidth([GATE_PATH], null));
+    expect([...markEditPatches(emptyDirty(), cleared.patches, cleared.next).edges]).toEqual([GATE_PATH]);
+    const byProps = patchesOf(s, setProps([GATE_PATH], { width_m: 3 }));
+    expect([...markEditPatches(emptyDirty(), byProps.patches, byProps.next).edges]).toEqual([GATE_PATH]);
+    const name = patchesOf(s, setProps([GATE_PATH], { name: '정문 길' }));
+    expect(isClean(markEditPatches(emptyDirty(), name.patches, name.next))).toBe(true);
   });
 
   it('markStateChange (state before and after) marks the same as the edit patches, for the edit and for its undo', async () => {

@@ -80,7 +80,7 @@ export function markPlaza(d: ElevationDirty, id: string, boxes: readonly (LngLat
 }
 
 /** Edge properties the height solver reads. Anything else (hours, covered, the derived values themselves) is not an input. */
-const EDGE_INPUTS: readonly string[] = ['from', 'to', 'highway', 'edge_type', 'flat_exact', 'is_breakline', 'step_count', 'incline'];
+const EDGE_INPUTS: readonly string[] = ['from', 'to', 'highway', 'edge_type', 'flat_exact', 'is_breakline', 'step_count', 'incline', 'width_m'];
 const NODE_INPUTS: readonly string[] = ['node_type', 'building_id', 'level'];
 const BUILDING_INPUTS: readonly string[] = ['levels', 'ground_levels', 'ext'];
 /** A plaza's rings and its fixed height are solver inputs; its name and surface are not. */

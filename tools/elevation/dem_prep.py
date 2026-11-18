@@ -5,7 +5,8 @@ CAMPO DEM 전처리 — 국토지리정보원 자료 → 캠퍼스 클립 → CO
   A) raster   : 국토정보플랫폼 '공개DEM'(.img, 90 m) 또는 보안심사로 받은 5 m/1 m DEM(.img/.tif)
   B) contours : 1:5,000 수치지형도 v2.0(SHP)의 등고선(N3L_F0010000, 5 m 간격) + 표고점(N3P_F0020000)
                 → 선형 TIN 보간으로 1 m 격자 생성 (공개 90 m DEM보다 국소 지형을 훨씬 잘 담음)
-                --fallback-raster로 등고선이 없는 구역(도심 건물 밀집지)을 90 m DEM으로 채울 수 있음
+                --fallback-raster는 TIN이 닿지 않는 칸(등고선·표고점 점들의 볼록 껍질 바깥)만 90 m DEM으로 채운다.
+                껍질 안의 등고선 빈 구역(도심 건물 밀집지)은 TIN이 선형 보간한 값을 그대로 둔다
 
 높이 기준: NGII DEM·수치지형도 높이는 국가 수직기준(인천만 평균해수면) 정표고.
            GNSS/스마트폰 GPS 고도(타원체고)와 섞지 말 것. 필요하면 H = h − N (KNGeoid24 등).
@@ -101,6 +102,25 @@ def geom_bounds(geom: dict) -> tuple[float, float, float, float]:
     return min(xs), min(ys), max(xs), max(ys)
 
 
+EDITOR_CRS = "EPSG:5186"  # packages/editor/server/terrain.ts and model/terrain3d.ts convert this CRS only
+
+
+def check_dst_crs(dst_crs: str) -> None:
+    """
+    Output CRS contract: a projected CRS in metres (the grid cell size, --res and --buffer are metres, and the solver
+    measures distances on the grid). EPSG:5186 is the default and the only one the editor's 지형 3D reads; another
+    projected CRS still works for the solver (it projects WGS84 into the grid's CRS), so it is a warning, not an error.
+    """
+    crs = CRS.from_user_input(dst_crs)
+    unit = (crs.linear_units or "").lower()
+    if not crs.is_projected or unit not in ("metre", "meter", "m"):
+        raise SystemExit(f"--dst-crs {dst_crs}는 미터 단위 투영 좌표계가 아닙니다(단위: {crs.linear_units or '도'}). "
+                         f"격자 크기(--res)와 여유(--buffer)가 미터라 투영 좌표계가 필요합니다. 기본값 {EDITOR_CRS}를 쓰세요")
+    if crs != CRS.from_user_input(EDITOR_CRS):
+        print(f"경고: 출력 좌표계가 {crs.to_string()}입니다. 고도 솔버는 이 좌표계로도 풀지만, 편집기의 지형 3D는 "
+              f"{EDITOR_CRS} 격자만 읽습니다(편집기에서 쓰려면 --dst-crs {EDITOR_CRS}로 다시 만드세요).")
+
+
 def target_grid(geom: dict, res: float, buffer_m: float):
     """해상도 배수에 정렬(snap)된 목표 격자 — 재처리해도 셀 경계가 흔들리지 않게."""
     x0, y0, x1, y1 = geom_bounds(geom)
@@ -128,25 +148,49 @@ def boundary_mask(geom: dict, transform, w: int, h: int, buffer_m: float, res: f
 # ------------------------------------------------------------------ #
 
 def read_merged(srcs: list[str], src_crs: str | None):
+    """
+    Merge DEM sheets into one array (NaN = no data).
+    - nodata: rasterio.merge reads every sheet masked by that sheet's own nodata, so sheets with other nodata values
+      (-9999, 0, -32767 …) all end up NaN; the output fill is masked below, and so are values no ground has.
+    - CRS: without --src-crs every sheet must carry the same CRS (merge does not reproject). With --src-crs every sheet is
+      read as being in that CRS (a warped view with no reprojection), and each sheet whose own CRS said otherwise is named,
+      so a wrong override does not go unnoticed.
+    """
+    from rasterio.vrt import WarpedVRT
+
     dss = [rasterio.open(s) for s in srcs]
+    views = []
     try:
-        crs = dss[0].crs
         if src_crs:
             crs = CRS.from_user_input(src_crs)
-        elif crs is None:
-            raise SystemExit(f"{srcs[0]}에 좌표계 정보가 없습니다. --src-crs EPSG:5186(또는 5179/5174 등)을 지정하세요")
-        for d in dss[1:]:
-            if not src_crs and d.crs != dss[0].crs:
-                raise SystemExit("입력 도엽 간 좌표계가 다릅니다. 먼저 통일하거나 --src-crs로 강제하세요")
+            for s, d in zip(srcs, dss):
+                if d.crs is not None and d.crs != crs:
+                    print(f"경고: {s}의 좌표계 {d.crs.to_string()}를 --src-crs {crs.to_string()}로 덮어씁니다 "
+                          "(정말 그 좌표계의 자료인지 확인하세요)")
+            views = [WarpedVRT(d, src_crs=crs, crs=crs, transform=d.transform, width=d.width, height=d.height,
+                               nodata=d.nodata, resampling=Resampling.nearest) for d in dss]
+            sources = views
+        else:
+            crs = dss[0].crs
+            if crs is None:
+                raise SystemExit(f"{srcs[0]}에 좌표계 정보가 없습니다. --src-crs EPSG:5186(또는 5179/5174 등)을 지정하세요")
+            for s, d in zip(srcs[1:], dss[1:]):
+                if d.crs != crs:
+                    got = d.crs.to_string() if d.crs is not None else "없음"
+                    raise SystemExit(f"입력 도엽 간 좌표계가 다릅니다: {srcs[0]}은(는) {crs.to_string()}, {s}은(는) {got}. "
+                                     "먼저 한 좌표계로 통일하거나, 모두 같은 좌표계 자료라면 --src-crs로 지정하세요")
+            sources = dss
         nod = dss[0].nodata
-        arr, tr = merge(dss, nodata=nod if nod is not None else NODATA)
+        fill = nod if nod is not None else NODATA
+        arr, tr = merge(sources, nodata=fill)
         a = arr[0].astype("float64")
-        if nod is not None:
-            a[a == nod] = np.nan
+        a[a == fill] = np.nan
         # NGII 자료에 흔한 결측 표기(-9999, -99999 등)와 비현실적 값 정리
         a[(a < -500) | (a > 9000)] = np.nan
         return a, tr, crs, dss[0].res
     finally:
+        for v in views:
+            v.close()
         for d in dss:
             d.close()
 
@@ -179,7 +223,22 @@ def pd_is_numeric(series) -> bool:
     return bool(is_numeric_dtype(series))
 
 
+def _geometry_z_is_height(gdf) -> bool:
+    """Geometry Z counts as a height only when some vertex has a non-zero, finite Z (2D data saved as PolylineZ is all 0)."""
+    from shapely import get_coordinates
+    if not gdf.geometry.has_z.any():
+        return False
+    z = get_coordinates(gdf.geometry.values, include_z=True)[:, 2]
+    z = z[np.isfinite(z)]
+    return bool(z.size) and bool((z != 0).any())
+
+
 def pick_z_field(gdf, forced: str | None) -> str | None:
+    """
+    The height column (None = the geometry's Z). By name only: --z-field, else a known NGII / common name, else a geometry
+    Z that is not all 0. A numeric column with some other name is never taken on a guess: OBJECTID, lengths or codes fall
+    in any plausible height range and would make a TIN of row numbers. The error names such columns for --z-field.
+    """
     if forced:
         if forced not in gdf.columns:
             raise SystemExit(f"--z-field {forced} 없음. 열 목록: {list(gdf.columns)}")
@@ -187,20 +246,28 @@ def pick_z_field(gdf, forced: str | None) -> str | None:
     for c in Z_FIELD_CANDIDATES:
         if c in gdf.columns:
             return c
-    num = [c for c in gdf.columns if c != "geometry" and pd_is_numeric(gdf[c])]
-    plausible = [c for c in num if gdf[c].notna().any() and -50 <= gdf[c].min() and gdf[c].max() <= 2000 and gdf[c].nunique() > 1]
-    if len(plausible) == 1:
-        return plausible[0]
-    if gdf.geometry.has_z.any():
+    if _geometry_z_is_height(gdf):
         return None  # geometry Z 사용
-    raise SystemExit(f"높이 필드를 찾지 못했습니다. --z-field 로 지정하세요. 열 목록: {list(gdf.columns)}")
+    num = [c for c in gdf.columns if c != "geometry" and pd_is_numeric(gdf[c])]
+    plausible = [c for c in num if gdf[c].notna().any() and -50 <= gdf[c].min() and gdf[c].max() <= 9000 and gdf[c].nunique() > 1]
+    hint = (f" 높이일 수 있는 숫자 열: {plausible} — 맞는 열을 --z-field <열 이름>으로 지정하세요." if plausible
+            else " 숫자 열이 없습니다(도형 Z도 없거나 모두 0).")
+    raise SystemExit(f"높이 필드를 이름으로 찾지 못했습니다(찾는 이름: {Z_FIELD_CANDIDATES}).{hint} "
+                     f"--z-field 로 지정하세요. 열 목록: {[c for c in gdf.columns if c != 'geometry']}")
 
 
-def read_xyz(paths: list[str], dst_crs: str, encoding: str, z_field: str | None, densify_m: float) -> np.ndarray:
+def read_xyz(paths: list[str], dst_crs: str, encoding: str, z_field: str | None, densify_m: float,
+             keep_zero: bool = False) -> np.ndarray:
+    """
+    Contour / spot vertices as (x, y, z) in dst_crs. z = 0 is left out unless keep_zero: on NGII sheets an unfilled
+    등고수치/표고수치 reads 0, and inland a 0 m contour digs a trench through the TIN. A coastal campus whose 0 m contour
+    is real passes --keep-zero.
+    """
     import geopandas as gpd
     from shapely import get_coordinates, segmentize
 
     pts = []
+    zero = 0
     for p in paths:
         g = gpd.read_file(p, encoding=encoding)
         if g.crs is None:
@@ -214,9 +281,19 @@ def read_xyz(paths: list[str], dst_crs: str, encoding: str, z_field: str | None,
                 geom = segmentize(geom, densify_m)
             xyz = get_coordinates(geom, include_z=zf is None)
             if zf is None:
-                pts.append(xyz)
+                ok = np.isfinite(xyz[:, 2])
+                if not keep_zero:
+                    zero += int((ok & (xyz[:, 2] == 0)).sum())
+                    ok &= xyz[:, 2] != 0
+                pts.append(xyz[ok])
             elif z is not None and np.isfinite(z):
+                if float(z) == 0 and not keep_zero:
+                    zero += len(xyz)
+                    continue
                 pts.append(np.column_stack([xyz[:, :2], np.full(len(xyz), float(z))]))
+    if zero:
+        print(f"note: 높이 0 m 정점 {zero:,}개를 뺐습니다(빈 등고수치/표고수치로 봄). 실제 0 m 등고선이면 --keep-zero")
+    pts = [q for q in pts if len(q)]
     if not pts:
         raise SystemExit("등고선/표고점에서 좌표를 하나도 읽지 못했습니다")
     xyz = np.vstack(pts)
@@ -234,7 +311,7 @@ def cmd_contours_core(a, label: str = "NGII 1:5000 contours/spots TIN"):
 
     geom = load_boundary(a.boundary, a.bbox, a.dst_crs)
     tr, w, h = target_grid(geom, a.res, a.buffer)
-    xyz = read_xyz(a.contours + (a.spots or []), a.dst_crs, a.encoding, a.z_field, a.densify)
+    xyz = read_xyz(a.contours + (a.spots or []), a.dst_crs, a.encoding, a.z_field, a.densify, getattr(a, "keep_zero", False))
     # 경계 + 넉넉한 여유(보간 안정용)만 사용
     x0, y1 = tr.c, tr.f
     x1, y0 = x0 + w * a.res, y1 - h * a.res
@@ -253,7 +330,15 @@ def cmd_contours_core(a, label: str = "NGII 1:5000 contours/spots TIN"):
         src, src_tr, src_crs, _ = read_merged(a.fallback_raster, a.src_crs)
         fb = resample_to(src, src_tr, src_crs, tr, a.dst_crs, w, h, "bilinear")
         dst = np.where(holes, fb, dst)
-        print(f"fallback raster filled {int(holes.sum()):,} cells")
+        print(f"fallback raster filled {int(holes.sum() - (~np.isfinite(dst)).sum()):,} cells")
+    # The fallback fills only cells the TIN leaves empty (outside the hull of the contour/spot points). Inside the hull the
+    # TIN interpolates across gaps between contours, which on a gentle slope can be 200 m wide and still right, so a gap
+    # is not replaced by the coarse DEM. Cells that stay empty inside the boundary are counted here, even below the 5 %
+    # of warn_low_coverage, because the solver and the 3D view get no ground there.
+    left = ~np.isfinite(dst) & ~boundary_mask(geom, tr, w, h, 0.0, a.res)
+    if left.any():
+        fix = "fallback DEM도 덮지 않는 곳입니다" if a.fallback_raster else "--fallback-raster로 DEM을 주면 채웁니다"
+        print(f"note: 경계 안 남은 빈 칸 {int(left.sum()):,}개(등고선·표고점 TIN 바깥) — {fix}")
     finish(a, dst, tr, w, h, geom, source=f"{label} ({len(xyz)} pts)")
 
 
@@ -452,7 +537,8 @@ def build_parser():
         p.add_argument("--bbox", nargs=4, type=float, metavar=("LON0", "LAT0", "LON1", "LAT1"))
         p.add_argument("--buffer", type=float, default=20.0, help="경계 바깥 여유(m)")
         p.add_argument("--res", type=float, default=1.0, help="출력 해상도(m) 0.5~1 권장")
-        p.add_argument("--dst-crs", default=DST_CRS_DEFAULT)
+        p.add_argument("--dst-crs", default=DST_CRS_DEFAULT,
+                       help=f"출력 좌표계(미터 단위 투영 좌표계, 기본 {DST_CRS_DEFAULT}; 편집기 지형 3D는 {DST_CRS_DEFAULT}만 읽음)")
         p.add_argument("--src-crs", help="입력 래스터에 좌표계가 없거나 틀릴 때 강제")
         p.add_argument("--grid-dtype", choices=["float32", "uint16"], default="float32",
                        help="uint16 = 1 cm 양자화(용량 절반)")
@@ -470,7 +556,8 @@ def build_parser():
     c.add_argument("--z-field", help="높이 속성명(자동 탐지 실패 시)")
     c.add_argument("--encoding", default="cp949", help="DBF 인코딩(.cpg 없으면 cp949)")
     c.add_argument("--densify", type=float, default=2.0, help="등고선 정점 보강 간격(m)")
-    c.add_argument("--fallback-raster", nargs="*", help="TIN 빈 곳을 채울 DEM")
+    c.add_argument("--keep-zero", action="store_true", help="높이 0 m 등고선·표고점도 쓰기(기본: 빈 값으로 보고 뺌)")
+    c.add_argument("--fallback-raster", nargs="*", help="TIN 바깥(값이 없는 칸)을 채울 DEM")
     common(c)
     c.set_defaults(fn=cmd_contours)
 
@@ -479,6 +566,7 @@ def build_parser():
     n.add_argument("--z-field", help="높이 속성명(자동 탐지 실패 시)")
     n.add_argument("--encoding", default="cp949", help="DBF 인코딩(.cpg 없으면 cp949)")
     n.add_argument("--densify", type=float, default=2.0, help="등고선 정점 보강 간격(m)")
+    n.add_argument("--keep-zero", action="store_true", help="높이 0 m 등고선·표고점도 쓰기(기본: 빈 값으로 보고 뺌)")
     n.add_argument("--resampling", default="bilinear", choices=["bilinear", "cubic", "nearest"])
     common(n)
     n.set_defaults(fn=cmd_ngii)
@@ -492,6 +580,8 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    if getattr(a, "dst_crs", None):
+        check_dst_crs(a.dst_crs)
     a.fn(a)
 
 

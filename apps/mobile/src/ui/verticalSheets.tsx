@@ -21,8 +21,11 @@ interface Props {
   onLink: () => void;
   /** Escalator with a belt: open the stopwatch on it. */
   onTime: (() => void) | null;
-  /** Stairs: write the step count on the flights at the landing (null clears it). */
-  onStepCount: (count: number | null) => void;
+  /**
+   * Stairs: write the step count on one flight at the landing (null clears it). Only that flight changes: the flight up
+   * and the flight down from a landing between floors are counted apart.
+   */
+  onStepCount: (flightId: string, count: number | null) => void;
 }
 
 function Action({ title, hint, onPress, disabled = false, primary = false }: { title: string; hint: string; onPress: () => void; disabled?: boolean; primary?: boolean }) {
@@ -43,13 +46,13 @@ function Action({ title, hint, onPress, disabled = false, primary = false }: { t
 }
 
 /** − n + and a save button: the number of steps on the flight from this landing. */
-function StepCount({ value, enabled, onSave }: { value: number | undefined; enabled: boolean; onSave: (count: number | null) => void }) {
+function StepCount({ title, value, enabled, onSave }: { title: string; value: number | undefined; enabled: boolean; onSave: (count: number | null) => void }) {
   const [n, setN] = useState<number>(value ?? 20);
   const step = (d: number) => setN((x) => Math.min(200, Math.max(1, x + d)));
   return (
     <View style={[styles.steps, !enabled && styles.disabled]} pointerEvents={enabled ? 'auto' : 'none'}>
       <View style={styles.stepsHead}>
-        <Text style={styles.stepsTitle}>계단 칸 수</Text>
+        <Text style={styles.stepsTitle}>{title}</Text>
         <Text style={styles.stepsNow}>{value === undefined ? '아직 안 셌음' : `저장된 값 ${value}칸`}</Text>
       </View>
       <View style={styles.stepper}>
@@ -102,7 +105,17 @@ export function VerticalSection({ info, onLink, onTime, onStepCount }: Props) {
           />
         )}
       </View>
-      {info.kind === 'stairs' && <StepCount value={info.stepCount} enabled={info.flights.length > 0} onSave={onStepCount} />}
+      {info.kind === 'stairs' && info.flightList.length === 0 && <StepCount title="계단 칸 수" value={undefined} enabled={false} onSave={() => {}} />}
+      {info.kind === 'stairs' && info.flightList.map((f) => (
+        // Keyed by the saved value too: a save (or an undo) resets the stepper to what is stored.
+        <StepCount
+          key={`${f.id}:${f.stepCount ?? ''}`}
+          title={info.flightList.length > 1 ? `계단 칸 수 (${f.to} 쪽)` : '계단 칸 수'}
+          value={f.stepCount}
+          enabled
+          onSave={(count) => onStepCount(f.id, count)}
+        />
+      ))}
     </View>
   );
 }

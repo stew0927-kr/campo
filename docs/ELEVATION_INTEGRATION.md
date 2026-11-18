@@ -142,7 +142,8 @@ datum 없는 부분이 생길 수 있어서다(1층·4층 포탈 두 개로만 �
 
 ### 5.5 출력
 
-- `corrected_dem.*`, `residual_field.*`: 새 campo-grid 파일
+- `corrected_dem.*`, `residual_field.*`: 새 campo-grid 파일. 메타에 만든 DEM의 지문 `dem_sha256`(격자 모양·원점·셀 크기·값의
+  sha256)을 더 적는다(읽는 쪽은 모르는 키를 무시하므로 하위호환)
 - `store.solved.json`: 엣지 qc, `estimates`(op:/fp:만), `lastSolve`
 - `derived/elevation.json`(`--derived-out`, `--campus` 필요):
   ```json
@@ -161,7 +162,7 @@ datum 없는 부분이 생길 수 있어서다(1층·4층 포탈 두 개로만 �
 | 편집 | `markEditPatches(dirty, patches, state)` | 동작의 Immer 패치 경로(path[0] 컬렉션, path[1] 키)에서 솔버 입력이 바뀐 것만 표시. 지점: 좌표, node_type, building_id, level. 구간: 추가·삭제, 꺾은점, from, to, highway, edge_type, flat_exact, is_breakline, step_count, incline. 건물: levels, ground_levels, ext. 그 밖(이름, hours 등)과 재계산 결과 쓰기(`setEdgeElevation`)는 표시하지 않는다 |
 | 측정 | `markMeasurements(dirty, result, store)` | 새 엣지와 대체된 엣지의 양 끝 높이 변수 |
 | 요청 | `recomputeRequest(dirty, state)` | 지점 → 이어진 구간 → 그 양 끝으로 넓힌 정렬된 JSON(`campo-elevation-dirty/1`) |
-| 풀기 | `campo_height_solver.py --dirty req.json --previous-residual … --previous-derived …` | 요청에 닿는 성분만 다시 푼다(성분은 독립이라 결과가 전체 풀이와 같음). 잔차장은 그 성분 센터의 dirty 타일만 갱신, derived는 안 푼 성분 값을 그대로 둔다 |
+| 풀기 | `campo_height_solver.py --dirty req.json --previous-residual … --previous-derived …` | 요청에 닿는 성분만 다시 푼다(성분은 독립이라 결과가 전체 풀이와 같음). 잔차장은 그 성분 센터의 dirty 타일만 갱신, derived는 안 푼 성분 값을 그대로 둔다. `--previous-residual`의 격자(좌표계·셀 크기·모양·원점)나 `dem_sha256`이 지금 DEM과 다르면(DEM을 `--res`·`--buffer`·원본을 바꿔 다시 만든 뒤, 또는 지문이 없는 예전 파일) 지난 잔차장과 안 푼 성분 값을 버리고 전체를 다시 푼다(로그 `previous residual field not reused (…)`) |
 | 반영 | `applyDerivedElevation(state, derived, req)` | `setEdgeElevation` 한 번: cm 단위 Δh·σ(σ 최소 1 cm), 평면 길이 0.5 m 이상이면 0.1% 단위 grade_pct. 요청에 있었지만 결과에 없는 구간은 옛 값을 지움. 엘리베이터 제외 |
 | 정리 | `clearDirty(dirty, req)` | 요청에 들어간 것만 지움(요청 뒤에 생긴 표시는 남음) |
 
@@ -246,7 +247,7 @@ SPEC-v0.2 9장은 "경사도 계산, 고도 데이터 합치기"를 v0.2 범위 
 | 할 일 | 상태 | 구현 |
 |---|---|---|
 | dirty 표시, "고도 다시 계산 필요 N곳" | 완료 | `app/useElevation.ts`: 화면 상태가 바뀔 때마다(동작, 되돌리기, 다시 하기, 끌기) core `markStateChange`(이전·다음 상태의 레코드를 참조로 비교해 패치 경로를 만든 뒤 `markEditPatches`). 개수는 `dirtyCount`, 상태 표시줄 `StatusBar` |
-| 고도 다시 계산 | 완료 | `server/elevation-api.ts` `POST /api/elevation/:id/recompute`: 저장 전 캠퍼스 파일을 임시 폴더에 쓰고 `--dirty`(+ 이전 residual·derived)로 솔버 실행. 폴더 `derived/<캠퍼스>/`(`CAMPO_ELEVATION_DIR`)에 `store.json`, `dem.json`(`CAMPO_ELEVATION_DEM`)이 없으면 이전 `elevation.json`을 그대로 읽는다. 결과는 `planRecomputeResult`(→ `applyDerivedElevation`) 이력 한 줄, 그다음 `clearDirty` |
+| 고도 다시 계산 | 완료 | `server/elevation-api.ts` `POST /api/elevation/:id/recompute`: 저장 전 캠퍼스 파일을 임시 폴더에 쓰고 `--dirty`(+ 이전 residual·derived)로 솔버 실행. 폴더 `derived/<캠퍼스>/`(`CAMPO_ELEVATION_DIR`)에 `store.json`, `dem.json`(`CAMPO_ELEVATION_DEM`)이 없으면 이전 `elevation.json`을 그대로 읽는다. 한 캠퍼스의 재계산·store 저장은 차례로 하나씩 실행하고(탭 두 개가 동시에 눌러도 결과가 섞이지 않음), 솔버는 작업 폴더에 쓴 뒤 성공했을 때만 `solve/`·`elevation.json`을 바꾼다(실패하면 이전 결과 유지). `CAMPO_ELEVATION_TIMEOUT_S`(기본 600초)를 넘기면 솔버를 끝내고 504, 브라우저가 떠나면 솔버를 끝낸다. 결과는 `planRecomputeResult`(→ `applyDerivedElevation`) 이력 한 줄, 그다음 `clearDirty` |
 | 속성 패널 토글·읽기 전용 값, 종류 변경 시 flat_exact 지움 | 완료 | `PropertiesPanel` 고도 칸(스키마가 막는 토글은 이유와 함께 흐리게), `model/menu.ts` 종류 바꾸기가 `kindChangeExtras`로 같은 이력에서 flat_exact·is_breakline을 지움 |
 | 경로 테스트 경사 구간, 안내 문장 | 완료 | 지도에 주의(노랑)·급경사(빨강) 줄무늬(`SLOPE_LAYERS`), 경로 카드에 개수와 가장 가파른 곳, route-text `STEEP_NOTE` |
 | 고도 단절선(옹벽·단차) 그리기 | 완료 | 도구 `breakline`(B, 바깥): 그린 선은 지도 데이터가 아니라 `store.json`의 `breaklines`(`PUT /api/elevation/:id/store`, 절대 기압이 든 파일은 거부). 그리거나 지우면 30 m 안 지점이 dirty. 지도에는 그린 선을 옹벽 기호(실선 + 한쪽 이빨)로, 불연속선 구간(바깥 계단, is_breakline)은 갈색 점선으로 표시. 상태 표시줄의 [고도 다시 계산]은 바뀐 곳이 없어도 "고도 최신"과 함께 늘 보이고, 그때는 누르지 못하며 툴팁으로 안내 |
@@ -255,12 +256,13 @@ SPEC-v0.2 9장은 "경사도 계산, 고도 데이터 합치기"를 v0.2 범위 
 | `ElevationRepo` | 완료 | `storage/elevationRepo.ts`: `elevation/store.json`(`serializeElevationStore`, 임시 파일을 거쳐 씀), `elevation/dirty.json`(`markMeasurements`의 heightNodes), 설치 id. 내보내기 zip에 `elevation_store.json`, `elevation_dirty.json`(Δh·σ·Δt만) |
 | `motionPermission` | 완료 | app.json 문구 |
 | 검사 경고 | 완료 | W15 `flat-exact-not-flat`, W16 `steep-ramp`(SPEC-v0.2 8장) |
-| 남은 일 | — | 편집기 현장 기록 불러오기가 zip의 `elevation_store.json`을 `derived/<캠퍼스>/store.json`에 합치는 것(지금은 손으로 복사), SPEC-v0.2 3.4 프로필 표, σ 모델 재추정 |
+| 현장 기록의 고도 측정 | 완료 | 편집기 현장 기록 불러오기가 zip의 `elevation_store.json`을 `derived/<캠퍼스>/store.json`에 합친다(`model/elevation.ts` `mergePhoneStore`). 같은 휴대폰(`installId`)이 전에 가져온 세션·Δh는 새 내보내기로 바꾸고(휴대폰에서 지우거나 대체한 Δh는 다시 살아나지 않음), 다른 휴대폰의 측정·편집기에서 그린 단절선·솔버 추정값은 둔다. 바뀐 Δh의 양 끝을 `heightNodes`로 표시해 다시 계산 대상이 된다. 높이 기준이 다르거나 절대 기압이 있으면 넣지 않고 알림에 이유를 쓴다 |
+| 남은 일 | — | SPEC-v0.2 3.4 프로필 표, σ 모델 재추정 |
 
 ### 지형 3D와 건물 3D (편집기)
 
 - 지도 왼쪽 위 [3D](건물)와 [지형] 버튼은 따로 켜고 끈다. 둘 중 하나라도 켜지면 지도가 52° 기운다. 그리는 것은 deck.gl(MapboxOverlay)이고 클릭·끌기는 그대로 2D 편집기가 받는다.
-- 지형 고도: `derived/<캠퍼스>/solve/corrected_dem.json`(솔버 보정 결과: flat_exact, 평지 ±1%, 계단, 기압 Δh, 단절선 반영) → `dem.json` → 둘 다 없으면 샘플 언덕(화면에 "실제 고도 아님" 표시). 개발 서버 `GET /api/elevation/:id/terrain`이 EPSG:5186 그리드를 한 변 160칸 이하로 줄여 보낸다.
+- 지형 고도: `derived/<캠퍼스>/solve/corrected_dem.json`(솔버 보정 결과: flat_exact, 평지 ±1%, 계단, 기압 Δh, 단절선 반영) → `dem.json` → 둘 다 없으면 샘플 언덕(화면에 "실제 고도 아님" 표시). 개발 서버 `GET /api/elevation/:id/terrain`이 EPSG:5186 그리드를 한 변 160칸 이하로 줄여 보낸다. 좌표계 계약: `dem_prep.py --dst-crs`는 미터 단위 투영 좌표계만 받고(아니면 오류), 기본 EPSG:5186이 아니면 경고한다(솔버는 그 좌표계로도 풀지만 지형 3D는 EPSG:5186만 읽는다). 다른 좌표계 그리드는 terrain API가 422와 다시 만드는 방법을 알려 준다. 여러 도엽은 각 도엽의 nodata를 NaN으로 읽어 합치고, 도엽 좌표계가 다르면 오류, `--src-crs`로 강제하면 원래 좌표계와 다른 도엽을 경고로 알린다.
 - 옹벽 단면(2026-11-17): 줄인 그리드(대략 9 m 간격)는 1 m 폭 옹벽 단차를 완만한 경사로 뭉갠다. 그래서 `/terrain` 응답은 `{ grid, walls }`이고(`grid`는 예전 그대로), `walls`는 `store.json`의 고도 단절선 중 `lowSide`('left'|'right')와 `dropM > 0`이 함께 있는 선마다 원본 해상도 그리드(`corrected_dem`, 없으면 `dem.json`)에서 읽은 단면이다(`server/terrain.ts` `terrainWalls`). store가 없거나 JSON이 틀리면 `walls: []`이고 지형은 그대로 온다.
   - 형식: `{ id, lowSide, dropM, offsets, x, y, nx, ny, drawn, z }`. `offsets`는 선을 가로지르는 행의 위치(m) `-W … -1, 0, 0, 1 … W`: 0이 두 번이고 앞이 낮은 쪽 지표, 뒤가 높은 쪽 지표, 그 사이가 수직 벽면. `x`·`y`(EPSG:5186 m)는 선을 약 1 m 간격으로 다시 뽑은 점(열, 길이 cols)으로 선 끝에서 W만큼 더 뻗고, `nx`·`ny`는 열마다 높은 쪽을 향한 단위 법선(행의 점 = (x, y) + offset × (nx, ny)). 꺾인 곳에서는 같은 점에 법선을 10°씩 돌린 열을 더 넣어 바깥쪽에 틈이 없게 한다. `drawn`은 그린 첫 점·끝 점의 열 번호. `z`는 rows × cols 행 우선 절대 고도(m), 격자 밖이나 자료 없음은 null.
   - 각 행은 선의 자기 쪽 셀만으로 보간한다(쌍선형, 네 칸이 모두 반대쪽이면 4 × 4 안 같은 쪽 셀의 역거리 가중; 선 위 셀 중심은 솔버처럼 왼쪽). 높은 쪽은 lowSide의 반대쪽으로 정하고, 그린 구간 0행 차이의 중앙값이 −max(0.1, dropM/4)보다 작으면(지형이 분명히 반대라고 하면) 실측 쪽을 쓴다. DEM만 있으면 단차가 없으니 벽면 높이는 0 근처가 정상이다.

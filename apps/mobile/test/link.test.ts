@@ -104,6 +104,28 @@ describe('에스컬레이터', () => {
     expect(plan.notices[0]).toContain('이미 있는');
   });
 
+  it('riding down beside an up-only belt adds the down belt instead of following the up one (QA regression)', () => {
+    const up = ok(planEscalator(input(floor('bldg_A', 1), [127.00075, 37.00062], null), {
+      arrive: { coord: [127.00075, 37.00068], scope: floor('bldg_A', 2) }, rodeUp: true, belt: 'one',
+    }));
+    const once = run(up);
+    const down = ok(planEscalator(input(floor('bldg_A', 2), [127.00075, 37.00068], null, once), {
+      arrive: { coord: [127.00075, 37.00062], scope: floor('bldg_A', 1) }, rodeUp: false, belt: 'one',
+    }));
+    const twice = run(down, once);
+    const belts = Object.values(twice.edges).filter((e) => isEscalator(e.props) && [up.featureId, up.anchorId].includes(e.props.from));
+    expect(belts.map((e) => e.props.conveying).sort()).toEqual(['backward', 'forward']);
+    expect(twice.edges[down.edgeId!]!.props.conveying).toBe('backward');
+    expect(down.edgeReversed).toBe(true);
+    expect(down.notices.join(' ')).not.toContain('이미 있는');
+    // Riding down once more follows the belt now there.
+    const again = ok(planEscalator(input(floor('bldg_A', 2), [127.00075, 37.00068], null, twice), {
+      arrive: { coord: [127.00075, 37.00062], scope: floor('bldg_A', 1) }, rodeUp: false, belt: 'one',
+    }));
+    expect(again.action).toBeNull();
+    expect(again.edgeId).toBe(down.edgeId);
+  });
+
   it('refuses a ride that ends on the same floor or in another building', () => {
     const same = planEscalator(input(floor('bldg_A', 1), [127.00075, 37.00062], null), { arrive: { coord: [127.0007, 37.0006], scope: floor('bldg_A', 1) }, rodeUp: true, belt: 'one' });
     expect('error' in same).toBe(true);

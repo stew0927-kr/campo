@@ -5,7 +5,7 @@ import { footOnLine, lineLength } from '../edit/geo.ts';
 import type { CampusGraph, WalkLinkData } from '../graph.ts';
 import { findRoute, type NearestRoute, type Route, type RouteResult, type SlopeSegment } from '../route.ts';
 import { findNearestRestroom } from '../restroom.ts';
-import { WALK_SPEED_MPS, gradeClass, type Profile } from '../costs.ts';
+import { WALK_SPEED_MPS, gradeClass, isEscalator, isStepFreeUnknown, type Profile } from '../costs.ts';
 import type { EdgeFeature, Position } from '../types.ts';
 import { plazaAt, plazaDistance, plazaGeodesics, type PlazaPoint } from './plaza.ts';
 
@@ -196,7 +196,12 @@ export function findRouteBetween(g: CampusGraph, from: RouteEnd, to: RouteEnd, p
       if (!best || total < best.total) best = { route: r, s, e, total };
     }
   }
-  const direct = 'plaza' in from && 'plaza' in to && from.plaza.plazaId === to.plaza.plazaId ? directRoute(g, from, to, profile) : null;
+  // Both ends on one edge: walking straight along it from foot to foot beats any detour through its end nodes.
+  const onEdge = 'snap' in from && 'snap' in to ? directOnEdge(g, from.snap, to.snap, profile) : null;
+  // Both ends on one plaza: the straight walk inside it, around its holes.
+  const onPlaza =
+    'plaza' in from && 'plaza' in to && from.plaza.plazaId === to.plaza.plazaId ? directRoute(g, from, to, profile) : null;
+  const direct = onEdge && onPlaza ? (onPlaza.cost < onEdge.cost ? onPlaza : onEdge) : (onEdge ?? onPlaza);
   if (direct && (!best || direct.cost <= round1(best.total))) return direct;
   if (!best) {
     return firstMiss ?? (starts.length === 0 ? noLegs(from, profile) : noLegs(to, profile));
@@ -213,6 +218,47 @@ export function findRouteBetween(g: CampusGraph, from: RouteEnd, to: RouteEnd, p
     endFoot: footOf(to),
     ...(s.plaza ? { startPlaza: s.plaza } : {}),
     ...(e.plaza ? { endPlaza: e.plaza } : {}),
+  };
+}
+
+/**
+ * The walk from one foot to another on the same edge, without leaving it (null when the feet are on different edges
+ * or the profile may not walk the edge that way). No graph node is passed, so nodes and steps are empty.
+ */
+function directOnEdge(g: CampusGraph, a: RouteSnap, b: RouteSnap, profile: Profile): PointRoute | null {
+  if (a.edgeId !== b.edgeId) return null;
+  let edge: EdgeFeature | undefined;
+  g.graph.forEachLink((l) => {
+    if (!edge && l.data.kind === 'walk' && l.data.edge.id === a.edgeId) edge = l.data.edge;
+  });
+  if (!edge) return null;
+  const forward = b.along >= a.along;
+  const [u, v] = forward ? [edge.properties.from, edge.properties.to] : [edge.properties.to, edge.properties.from];
+  const data = walkLink(g, u, v, a.edgeId);
+  if (!data || data.blocked[profile]) return null;
+  const share = Math.abs(b.along - a.along);
+  const p = edge.properties;
+  const cls = data.gradePct === null ? 'gentle' : gradeClass(data.gradePct);
+  const slopeSegments: SlopeSegment[] = data.gradePct !== null && cls !== 'gentle' && share > 0
+    ? [{ edgeId: a.edgeId, from: u, to: v, gradePct: round1(data.gradePct), gradeClass: cls }]
+    : [];
+  const moving = share > 0;
+  return {
+    found: true,
+    profile,
+    nodes: [],
+    edgeIds: moving ? [a.edgeId] : [],
+    cost: round1(data.cost[profile] * share),
+    timeSec: round1(data.timeSec * share),
+    distanceM: round1(data.lengthM * share),
+    stairsCount: moving && !isEscalator(p) && p.highway === 'steps' ? 1 : 0,
+    escalatorCount: moving && isEscalator(p) ? 1 : 0,
+    steps: [],
+    uncertainSegments: moving && (profile === 'step_free' || profile === 'wheelchair') && isStepFreeUnknown(p) ? [{ edgeId: a.edgeId, from: u, to: v }] : [],
+    slopeSegments,
+    fallback: null,
+    startFoot: a.foot,
+    endFoot: b.foot,
   };
 }
 

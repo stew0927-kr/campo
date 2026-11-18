@@ -18,6 +18,17 @@ export interface FileStore {
   readBytes(path: string): Promise<Uint8Array | null>;
   /** Writes into the cache folder and returns the file's URI (for the share sheet). */
   writeShared(name: string, bytes: Uint8Array): Promise<string>;
+  /**
+   * Opens a file in the cache folder to write in pieces (the exported zip, without holding all of it in memory). `close`
+   * returns the file's URI; `abort` closes and deletes the unfinished file.
+   */
+  openShared(name: string): Promise<SharedWriter>;
+}
+
+export interface SharedWriter {
+  write(chunk: Uint8Array): Promise<void>;
+  close(): Promise<string>;
+  abort(): Promise<void>;
 }
 
 export const SURVEY_DIR = 'survey';

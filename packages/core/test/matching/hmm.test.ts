@@ -210,6 +210,41 @@ describe('outliers, gaps and restarts', () => {
     expect(r.sigmaM).toBeCloseTo(18, 5);
   });
 
+  it('treats a negative GPS speed (iOS: -1 = unknown) as missing, not as standing still (QA regression)', () => {
+    const fixes = fixesOf(truth, 7, { sigmaM: 3, accuracyM: 6 }).map((f) => ({ ...f, speedMps: -1, headingDeg: -1 }));
+    const state = createMatcherState();
+    const results = fixes.map((f) => matchStep(net, state, f));
+    expect(results.filter((r) => r.stationary)).toHaveLength(0);
+    // The shown point keeps up with the walker instead of being held at the start.
+    const first = results[0]!;
+    const last = results[results.length - 1]!;
+    expect(Math.hypot(last.x - first.x, last.y - first.y)).toBeGreaterThan(100);
+  });
+
+  it('ignores a fix whose latitude / longitude is out of range or whose accuracy is negative (QA regression)', () => {
+    const state = createMatcherState();
+    expect(matchStep(net, state, { tMs: 0, lat: 95, lng: 200, accuracyM: 5 }).skipped).toBe(true);
+    const good = fixesOf(truth.slice(0, 3), 14, { sigmaM: 2, accuracyM: 5 });
+    good.forEach((f) => matchStep(net, state, f));
+    const before = state.last!;
+    const r = matchStep(net, state, { ...good[2]!, tMs: 3000, lat: -91 });
+    expect(r.skipped).toBe(true);
+    expect(r.x).toBe(before.x);
+    expect(matchStep(net, state, { ...good[2]!, tMs: 3000, accuracyM: -1 }).skipped).toBe(true);
+    // The next good fix carries on without a restart.
+    expect(matchStep(net, state, fixesOf(truth.slice(3, 4), 15, { sigmaM: 2, accuracyM: 5 })[0]!).restarted).toBe(false);
+  });
+
+  it('survives repeated 50 m+ GPS jumps: finite output, bounded path, no stuck state (QA regression)', () => {
+    const state = createMatcherState();
+    const fixes = fixesOf(truth, 3, { sigmaM: 3, accuracyM: 6 });
+    const results = fixes.map((f, i) => matchStep(net, state, i % 7 === 3 ? { ...f, lat: f.lat + 0.0006 } : f)); // ~67 m north
+    expect(results.every((r) => Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.confidence))).toBe(true);
+    expect(smoothedPath(state).length).toBeLessThanOrEqual(state.W);
+    // Back on the walk at the end.
+    expect(results[results.length - 1]!.edgeId).not.toBeNull();
+  });
+
   it('replays the same trace to the same results (no clock, no randomness)', () => {
     const fixes = fixesOf(truth, 13, { sigmaM: 8, accuracyM: 12 });
     expect(run(net, fixes)).toEqual(run(net, fixes));

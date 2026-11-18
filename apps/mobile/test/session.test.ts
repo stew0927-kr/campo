@@ -111,6 +111,26 @@ describe('SurveySession', () => {
     expect(validateSurvey(smaller).ok).toBe(true);
   });
 
+  it('a damaged snapshot that still parses is refused with a reason, never thrown (QA regression)', () => {
+    const s = newSession();
+    walk(s);
+    const good = JSON.parse(JSON.stringify(s.snapshot())) as Record<string, unknown>;
+    const damaged: Record<string, unknown>[] = [
+      { ...good, vertical: null },
+      { ...good, scope: null },
+      { ...good, scope: { kind: 'building' } },
+      { ...good, attachments: [] },
+      { ...good, photoSeq: '3' },
+      { ...good, timings: {} },
+      { ...good, changeset: { changes: 'x' } },
+    ];
+    for (const snap of damaged) {
+      let out: ReturnType<typeof SurveySession.restore> | undefined;
+      expect(() => (out = SurveySession.restore({ campus: CAMPUS, base, ids: createIdGen(99) }, snap as unknown as ReturnType<SurveySession['snapshot']>))).not.toThrow();
+      expect(out && 'error' in out).toBe(true);
+    }
+  });
+
   it('continues after a restart: same map, same place, same photo numbering', () => {
     const s = newSession();
     const { doorId } = walk(s);
@@ -133,6 +153,46 @@ describe('SurveySession', () => {
     expect(createHistory(base).perform(applyChangeset(survey.changeset!))).toEqual(r.state);
     r.undo();
     expect(r.state).toEqual(s.state);
+  });
+
+  it('a walk whose changes the bundled campus already has (editor import + re-bundle) is continued, not refused (QA)', () => {
+    const s = newSession();
+    const { doorId } = walk(s);
+    s.addPhotos(doorId, 1, AT);
+    const saved = JSON.parse(JSON.stringify(s.snapshot())) as ReturnType<SurveySession['snapshot']>;
+    const rebundled = createHistory(base).perform(applyChangeset(s.toSurvey('b', AT).changeset!));
+    const restored = SurveySession.restore({ campus: CAMPUS, base: rebundled, ids: createIdGen(99) }, saved);
+    if ('error' in restored) throw new Error(restored.error);
+    expect(restored.rebased).toEqual({ alreadyIn: saved.changeset!.changes.length, dropped: [] });
+    expect(restored.session.state).toEqual(rebundled);
+    expect(restored.session.attachments[doorId]!.photos).toEqual([`photos/${doorId}-1.jpg`]);
+    expect(restored.session.anchorId).toBe(s.anchorId);
+  });
+
+  it('a walk that conflicts in part keeps what still fits and drops the rest with its ids (QA)', () => {
+    const s = newSession();
+    const { doorId } = walk(s);
+    s.attach(doorId, { note: '문 메모' }, AT);
+    const saved = JSON.parse(JSON.stringify(s.snapshot())) as ReturnType<SurveySession['snapshot']>;
+    // In the editor someone put a different point under the id of the door the walk made.
+    const door = s.state.nodes[doorId]!;
+    const clash = createHistory(base).perform(applyChangeset({
+      ...saved.changeset!,
+      id: 'cs-clash',
+      changes: [{ op: 'create', feature: { type: 'Feature', id: doorId, geometry: { type: 'Point', coordinates: [door.coord[0] + 0.0002, door.coord[1]] }, properties: { kind: 'node', node_type: 'corridor', building_id: 'bldg_B', level: 1, source: SOURCE, rev: 1 } } as never }],
+    }));
+    expect(SurveySession.restore({ campus: CAMPUS, base: clash, ids: createIdGen(99) }, saved)).not.toHaveProperty('error');
+    const restored = SurveySession.restore({ campus: CAMPUS, base: clash, ids: createIdGen(99) }, saved);
+    if ('error' in restored) throw new Error(restored.error);
+    expect(restored.rebased!.dropped).toContain(doorId);
+    expect(restored.rebased!.dropped.length).toBeLessThan(saved.changeset!.changes.length);
+    const r = restored.session.state;
+    expect(r.nodes[doorId]!.props.node_type).toBe('corridor'); // the editor's point stays
+    expect(campusErrors(loaded, r)).toEqual([]);
+    // Notes and readings are never dropped.
+    expect(restored.session.attachments[doorId]!.note).toBe('문 메모');
+    // An export after the restore applies on the new bundle.
+    expect(() => createHistory(clash).perform(applyChangeset(restored.session.toSurvey('b2', AT).changeset!))).not.toThrow();
   });
 
   it('batch tells the listeners once, however many changes are made inside (also nested), and not at all for none', () => {
@@ -253,7 +313,7 @@ describe('SurveySession', () => {
     expect('session' in restored && restored.session.state).toBe(base);
   });
 
-  it('refuses a snapshot of another campus, and one whose changes no longer fit the bundled data', () => {
+  it('refuses a snapshot of another campus; one whose changes no longer fit the bundled data is continued without them', () => {
     const s = newSession();
     s.run(ok(planStart(at(s, [127.0002, 37.0004]))));
     s.run(ok(planLink(at(s, [127.00025, 37.00045]))));
@@ -264,7 +324,11 @@ describe('SurveySession', () => {
 
     const onEdited = new SurveySession({ campus: CAMPUS, base, ids: createIdGen(3), startedAt: AT });
     onEdited.run({ action: setProps(['n_out_0002'], { name: '현장 이름' }), anchorId: 'n_out_0002', scope: OUTDOOR, featureId: 'n_out_0002', notices: [] });
+    // Before the QA fix this was refused (rev_mismatch) and the walk could only be thrown away. Now the conflicting
+    // change is left out (the bundled data wins) and reported, and the walk goes on.
     const stale = SurveySession.restore({ ...init, base: edited }, onEdited.snapshot());
-    expect(stale).toEqual({ error: expect.stringContaining('rev_mismatch') });
+    if ('error' in stale) throw new Error(stale.error);
+    expect(stale.rebased).toEqual({ alreadyIn: 0, dropped: ['n_out_0002'] });
+    expect(stale.session.state.nodes['n_out_0002']!.props.name).toBe('바뀐 이름');
   });
 });

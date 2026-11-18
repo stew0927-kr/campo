@@ -9,6 +9,9 @@ import { toKorea2000 } from '../src/model/korea2000.ts';
 
 export const MAX_CELLS = 160;
 
+/** A grid file the view cannot draw (its CRS, a short .bin): the API answers 422 with this message, not 500. */
+export class GridFormatError extends Error {}
+
 interface GridMeta {
   crs?: string;
   origin_x: number;
@@ -47,11 +50,16 @@ export interface GridValues {
 
 /** Read a grid's cells where they are (uint16 with scale / offset / nodata, or float32), without copying them. */
 export function gridValues(meta: GridMeta, bytes: Uint8Array): GridValues {
-  if (meta.crs !== undefined && meta.crs !== 'EPSG:5186') throw new Error(`고도 그리드 좌표계 ${meta.crs}는 읽지 못합니다(EPSG:5186만).`);
+  // The view converts grid metres with the EPSG:5186 formulas of model/terrain3d.ts; dem_prep.py makes EPSG:5186 by default and
+  // warns when --dst-crs is something else (the solver itself works in any projected CRS).
+  if (meta.crs !== undefined && meta.crs !== 'EPSG:5186') {
+    throw new GridFormatError(`고도 그리드 좌표계 ${meta.crs}는 지형 3D에서 읽지 못합니다(EPSG:5186만). `
+      + 'dem_prep.py를 --dst-crs EPSG:5186(기본값)으로 다시 실행해 DEM을 만든 뒤 고도를 다시 계산해 주세요.');
+  }
   const n = meta.width * meta.height;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const size = meta.dtype === 'uint16' ? 2 : 4;
-  if (bytes.byteLength < n * size) throw new Error('고도 그리드 .bin 파일이 메타데이터보다 짧습니다.');
+  if (bytes.byteLength < n * size) throw new GridFormatError('고도 그리드 .bin 파일이 메타데이터보다 짧습니다.');
   const value = (i: number): number | null => {
     if (meta.dtype === 'uint16') {
       const raw = view.getUint16(i * 2, true);

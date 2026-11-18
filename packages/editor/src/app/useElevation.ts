@@ -9,12 +9,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EditState, PointRouteResult, Position } from '@campo/core';
 import {
   boxOf, clearDirty, dirtyCount, emptyDirty, isBreakline, isClean, markBreakline, markStateChange, recomputeRequest,
-  type BreakLine, type ElevationDirty, type ElevationStore, type LngLatBox,
+  type BreakLine, type ElevationDirty, type ElevationStore, type HeightNodeKey, type LngLatBox,
 } from '@campo/core/elevation';
 import { fetchElevation, requestRecompute, saveElevationStore } from '../api.ts';
 import type { BreaklineShape } from '../map/layers.ts';
 import {
-  nodesNearLine, parseStore, planRecomputeResult, slopeLines, storeText, withBreakline, withBreaklinePatch, withoutBreakline, type BreaklinePatch, type SlopeLine,
+  mergePhoneStore, nodesNearLine, parseStore, planRecomputeResult, slopeLines, storeText, withBreakline, withBreaklinePatch, withoutBreakline, type BreaklinePatch, type SlopeLine,
 } from '../model/elevation.ts';
 import type { PlanResult } from '../model/plan.ts';
 import { stateToFiles, type Session } from '../model/session.ts';
@@ -152,6 +152,42 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     void writeStore(next, `${done} 고도를 다시 계산하면 반영됩니다.`, near, id, [lineBox(before), lineBox(after)]);
   };
 
+  // ---- 현장 기록의 고도 측정 (elevation_store.json in the survey app's zip) ----
+
+  /**
+   * Merge a phone's elevation store into the campus's store (mergePhoneStore) and mark the height variables it changed —
+   * and the ones the phone itself left to recompute (elevation_dirty.json) — for the next recompute. The store is read
+   * from the dev server first (not the copy on screen), so nothing written meanwhile is lost. Resolves to one line for
+   * the import's notice; `warn` when the measurements did not go in.
+   */
+  const importPhoneStore = async (text: string, dirtyKeys: readonly string[] = []): Promise<{ line: string; warn: boolean }> => {
+    const failed = (why: string) => ({ line: `고도 측정(elevation_store.json)을 넣지 못했습니다. ${why}`, warn: true });
+    let base: ElevationStore;
+    try {
+      base = parseStore((await fetchElevation(session.campusId)).store);
+    } catch (err) {
+      return failed((err as Error).message);
+    }
+    const merged = mergePhoneStore(base, text);
+    if ('error' in merged) return failed(merged.error);
+    const touched = new Set<HeightNodeKey>([...merged.heightNodes, ...(dirtyKeys as readonly HeightNodeKey[])]);
+    if (!merged.changed && touched.size === 0) return { line: '고도 측정은 이미 들어 있습니다.', warn: false };
+    if (merged.changed) {
+      try {
+        await saveElevationStore(session.campusId, storeText(merged.store));
+      } catch (err) {
+        return failed((err as Error).message);
+      }
+      current.current = merged.store;
+      setStore(merged.store);
+      fetchElevation(session.campusId).then((e) => setSolver(e.solver), () => {});
+    }
+    setDirty((d) => ({ ...d, heightNodes: new Set([...d.heightNodes, ...touched]) }));
+    if (!merged.changed) return { line: `고도 측정은 이미 들어 있습니다. 다시 계산할 지점 ${touched.size}곳을 표시했습니다.`, warn: false };
+    const gone = merged.removed > 0 ? ` 휴대폰에서 지우거나 다시 잰 ${merged.removed}개는 뺐습니다.` : '';
+    return { line: `고도 측정 Δh ${merged.added}개를 고도 저장소에 넣었습니다.${gone} 고도를 다시 계산하면 반영됩니다.`, warn: false };
+  };
+
   /** Drawn break lines and the campus edges that act as one (outdoor steps, is_breakline), for the map. */
   const breaklineShapes = useMemo<BreaklineShape[]>(() => [
     ...(store?.breaklines ?? []).map((b): BreaklineShape => ({
@@ -182,6 +218,7 @@ export function useElevation({ session, state, perform, info, fail, routes, show
     addBreakline,
     removeBreakline,
     updateBreakline,
+    importPhoneStore,
     breaklineShapes,
     slopes,
   };

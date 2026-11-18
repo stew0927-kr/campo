@@ -38,14 +38,16 @@ describe('readSurveyFile', () => {
     if ('error' in read) throw new Error(read.error);
     expect(read.survey).toEqual(survey);
     expect(read.text).toBe(formatSurvey(survey));
-    expect(read.photos).toEqual({ 'n_out_sv01-1.jpg': JPEG });
+    expect(read.photoNames).toEqual(['n_out_sv01-1.jpg']);
+    expect(read.readPhoto('n_out_sv01-1.jpg')).toEqual(JPEG);
     expect(read.missingPhotos).toEqual([]);
+    expect(read.elevationStore).toBeNull();
   });
 
   it('reads a bare survey.json and names the photos that did not come with it', () => {
     const read = readSurveyFile(strToU8(formatSurvey(exported())));
     if ('error' in read) throw new Error(read.error);
-    expect(read.photos).toEqual({});
+    expect(read.photoNames).toEqual([]);
     expect(read.missingPhotos).toEqual(['photos/n_out_sv01-1.jpg']);
   });
 
@@ -54,7 +56,15 @@ describe('readSurveyFile', () => {
       'photos/n_out_sv01-1.jpg': JPEG, 'photos/unlisted.jpg': JPEG, '../outside.txt': strToU8('x'), 'campus.json': strToU8('{}'),
     }));
     if ('error' in read) throw new Error(read.error);
-    expect(Object.keys(read.photos)).toEqual(['n_out_sv01-1.jpg']);
+    expect(read.photoNames).toEqual(['n_out_sv01-1.jpg']);
+    expect(() => read.readPhoto('unlisted.jpg')).toThrow();
+  });
+
+  it('keeps the elevation store the survey app puts next to survey.json (it used to be dropped without a word)', () => {
+    const store = JSON.stringify({ schemaVersion: 1, positionCrs: 'EPSG:4326', verticalDatum: 'KVD_INCHEON_MSL', nodes: [], sessions: [], edges: [] });
+    const read = readSurveyFile(zipOf(exported(), { 'photos/n_out_sv01-1.jpg': JPEG, 'elevation_store.json': strToU8(store), 'elevation_dirty.json': strToU8('{}') }));
+    if ('error' in read) throw new Error(read.error);
+    expect(read.elevationStore).toBe(store);
   });
 
   it('refuses a zip without survey.json, text that is not JSON, and a survey that breaks the schema (with every reason)', () => {

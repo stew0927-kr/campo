@@ -185,7 +185,9 @@ export function matchStep(net: MatchNetwork, state: MatcherState, fix: SensorFix
     if (state.net !== null) resetMatcher(state);
     state.net = net;
   }
-  const valid = Number.isFinite(fix.lat) && Number.isFinite(fix.lng) && Number.isFinite(fix.accuracyM) && fix.accuracyM <= p.outlierAccuracyM &&
+  // Latitude / longitude outside their ranges (a broken fix, not a place) and a negative accuracy are no observation.
+  const valid = Number.isFinite(fix.lat) && Number.isFinite(fix.lng) && Math.abs(fix.lat) <= 90 && Math.abs(fix.lng) <= 180 &&
+    Number.isFinite(fix.accuracyM) && fix.accuracyM >= 0 && fix.accuracyM <= p.outlierAccuracyM &&
     Number.isFinite(fix.tMs) && !(state.steps > 0 && fix.tMs < state.lastTMs);
   if (!valid) return skipped(state, fix);
 
@@ -202,9 +204,12 @@ export function matchStep(net: MatchNetwork, state: MatcherState, fix: SensorFix
 
   // Speed: GPS, else pedometer, else displacement.
   let speed = Number.NaN;
-  if (fix.speedMps !== undefined && Number.isFinite(fix.speedMps)) speed = fix.speedMps;
+  if (fix.speedMps !== undefined && Number.isFinite(fix.speedMps) && fix.speedMps >= 0) speed = fix.speedMps;
   else if (fix.steps !== undefined && Number.isFinite(fix.steps) && Number.isFinite(state.lastSteps) && dt > 0) speed = ((fix.steps - state.lastSteps) * p.stepLengthM) / dt;
   else if (!first && dt > 0) speed = disp / dt;
+  // A negative speed is "unknown" (iOS reports -1 without a GPS course; a pedometer reset counts backwards): it must
+  // not read as standing still, which would hold the shown position for the rest of the walk.
+  if (speed < 0) speed = Number.NaN;
   if (!state.stationary) {
     state.slowCount = speed < p.stationaryEnterMps ? state.slowCount + 1 : 0;
     if (state.slowCount >= p.stationaryEnterFixes && state.last !== null) state.stationary = true;

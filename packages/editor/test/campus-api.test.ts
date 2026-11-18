@@ -249,4 +249,24 @@ describe('surveys API (현장 기록)', () => {
     expect((await fetch(`${sbase}/api/surveys/${ID}`, { method: 'DELETE' })).status).toBe(405);
     expect(await readdir(root)).not.toContain('surveys');
   });
+  it('takes photos one request each as raw bytes (no base64 JSON of the whole walk), only for a survey already kept, up to a size', async () => {
+    const putPhoto = (name: string, body: Uint8Array) =>
+      fetch(`${sbase}/api/surveys/${ID}/photos/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body });
+    expect((await putPhoto('n_1-1.jpg', jpeg)).status).toBe(409); // survey.json first
+    await put(ID, { text: text(), photos: {} });
+    const ok = await putPhoto('n_1-1.jpg', jpeg);
+    expect(await ok.json()).toEqual({ written: ['photos/n_1-1.jpg'] });
+    expect(await readFile(join(surveysDir, ID, 'photos', 'n_1-1.jpg'))).toEqual(jpeg);
+    expect((await putPhoto('..%2Fsurvey.json', jpeg)).status).toBe(400);
+
+    await new Promise((r) => sserver.close(r));
+    const api = createSurveysApi(surveysDir, { maxPhotoBytes: 1024 });
+    sserver = createServer((req, res) => void api(req, res, () => { res.statusCode = 404; res.end(); }));
+    await new Promise<void>((r) => sserver.listen(0, '127.0.0.1', r));
+    sbase = `http://127.0.0.1:${(sserver.address() as AddressInfo).port}`;
+    const big = await putPhoto('n_3-3.jpg', new Uint8Array(4096));
+    expect(big.status).toBe(413);
+    expect(((await big.json()) as { error: string }).error).toContain('사진');
+    expect((await readdir(join(surveysDir, ID, 'photos'))).sort()).toEqual(['n_1-1.jpg']); // nothing half written
+  });
 });

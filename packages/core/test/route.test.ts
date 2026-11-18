@@ -135,6 +135,32 @@ describe('findRoute: no route, fallback and one-way edges', () => {
     }
   });
 
+  it('a closed elevator (stop or ride) is never ridden, by any profile; no throw (QA)', () => {
+    const until = '2026-12-31T00:00:00+09:00';
+    const now = new Date('2026-11-11T00:00:00+09:00');
+    const rides = ['e_A_elevA_L1__A_elevA_L2', 'e_A_elevA_L2__A_elevA_L3', 'e_A_elevA_L3__A_elevA_L4'];
+    for (const closedId of ['n_A_elevA_L1', 'e_A_elevA_L1__A_elevA_L2']) {
+      const g = buildGraph(campus, { now, overrides: [{ feature_id: closedId, status: 'closed', until, report_id: 'rp-ev' }] });
+      for (const profile of ['shortest', 'step_free', 'elevator_first', 'wheelchair', 'fewest_steps'] as const) {
+        const r = findRoute(g, 'n_A_1_hall', ROOM_408, profile);
+        if (r.found) {
+          // A closed stop: no ride may board or leave there, so no ride touching L1 is used.
+          if (closedId.startsWith('n_')) expect(r.edgeIds).not.toContain(rides[0]);
+          if (closedId.startsWith('e_')) expect(r.edgeIds).not.toContain(closedId);
+          else expect(r.nodes).not.toContain(closedId);
+          expect(Number.isFinite(r.timeSec) && Number.isFinite(r.distanceM)).toBe(true);
+        } else {
+          expect(r.reason).toBe('no-route');
+        }
+      }
+    }
+  });
+
+  it('start = destination is an empty, zero-length route (QA)', () => {
+    const r = route(ROOM_408, ROOM_408, 'shortest');
+    expect([r.nodes, r.edgeIds, r.timeSec, r.distanceM]).toEqual([[ROOM_408], [], 0, 0]);
+  });
+
   it('respects one-way edges', () => {
     const oneWay = structuredClone(campus);
     const portal = oneWay.features.map((f) => f.feature as AnyFeature).find((f) => f.id === 'e_portal_A_4_north');

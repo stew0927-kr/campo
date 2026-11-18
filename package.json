@@ -17,7 +17,8 @@
     "calibrate": "npm run calibrate -w @campo/tools --",
     "apply": "npm run apply -w @campo/tools --",
     "editor": "npm run dev -w @campo/editor",
-    "mobile": "npm run start -w @campo/mobile"
+    "mobile": "npm run start -w @campo/mobile",
+    "app": "npm run start -w @campo/app"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

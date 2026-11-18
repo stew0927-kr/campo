@@ -142,3 +142,56 @@ describe('ElevationRepo (expo-file-system JSON through FileStore)', () => {
     expect(JSON.parse(strFromU8(files[ARCHIVE_ELEVATION_DIRTY]!)).heightNodes).toEqual([outdoorNodeKey('A'), outdoorNodeKey('B')]);
   });
 });
+
+describe('ElevationRepo.removeEdge (저장된 높이 차 삭제)', () => {
+  async function measured() {
+    let clock = 0;
+    let n = 0;
+    const buffer = new PressureSessionBuffer({}, () => `id${++n}`, () => clock);
+    const fs = memoryStore();
+    const repo = await openElevationRepo(fs);
+    const A = point('A', 37), B = point('B', 37.001);
+    await repo.commit(A, buffer.add({ sessionId: SESSION.sessionId, nodeKey: A.key, window: window(1010, 0) }), SESSION);
+    clock = 120_000;
+    await repo.commit(B, buffer.add({ sessionId: SESSION.sessionId, nodeKey: B.key, window: window(1009.5, clock) }), SESSION);
+    return { fs, repo, A, B };
+  }
+
+  it('removes the edge from memory and the file, keeps both spots, marks both ends, and bumps the revision', async () => {
+    const { fs, repo, A, B } = await measured();
+    const edgeId = repo.current().edges[0]!.edgeId;
+    const before = repo.getRevision();
+    let heard = 0;
+    repo.subscribe(() => heard++);
+    await repo.removeEdge(edgeId);
+    expect(repo.current().edges).toHaveLength(0);
+    expect(repo.current().nodes.map((x) => x.key)).toEqual([A.key, B.key]);
+    expect([...repo.pending()].sort()).toEqual([A.key, B.key].sort());
+    expect(repo.getRevision()).toBe(before + 1);
+    expect(heard).toBe(1);
+    const saved = JSON.parse(fs.files.get(ELEVATION_STORE_PATH)!) as { edges: unknown[]; nodes: unknown[] };
+    expect(saved.edges).toHaveLength(0);
+    expect(saved.nodes).toHaveLength(2);
+    const dirty = JSON.parse(fs.files.get('elevation/dirty.json')!) as { heightNodes: string[] };
+    expect(dirty.heightNodes).toEqual([A.key, B.key].sort());
+  });
+
+  it('an unknown edge id writes nothing and does not bump the revision', async () => {
+    const { fs, repo } = await measured();
+    const before = repo.getRevision();
+    const writes = fs.log.length;
+    await repo.removeEdge('e-nowhere');
+    expect(repo.getRevision()).toBe(before);
+    expect(fs.log.length).toBe(writes);
+    expect(repo.current().edges).toHaveLength(1);
+  });
+
+  it('a reopened repo sees the deletion (the exported zip file no longer lists the edge)', async () => {
+    const { fs, repo } = await measured();
+    await repo.removeEdge(repo.current().edges[0]!.edgeId);
+    const again = await openElevationRepo(fs);
+    expect(again.current().edges).toHaveLength(0);
+    expect(again.pending().size).toBe(2);
+    expect(JSON.parse(again.archiveFiles()[ARCHIVE_ELEVATION_STORE]!).edges).toHaveLength(0);
+  });
+});

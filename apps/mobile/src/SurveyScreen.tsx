@@ -24,6 +24,7 @@ import { OUTDOOR, defaultLevel, floorLabel, pointTitle, scopeLabel, type Scope }
 import { openElevationRepo, randomId, type LocalElevationRepo } from './storage/elevationRepo.ts';
 import { SURVEY_DIR, clearSnapshot, createSaver, type FileStore } from './storage/store.ts';
 import { lookupOsmBuilding, planDrawnBuilding, planOsmBuilding } from './survey/buildings.ts';
+import { dhRows, type DhRow } from './survey/dhRows.ts';
 import { floorCopyTargets, planCopyFloor, planMoveNode, planUnsync, syncedOnFloor } from './survey/floors.ts';
 import { planDoor, planEscalator, planFloorChange, planLink, planPortal, planRestroom, planStart, type PathKind, type Plan, type PlanInput } from './survey/plans.ts';
 import { photoCapture, type ExifPhotoInfo, type PhotoCapture } from './survey/photoMeta.ts';
@@ -706,6 +707,23 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     ]);
   };
 
+  /** 저장된 높이 차 삭제: one confirmation, then the edge leaves the repo (the sheet re-reads it through the repo's revision). */
+  const removeDh = (row: DhRow): void => {
+    Alert.alert('이 높이 차를 지울까요?', `${row.from} → ${row.to} ${row.dh}를 이 휴대폰에서 지웁니다. 되돌릴 수 없습니다.`, [
+      { text: '취소', style: 'cancel' },
+      {
+        text: '삭제',
+        style: 'destructive',
+        onPress: () => {
+          void elevation?.removeEdge(row.edgeId).then(
+            () => notify('높이 차를 지웠습니다. 편집기에서 고도를 다시 계산하면 반영됩니다.'),
+            (err: Error) => notify(`높이 차를 지우지 못했습니다. ${err.message}`, 'error'),
+          );
+        },
+      },
+    ]);
+  };
+
   // ---- 계단 · 엘리베이터 · 에스컬레이터: a point at the crosshair, and its sheet joins it to another floor ----
 
   const placeEscalator = (): void => {
@@ -1297,8 +1315,9 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
           <PressureSheet
             rows={pressureRows()}
             ttlMin={DEFAULT_DH_MODEL.bufferTtlMin}
-            edges={(elevation?.current().edges ?? []).filter((e) => e.qc !== 'superseded').length}
+            dh={elevation ? dhRows(elevation.current()) : []}
             pending={elevation?.pending().size ?? 0}
+            onDeleteDh={removeDh}
             onClear={() => {
               measuredPressureBuffer.clear();
               notify('메모리의 기압 기록을 지웠습니다. 저장된 높이 차는 그대로입니다.');

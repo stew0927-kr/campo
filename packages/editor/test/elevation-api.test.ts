@@ -213,3 +213,72 @@ describe('pythonRunner', () => {
   });
 });
 
+
+describe('DELETE /api/elevation/:id/edges/:edgeId (높이 차 하나 지우기)', () => {
+  const edge = (edgeId: string, from: string, to: string, extra: object = {}) => ({
+    edgeId, from, to, dhM: 2.4, sigmaM: 0.35, dtS: 60, offsetFromM: 0, offsetToM: 0, sessionId: 's1', method: 'static_pair', qc: 'pending',
+    model: { tempC: 15, sigmaInstFloorHpa: 0.03, driftHpaPerHour: 0.3 }, createdAt: 1, ...extra,
+  });
+  const STORE_WITH_EDGES = JSON.stringify({
+    schemaVersion: 1, positionCrs: 'EPSG:4326', verticalDatum: 'KVD_INCHEON_MSL',
+    nodes: [
+      { kind: 'outdoor_point', key: 'op:a', position: { lat: 37, lng: 127 }, influenceRadiusM: 1, createdAt: 0 },
+      { kind: 'floor_plane', key: 'fp:b:3F', buildingId: 'b', floorId: '3F', createdAt: 0 },
+    ],
+    sessions: [],
+    edges: [edge('e1', 'op:a', 'fp:b:3F'), edge('e2', 'fp:b:3F', 'op:a', { supersedes: ['e1'] })],
+    breaklines: [{ id: 'bl1', coordinates: [{ lat: 37, lng: 127 }, { lat: 37.1, lng: 127 }], source: 'manual', createdAt: 0 }],
+  });
+  const del = (id: string) => fetch(`${base}/api/elevation/campus-a/edges/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const storePath = () => join(root, 'campus-a', 'store.json');
+
+  it('removes only that edge from the file; both nodes, the drawn break lines and the other edges stay; the answer has the new text', async () => {
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    await writeFile(storePath(), STORE_WITH_EDGES);
+    const r = await del('e1');
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { written: boolean; store: string; removed: { edgeId: string; from: string; to: string } };
+    expect(body.written).toBe(true);
+    expect(body.removed).toEqual({ edgeId: 'e1', from: 'op:a', to: 'fp:b:3F' });
+    const onDisk = await readFile(storePath(), 'utf8');
+    expect(body.store).toBe(onDisk);
+    const saved = JSON.parse(onDisk) as { nodes: unknown[]; edges: { edgeId: string; supersedes?: string[] }[]; breaklines: unknown[] };
+    expect(saved.edges.map((e) => e.edgeId)).toEqual(['e2']);
+    expect(saved.edges[0]!.supersedes).toBeUndefined();
+    expect(saved.nodes).toHaveLength(2);
+    expect(saved.breaklines).toHaveLength(1);
+    expect(onDisk.endsWith('}\n')).toBe(true);
+    expect((await readdir(join(root, 'campus-a'))).filter((f) => f.includes('.tmp'))).toEqual([]);
+  });
+
+  it('an unknown edge id is 404 in Korean and the file is untouched; so is a campus without a store', async () => {
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    await writeFile(storePath(), STORE_WITH_EDGES);
+    const gone = await del('e-nowhere');
+    expect(gone.status).toBe(404);
+    expect(((await gone.json()) as { error: string }).error).toContain('높이 차');
+    expect(await readFile(storePath(), 'utf8')).toBe(STORE_WITH_EDGES);
+    const none = await fetch(`${base}/api/elevation/campus-b/edges/e1`, { method: 'DELETE' });
+    expect(none.status).toBe(404);
+    expect(((await none.json()) as { error: string }).error).toContain('store.json');
+  });
+
+  it('only DELETE is accepted on /edges/:id (405), and a bad campus id is 400', async () => {
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    await writeFile(storePath(), STORE_WITH_EDGES);
+    for (const method of ['GET', 'PUT', 'POST']) {
+      const r = await fetch(`${base}/api/elevation/campus-a/edges/e1`, { method });
+      expect(r.status).toBe(405);
+    }
+    expect(await readFile(storePath(), 'utf8')).toBe(STORE_WITH_EDGES);
+    expect((await fetch(`${base}/api/elevation/Bad_Id/edges/e1`, { method: 'DELETE' })).status).toBe(400);
+  });
+
+  it('two deletes at once both land (they run one at a time per campus)', async () => {
+    await mkdir(join(root, 'campus-a'), { recursive: true });
+    await writeFile(storePath(), STORE_WITH_EDGES);
+    const [a, b] = await Promise.all([del('e1'), del('e2')]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect((JSON.parse(await readFile(storePath(), 'utf8')) as { edges: unknown[] }).edges).toHaveLength(0);
+  });
+});

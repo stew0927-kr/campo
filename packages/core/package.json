@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./node": "./src/node/index.ts",
-    "./elevation": "./src/elevation/index.ts"
+    "./elevation": "./src/elevation/index.ts",
+    "./elevation/store": "./src/elevation/store.ts"
   },
   "scripts": {
     "test": "vitest run",

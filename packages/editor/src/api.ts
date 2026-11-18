@@ -151,6 +151,14 @@ export async function saveElevationStore(campusId: string, text: string): Promis
   if (!res.ok || !body.written) throw new Error(body.error ?? `고도 단절선을 저장하지 못했습니다 (HTTP ${res.status}).`);
 }
 
+/** One Δh edge out of the store on the server (DELETE). The updated store text comes back, with the edge's two ends. */
+export async function deleteElevationEdge(campusId: string, edgeId: string): Promise<{ store: string; removed: { edgeId: string; from: string; to: string } }> {
+  const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/edges/${encodeURIComponent(edgeId)}`, { method: 'DELETE' });
+  const body = (await res.json().catch(() => ({}))) as { written?: boolean; store?: string; removed?: { edgeId: string; from: string; to: string }; error?: string };
+  if (!res.ok || !body.written || typeof body.store !== 'string' || !body.removed) throw new Error(body.error ?? `높이 차를 지우지 못했습니다 (HTTP ${res.status}).`);
+  return { store: body.store, removed: body.removed };
+}
+
 /** Send the recompute request and the campus as it would be saved; the solver's derived/elevation.json comes back. */
 export async function requestRecompute(campusId: string, request: unknown, files: Record<string, string>): Promise<{ derived: unknown; mode: 'solved' | 'existing'; log: string }> {
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/recompute`, {

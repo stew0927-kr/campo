@@ -5,7 +5,8 @@
  *   편집 동작(History의 Immer 패치) ─markEditPatches─┐
  *   기압 측정(버퍼가 만든 엣지)      ─markMeasurements─┤→ ElevationDirty ─recomputeRequest→ JSON
  *                                                    │        → python tools/elevation/campo_height_solver.py --dirty
- *                                                    │          (그 성분만 다시 풀고 잔차장은 dirty 타일만 갱신)
+ *                                                    │          (v1: 그 성분만 다시 풀고 잔차장은 dirty 타일만 갱신)
+ *                                                    │          (v2, 기본 엔진: 요청은 그대로 보내지만 --dirty·--previous-residual을 읽지 않고 전체를 다시 푼다)
  *   derived/elevation.json ─readDerivedElevation→ applyDerivedElevation(setEdgeElevation 동작 한 번) → clearDirty
  *
  * 고도 값을 데이터에 쓰는 것은 편집 동작 setEdgeElevation뿐이다(AGENTS.md). 이 파일은 층 번호를 읽지 않는다.

@@ -4,198 +4,198 @@
   "solvedAt": 0,
   "nodes": {
     "n_A_1_esc": {
-      "z_m": 30.977,
-      "sigma_m": 5.199,
+      "z_m": 31.057,
+      "sigma_m": 1.208,
       "floating": false
     },
     "n_A_1_hall": {
-      "z_m": 30.977,
-      "sigma_m": 5.199,
+      "z_m": 31.057,
+      "sigma_m": 1.208,
       "floating": false
     },
     "n_A_1_main": {
-      "z_m": 30.977,
-      "sigma_m": 5.199,
+      "z_m": 31.057,
+      "sigma_m": 1.208,
       "floating": false
     },
     "n_A_1_stair": {
-      "z_m": 30.977,
-      "sigma_m": 5.199,
+      "z_m": 31.057,
+      "sigma_m": 1.208,
       "floating": false
     },
     "n_A_2_esc": {
-      "z_m": 34.877,
-      "sigma_m": 5.294,
+      "z_m": 34.957,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_A_2_hall": {
-      "z_m": 34.877,
-      "sigma_m": 5.294,
+      "z_m": 34.957,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_A_2_stair": {
-      "z_m": 34.877,
-      "sigma_m": 5.294,
+      "z_m": 34.957,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_A_3_bridge": {
-      "z_m": 38.777,
-      "sigma_m": 5.388,
+      "z_m": 38.857,
+      "sigma_m": 1.86,
       "floating": false
     },
     "n_A_3_hall": {
-      "z_m": 38.777,
-      "sigma_m": 5.388,
+      "z_m": 38.857,
+      "sigma_m": 1.86,
       "floating": false
     },
     "n_A_3_north": {
-      "z_m": 38.777,
-      "sigma_m": 5.388,
+      "z_m": 38.857,
+      "sigma_m": 1.86,
       "floating": false
     },
     "n_A_3_stair": {
-      "z_m": 38.777,
-      "sigma_m": 5.388,
+      "z_m": 38.857,
+      "sigma_m": 1.86,
       "floating": false
     },
     "n_A_4_408door": {
-      "z_m": 42.677,
-      "sigma_m": 5.48,
+      "z_m": 42.757,
+      "sigma_m": 2.112,
       "floating": false
     },
     "n_A_4_hall": {
-      "z_m": 42.677,
-      "sigma_m": 5.48,
+      "z_m": 42.757,
+      "sigma_m": 2.112,
       "floating": false
     },
     "n_A_4_north": {
-      "z_m": 42.677,
-      "sigma_m": 5.48,
+      "z_m": 42.757,
+      "sigma_m": 2.112,
       "floating": false
     },
     "n_A_4_stair": {
-      "z_m": 42.677,
-      "sigma_m": 5.48,
+      "z_m": 42.757,
+      "sigma_m": 2.112,
       "floating": false
     },
     "n_A_4_wc_f": {
-      "z_m": 42.677,
-      "sigma_m": 5.48,
+      "z_m": 42.757,
+      "sigma_m": 2.112,
       "floating": false
     },
     "n_A_4_wc_m": {
-      "z_m": 42.677,
-      "sigma_m": 5.48,
+      "z_m": 42.757,
+      "sigma_m": 2.112,
       "floating": false
     },
     "n_A_elevA_L1": {
-      "z_m": 30.977,
-      "sigma_m": 5.199,
+      "z_m": 31.057,
+      "sigma_m": 1.208,
       "floating": false
     },
     "n_A_elevA_L2": {
-      "z_m": 34.877,
-      "sigma_m": 5.294,
+      "z_m": 34.957,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_A_elevA_L3": {
-      "z_m": 38.777,
-      "sigma_m": 5.388,
+      "z_m": 38.857,
+      "sigma_m": 1.86,
       "floating": false
     },
     "n_A_elevA_L4": {
-      "z_m": 42.677,
-      "sigma_m": 5.48,
+      "z_m": 42.757,
+      "sigma_m": 2.112,
       "floating": false
     },
     "n_B_1_hall": {
-      "z_m": 30.334,
-      "sigma_m": 2.149,
+      "z_m": 35.268,
+      "sigma_m": 1.208,
       "floating": false
     },
     "n_B_1_main": {
-      "z_m": 30.334,
-      "sigma_m": 2.149,
+      "z_m": 35.268,
+      "sigma_m": 1.208,
       "floating": false
     },
     "n_B_1_stair": {
-      "z_m": 30.334,
-      "sigma_m": 2.149,
+      "z_m": 35.268,
+      "sigma_m": 1.208,
       "floating": false
     },
     "n_B_2_201door": {
-      "z_m": 34.234,
-      "sigma_m": 2.37,
+      "z_m": 39.168,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_B_2_bridge": {
-      "z_m": 34.234,
-      "sigma_m": 2.37,
+      "z_m": 39.168,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_B_2_hall": {
-      "z_m": 34.234,
-      "sigma_m": 2.37,
+      "z_m": 39.168,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_B_2_stair": {
-      "z_m": 34.234,
-      "sigma_m": 2.37,
+      "z_m": 39.168,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_B_2_steps": {
-      "z_m": 34.234,
-      "sigma_m": 2.37,
+      "z_m": 39.168,
+      "sigma_m": 1.568,
       "floating": false
     },
     "n_C_5_bridge": {
-      "z_m": 33.108,
-      "sigma_m": 0.239,
+      "z_m": 32.703,
+      "sigma_m": 13.416,
       "floating": false
     },
     "n_C_5_east": {
-      "z_m": 33.108,
-      "sigma_m": 0.239,
+      "z_m": 32.703,
+      "sigma_m": 13.416,
       "floating": false
     },
     "n_C_5_hall": {
-      "z_m": 33.108,
-      "sigma_m": 0.239,
+      "z_m": 32.703,
+      "sigma_m": 13.416,
       "floating": false
     },
     "n_C_5_main": {
-      "z_m": 33.108,
-      "sigma_m": 0.239,
+      "z_m": 32.703,
+      "sigma_m": 13.416,
       "floating": false
     },
     "n_out_0001": {
-      "z_m": 30.334,
-      "sigma_m": 2.121,
+      "z_m": 30.335,
+      "sigma_m": 1.325,
       "floating": false
     },
     "n_out_0002": {
-      "z_m": 30.977,
-      "sigma_m": 5.196,
+      "z_m": 29.43,
+      "sigma_m": 1.553,
       "floating": false
     },
     "n_out_0003": {
-      "z_m": 31.687,
-      "sigma_m": 5.196,
+      "z_m": 33.234,
+      "sigma_m": 1.553,
       "floating": false
     },
     "n_out_0004": {
       "z_m": 31.687,
-      "sigma_m": 3.0,
+      "sigma_m": 1.611,
       "floating": false
     },
     "n_out_0005": {
       "z_m": 32.486,
-      "sigma_m": 3.0,
+      "sigma_m": 1.611,
       "floating": false
     },
     "n_out_0006": {
-      "z_m": 30.334,
-      "sigma_m": 2.121,
+      "z_m": 30.335,
+      "sigma_m": 1.325,
       "floating": false
     },
     "n_out_0007": {
@@ -222,8 +222,8 @@
       "elev_sigma_m": 1.0
     },
     "e_A_3_bridge__B_2_bridge": {
-      "elev_diff_m": -4.543,
-      "elev_sigma_m": 6.607
+      "elev_diff_m": 0.31,
+      "elev_sigma_m": 1.732
     },
     "e_A_3_stair__A_4_stair": {
       "elev_diff_m": 3.9,
@@ -234,48 +234,49 @@
       "elev_sigma_m": 1.0
     },
     "e_out_0001__out_0002": {
-      "elev_diff_m": 0.643,
-      "elev_sigma_m": 6.364
+      "elev_diff_m": -0.905,
+      "elev_sigma_m": 2.247
     },
     "e_out_0001__out_0006": {
       "elev_diff_m": 0.0,
       "elev_sigma_m": 0.01
     },
     "e_out_0002__out_0003": {
-      "elev_diff_m": 0.71,
-      "elev_sigma_m": 8.485
+      "elev_diff_m": 3.803,
+      "elev_sigma_m": 0.46
     },
     "e_out_0002__out_0003_esc": {
-      "elev_diff_m": 0.71,
-      "elev_sigma_m": 8.485
+      "elev_diff_m": 3.803,
+      "elev_sigma_m": 0.46
     },
     "e_out_0002__out_0004": {
-      "elev_diff_m": 0.71,
-      "elev_sigma_m": 6.708
+      "elev_diff_m": 2.256,
+      "elev_sigma_m": 3.048
     },
     "e_out_0004__out_0005": {
       "elev_diff_m": 0.799,
-      "elev_sigma_m": 4.243
+      "elev_sigma_m": 0.973
     },
     "e_out_0005__out_0003": {
-      "elev_diff_m": -0.799,
-      "elev_sigma_m": 6.708
+      "elev_diff_m": 0.748,
+      "elev_sigma_m": 3.048
     },
     "e_portal_A_1_main": {
-      "elev_diff_m": 0.0,
-      "elev_sigma_m": 0.178
+      "elev_diff_m": -1.627,
+      "elev_sigma_m": 2.134
     },
     "e_portal_A_4_north": {
-      "elev_diff_m": -10.99,
-      "elev_sigma_m": 8.662
+      "elev_diff_m": -9.524,
+      "elev_sigma_m": 2.748
     },
     "e_portal_B_1_main": {
-      "elev_diff_m": 0.0,
-      "elev_sigma_m": 0.345
+      "elev_diff_m": -4.933,
+      "elev_sigma_m": 0.703
     },
     "e_portal_C_5_main": {
-      "elev_diff_m": 0.0,
-      "elev_sigma_m": 0.239
+      "elev_diff_m": 0.405,
+      "elev_sigma_m": 13.416
     }
-  }
+  },
+  "engine": "campo-height-solver/2"
 }

@@ -82,7 +82,7 @@ def test_dirty_run_on_the_same_dem_still_reuses_the_previous_field(tmp_path):
     """v1: the same DEM keeps the incremental path (the fingerprint written by the first run matches)."""
     gx, gy, camp = _setup(tmp_path)
     _dem(gx, gy, 1.0).save(tmp_path / "dem")
-    common = ["--store", tmp_path / "store.json", "--dem", tmp_path / "dem.json", "--campus", camp]
+    common = ["--engine", "v1", "--store", tmp_path / "store.json", "--dem", tmp_path / "dem.json", "--campus", camp]
     run_cli(*common, "--out", tmp_path / "solve", "--derived-out", tmp_path / "elevation.json")
     r = run_cli(*common, "--out", tmp_path / "solve", "--derived-out", tmp_path / "elevation.json", "--dirty",
                 tmp_path / "dirty.json", "--previous-residual", tmp_path / "solve" / "residual_field.json",
@@ -93,10 +93,11 @@ def test_dirty_run_on_the_same_dem_still_reuses_the_previous_field(tmp_path):
 
 
 def test_previous_residual_without_a_fingerprint_is_not_trusted(tmp_path):
-    """A residual_field.json written before dem_sha256 existed: one full run, then incremental again."""
+    """A residual_field.json written before dem_sha256 existed: one full run, then incremental again (v1 only: engine v2
+    never reads the residual field)."""
     gx, gy, camp = _setup(tmp_path)
     _dem(gx, gy, 1.0).save(tmp_path / "dem")
-    common = ["--store", tmp_path / "store.json", "--dem", tmp_path / "dem.json", "--campus", camp]
+    common = ["--engine", "v1", "--store", tmp_path / "store.json", "--dem", tmp_path / "dem.json", "--campus", camp]
     run_cli(*common, "--out", tmp_path / "solve", "--derived-out", tmp_path / "elevation.json")
     meta_path = tmp_path / "solve" / "residual_field.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))

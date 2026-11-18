@@ -28,12 +28,14 @@ describe('derived/elevation.json from the solver', () => {
 
     const before = buildGraph(loaded, { calibration: {} });
     const after = buildGraph(campus, { calibration: {} });
-    // No barometer data: DEM-only σ is metres, so only the surveyed-flat footway and short portals get a grade.
+    // No barometer data: DEM-only σ is metres, so a grade survives only where σ stays under 3 % of the plan length —
+    // the surveyed-flat footway (flat_exact → 0), the footway the v2 grid flattens (0.80 m over the run, σ 0.97 m) and
+    // the building B door (σ 0.70 m). The A door (σ 2.13 m) and the 5th floor of C (σ 13.4 m) have none.
     const graded = new Set<string>();
     after.graph.forEachLink((l) => {
       if (l.data.kind === 'walk' && (l.data as WalkLinkData).gradePct !== null) graded.add(l.data.edge.id);
     });
-    expect([...graded].sort()).toEqual(['e_out_0001__out_0006', 'e_portal_A_1_main', 'e_portal_B_1_main', 'e_portal_C_5_main']);
+    expect([...graded].sort()).toEqual(['e_out_0001__out_0006', 'e_out_0004__out_0005', 'e_portal_B_1_main']);
     for (const profile of PROFILES) {
       const a = findRoute(before, 'n_out_0001', 'n_A_4_408door', profile);
       const b = findRoute(after, 'n_out_0001', 'n_A_4_408door', profile);

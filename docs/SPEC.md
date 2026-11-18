@@ -63,7 +63,7 @@ v0.1은 아래가 모두 되면 끝이다.
 |---|---|---|---|
 | `building` | Polygon | `name`, `code`, `levels`(정수 배열), `ground_levels`(지면과 닿는 층 배열) | `ext.moct_bldg_id`, `ext.floor_height_m`, `ext.plinth_floors`(기반층, 아래 참고), `floor_outlines`(층별 외곽선, 아래 참고) |
 | `node` | Point | `node_type`, `building_id`(바깥은 null), `level`(바깥은 null) | `name`, `ref`, `shaft_id`, `space_name`, `needs_check`, `hours`, `closed_period`, `access_condition`, `sync_group` |
-| `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check`, `flat_exact`, `is_breakline`, `elev_diff_m`, `elev_sigma_m`, `grade_pct` |
+| `edge` | LineString | `highway`, `from`, `to`, `bidirectional`, `step_free` | `edge_type`, `level_from`, `level_to`, `step_count`, `covered`, `hours`, `building_from`, `building_to`, `needs_check`, `flat_exact`, `is_breakline`, `width_m`, `elev_diff_m`, `elev_sigma_m`, `grade_pct` |
 | `plaza` | Polygon `[바깥, ...구멍]` | (공통 속성만) | `name`, `surface`(표시 전용), `fixed_height_m`, `needs_check`. 평지(완전 평지 영역), 자세한 규칙은 docs/v0.2/SPEC-v0.2.md 2.8 |
 
 지점의 출입 정보와 층 연동(모두 선택 속성, 없는 예전 파일도 그대로 읽는다)
@@ -84,10 +84,12 @@ v0.1은 아래가 모두 되면 끝이다.
 |---|---|---|---|
 | `flat_exact` | 사람 | 현장에서 평지로 확인함. 높이 계산은 높이 차 0으로 고정하고 길찾기는 경사 0으로 본다 | footway, corridor |
 | `is_breakline` | 사람 | 지형이 끊기는 곳(연석, 옹벽, 바깥 계단). 높이 보간이 이 선을 넘지 않는다. 없으면 바깥 계단이 해당, `false`로 끔 | footway, steps, ramp. `flat_exact: true`와 함께 `true` 불가 |
+| `width_m` | 사람 | 땅 위 길의 폭(m). 없으면 **2.0**. 고도 보정이 이 폭만큼 길을 가로 방향으로 평평하게 하고, 3D는 이 폭으로 그린다. 길찾기는 읽지 않는다 | 선택, 기본 2.0, 0.5~20(밖이면 E19). 편집기는 실내 구간·엘리베이터에서 입력란을 숨긴다 |
 | `elev_diff_m` | 고도 재계산 | `to` 높이 − `from` 높이(m) | −200~200 |
 | `elev_sigma_m` | 고도 재계산 | `elev_diff_m`의 표준편차(m) | 0 초과, `elev_diff_m`과 함께 |
 | `grade_pct` | 고도 재계산 | from → to 경사(%), 오르막이 양수 | `elev_diff_m`과 함께 |
 
+- `width_m`은 편집 동작 `setEdgeWidth(edgeIds, widthM | null)`로 바꾼다(여러 구간 한 번에, `null`은 키를 지워 기본값 2.0으로). 구간을 나누면 두 조각이 같은 폭을 갖는다. 유효 폭은 `edgeWidthM(props)`(core `edgeWidth.ts`)로 읽는다.
 - 계산 값 셋은 편집 동작 `setEdgeElevation`만 쓴다. 구간을 뒤집으면 `elev_diff_m`·`grade_pct`의 부호가 바뀌고, 나누거나 합치면 지워졌다가 다음 재계산이 다시 쓴다.
 - 길찾기는 이 값들을 구간 자신의 속성으로만 읽는다(층 번호는 여전히 비교하지 않음). 경사가 오르막·내리막 시간과 프로필 벌점에 들어간다.
 - 건물을 OpenStreetMap에서 가져오면 `source`는 `osm`이다(ODbL, © OpenStreetMap 기여자).

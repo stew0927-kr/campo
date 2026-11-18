@@ -1,6 +1,7 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { ACCESS_LABELS, ACCESS_PLACEHOLDERS, ACCESS_PRESETS, ACCESS_PROPS, FLIGHT_SEC_MAX, FLIGHT_SEC_MIN, FLOOR_FLIGHT_SEC, type AccessProp } from '@campo/core';
 import { elevationBadges, flagBlocked } from '../model/elevation.ts';
+import { edgeWidthApplies, parseEdgeWidthInput } from '../model/edgeWidth.ts';
 import type { CommonEdits } from '../model/ops.ts';
 import type { AnyProps } from '../model/session.ts';
 
@@ -79,10 +80,25 @@ interface PanelProps {
   onEdit: (edits: CommonEdits) => void;
   /** 평지 확인 / 단절선 on an edge. */
   onFlag: (flag: ElevationFlag, on: boolean) => void;
+  /** 길 폭: width_m of the selected edges that take a width (undefined = missing, 2.0 m). Several edges are set together. */
+  widthEdges?: readonly (number | undefined)[];
+  /** A new width (m) for every edge in `widthEdges`, or null for the default. */
+  onWidth?: (width: number | null) => void;
 }
 
-export function PropertiesPanel({ feature, selectedCount, onEdit, onFlag }: PanelProps) {
-  if (selectedCount > 1) return <p className="panel-empty">{selectedCount}개를 골랐습니다. 속성은 하나만 골랐을 때 고칠 수 있습니다.</p>;
+export function PropertiesPanel({ feature, selectedCount, onEdit, onFlag, widthEdges = [], onWidth }: PanelProps) {
+  if (selectedCount > 1) {
+    return (
+      <>
+        <p className="panel-empty">{selectedCount}개를 골랐습니다. 속성은 하나만 골랐을 때 고칠 수 있습니다.{widthEdges.length > 0 && onWidth ? ' 길 폭은 고른 바깥 길에 한꺼번에 적용합니다.' : ''}</p>
+        {widthEdges.length > 0 && onWidth && (
+          <form className="props" onSubmit={(e) => e.preventDefault()}>
+            <EdgeWidthField widths={widthEdges} onCommit={onWidth} />
+          </form>
+        )}
+      </>
+    );
+  }
   if (!feature) return <p className="panel-empty">선택 도구로 지점이나 구간을 누르면 여기에서 속성을 고칠 수 있습니다.</p>;
   const p = feature.props;
   const isBuilding = p.kind === 'building'; // its name, code and floors are in BuildingPanel above
@@ -123,6 +139,7 @@ export function PropertiesPanel({ feature, selectedCount, onEdit, onFlag }: Pane
           <p className="field-help">계단 칸 수(step_count)를 모를 때만 쓰입니다. 내려갈 때는 올라갈 때의 3분의 2로 계산합니다.</p>
         </div>
       )}
+      {p.kind === 'edge' && edgeWidthApplies(p) && onWidth && <EdgeWidthField key={feature.id} widths={[p.width_m]} onCommit={onWidth} />}
       {p.kind === 'edge' && <ElevationSection props={p} onFlag={onFlag} />}
       {p.kind === 'node' && (
         <>
@@ -144,6 +161,69 @@ export function PropertiesPanel({ feature, selectedCount, onEdit, onFlag }: Pane
       </label>
       {p.kind === 'edge' && <p className="field-help">'있음'은 현장에서 확인했을 때만 골라 주세요. 모르면 '모름'으로 두세요.</p>}
     </form>
+  );
+}
+
+/** The width shown in the field: the common width_m of the edges, '' when it is the default or they differ. */
+function widthText(widths: readonly (number | undefined)[]): string {
+  const first = widths[0];
+  return first !== undefined && widths.every((w) => w === first) ? String(first) : '';
+}
+
+/**
+ * 길 폭 (width_m) of one or more outdoor edges. Typing is kept here and written on Enter or when the field is left, so one
+ * value is one history entry; an empty field goes back to the default 2.0 m. A width outside 0.5 to 20 m is not saved:
+ * the range message is shown under the field instead.
+ */
+function EdgeWidthField({ widths, onCommit }: { widths: readonly (number | undefined)[]; onCommit: (width: number | null) => void }) {
+  const shown = widthText(widths);
+  const mixed = widths.length > 1 && !widths.every((w) => w === widths[0]);
+  const [draft, setDraft] = useState(shown);
+  const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
+  useEffect(() => {
+    setDraft(shown);
+    setError(null);
+  }, [shown]);
+  const commit = () => {
+    const parsed = parseEdgeWidthInput(draft);
+    if ('error' in parsed) {
+      setError(parsed.error);
+      return;
+    }
+    setError(null);
+    const same = parsed.width === null ? widths.every((w) => w === undefined) : widths.every((w) => w === parsed.width);
+    if (!same) onCommit(parsed.width);
+  };
+  return (
+    <div className="field edge-width-field">
+      <label>길 폭 (width_m, m){widths.length > 1 ? ` · 길 ${widths.length}개` : ''}
+        <input
+          type="number"
+          inputMode="decimal"
+          step={0.1}
+          min={0.5}
+          max={20}
+          value={draft}
+          placeholder={mixed ? '길마다 다름' : '2.0 (기본)'}
+          aria-invalid={error !== null}
+          aria-describedby={error ? errorId : undefined}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (error) setError(null);
+          }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit();
+            }
+          }}
+        />
+      </label>
+      {error ? <p id={errorId} className="field-error" role="alert">{error}</p>
+        : <p className="field-help">땅 위 길의 폭입니다. 비우면 기본값 2.0 m로 돌아갑니다. 고도 보정이 이 폭만큼 길을 평평하게 합니다.</p>}
+    </div>
   );
 }
 

@@ -22,6 +22,7 @@ import {
 } from './types.ts';
 import { CALIBRATION_FILE, CAMPUS_META_FILE, OVERRIDES_FILE } from './load.ts';
 import { GRADE_CAUTION_MAX_PCT, isStepFreePassable } from './costs.ts';
+import { EDGE_WIDTH_MAX_M, EDGE_WIDTH_MIN_M, isValidEdgeWidth } from './edgeWidth.ts';
 import { outlineProblem } from './outline.ts';
 import { plazaClusters, plazaHoleProblem, plazaRegionsOverlap, plazaRingProblem, plazaTouchesNetwork } from './plaza/geometry.ts';
 
@@ -128,6 +129,14 @@ export function validateCampus(campus: LoadedCampus, options: ValidateOptions = 
       allIds.add(id);
     }
     if (isValidFeature(feature)) valid.push({ file, feature });
+
+    // ---- E19. An edge's width_m is a number from 0.5 to 20 m. Checked on the raw feature, so a width the schema also
+    // rejects still gets this plain message (the schema error alone does not say which field or range).
+    const props = isRecord(feature) ? feature['properties'] : undefined;
+    if (isRecord(props) && props['kind'] === 'edge' && 'width_m' in props && !isValidEdgeWidth(props['width_m'])) {
+      error(file, id, E.edgeWidthInvalid,
+        `길 폭(width_m)은 ${EDGE_WIDTH_MIN_M} m 이상 ${EDGE_WIDTH_MAX_M} m 이하의 숫자여야 합니다. 지금 값: ${JSON.stringify(props['width_m'])}`);
+    }
   }
 
   const buildings = new Map<string, Located<BuildingFeature>>();

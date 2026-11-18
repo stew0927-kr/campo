@@ -56,6 +56,8 @@
 - `reverseEdge`: `elev_diff_m`, `grade_pct`의 부호를 뒤집는다(σ는 그대로).
 - `splitEdgeAt`: 두 조각 모두에서 계산 값을 지운다(구간 전체의 값이었으므로). `flat_exact`, `is_breakline`은 사실이므로 둘 다 유지.
 - `deleteNodes` heal: 계산 값이 달라도 합치기를 막지 않고, 남는 구간에서 지운다.
+
+**길 폭 `width_m`(사람, 선택, 기본 2.0 m, 0.5~20 m, 벗어나면 E19).** 길 폭은 솔버의 회랑(corridor) 폭으로 쓰인다: 솔버 v2는 실외 길을 중심선에서 `width_m / 2`(반폭) 안의 칸을 길 높이로 고정하고, 그 높이는 중심선 위 위치만의 함수라 길 가로 방향 기울기가 0이다. 3D 화면도 같은 폭으로 길을 그린다. 지금 솔버는 전역 `raster.half_width_m`(1.0 m, 곧 폭 2.0 m)을 모든 길에 쓰고, 길마다 `width_m`을 읽는 것은 후속 작업 `feat/solver-edge-width`에서 붙는다(그때까지 `width_m`은 저장·검사·편집기 표시만 된다). 폭은 사실이므로 `splitEdgeAt`이 두 조각에 그대로 남기고, 편집 동작 `setEdgeWidth`만 바꾼다. 길찾기는 폭을 읽지 않는다.
 - 지운 값은 다음 재계산이 다시 쓴다(편집이 dirty를 남기므로).
 
 ## 4. 경사 길찾기 (costs.ts, graph.ts, route.ts)

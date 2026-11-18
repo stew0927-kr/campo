@@ -144,6 +144,8 @@ export interface EdgeProperties extends CommonProperties {
   // ---- Elevation (docs/ELEVATION_INTEGRATION.md). All optional: data without them routes as before. ----
   /** footway / corridor only: checked on site to be level. The height solver holds Δh = 0 hard; routing reads grade 0. */
   flat_exact?: boolean;
+  /** 길 폭(m). 없으면 2.0. 실외 길의 지형 평탄화 폭이고 3D 리본의 폭. 0.5 to 20 (E19). Routing does not read it (edgeWidth.ts). */
+  width_m?: number;
   /**
    * The edge is a terrain break (a kerb, a retaining wall, a flight of outdoor steps): residual interpolation does not
    * smooth heights across it. Missing: outdoor steps count as one (edge_type 'outdoor' + highway 'steps'); false opts out.
@@ -331,6 +333,8 @@ export const ERROR_CODES = {
   plazaRingInvalid: 'plaza-ring-invalid',
   /** E17: a plaza hole leaves the outline, comes within 0.1 m of another ring, or overlaps another hole. */
   plazaHoleInvalid: 'plaza-hole-invalid',
+  /** E19: an edge's width_m is not a finite number from 0.5 to 20 m (E18 was removed and is not reused). */
+  edgeWidthInvalid: 'edge-width-invalid',
 } as const;
 
 export const WARNING_CODES = {

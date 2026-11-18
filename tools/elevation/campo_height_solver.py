@@ -1062,7 +1062,7 @@ def previous_residual_mismatch(grid: Grid, path: Optional[str]) -> Optional[str]
 
 
 ENGINE_V2 = "campo-height-solver/2"
-DEFAULT_ENGINE = "v1"  # the editor keeps v1 until v2 is validated on real campus data (CAMPO_ELEVATION_ENGINE=v2 opts in)
+DEFAULT_ENGINE = "v2"  # v2 is the engine now (docs/ELEVATION_SOLVER_V2.md); --engine v1 or CAMPO_ELEVATION_ENGINE=v1 goes back to v1
 
 
 def main(argv=None):
@@ -1083,10 +1083,11 @@ def main(argv=None):
     ap.add_argument("--previous-derived", help="지난 derived/elevation.json(--dirty와 함께: 안 푼 성분의 값 유지)")
     ap.add_argument("--derived-out", help="derived/elevation.json 경로(--campus 필요)")
     ap.add_argument("--out", required=True)
-    # engine v2 (docs/ELEVATION_SOLVER_V2.md). All optional; without them the solver behaves as before.
+    # engine v2 (docs/ELEVATION_SOLVER_V2.md) is the default since 2026-11-18; --engine v1 (or --legacy) runs the
+    # residual-interpolation engine. The v2-only options below are all optional.
     env_engine = os.environ.get("CAMPO_ELEVATION_ENGINE") or DEFAULT_ENGINE
     ap.add_argument("--engine", choices=["v1", "v2"], default=env_engine if env_engine in ("v1", "v2") else DEFAULT_ENGINE,
-                    help="풀이 엔진(기본 v1, 환경 변수 CAMPO_ELEVATION_ENGINE)")
+                    help="풀이 엔진(기본 v2, 환경 변수 CAMPO_ELEVATION_ENGINE, v1은 --legacy)")
     ap.add_argument("--legacy", action="store_true", help="--engine v1 의 별칭")
     ap.add_argument("--config", help="v2 설정 JSON(campo-solver-config/1)")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="v2 설정 한 항목 덮어쓰기(여러 번)")

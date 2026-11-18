@@ -351,11 +351,16 @@ def test_previous_derived_from_v1_is_rewritten_in_full(tmp_path):
     assert inc["nodes"] == full["nodes"] and inc["edges"] == full["edges"]
 
 
-def test_engine_env_and_legacy_flag(tmp_path):
+def test_engine_is_v2_by_default_and_v1_is_opt_in(tmp_path):
     camp = small_scene(tmp_path)[0]
     common = ["--store", tmp_path / "store.json", "--dem", tmp_path / "dem.json", "--campus", camp]
-    for name, args, env in (("default", [], {}), ("env", [], {"CAMPO_ELEVATION_ENGINE": "v1"}),
-                            ("legacy", ["--engine", "v2", "--legacy"], {})):
+    o = tmp_path / "default"
+    cli(*common, "--out", o, "--derived-out", o / "elevation.json")
+    assert json.loads((o / "elevation.json").read_text(encoding="utf-8"))["engine"] == "campo-height-solver/2"
+    assert (o / "solve_report.json").exists()
+    for name, args, env in (("flag", ["--engine", "v1"], {}), ("legacy", ["--legacy"], {}),
+                            ("legacy_after_v2", ["--engine", "v2", "--legacy"], {}),
+                            ("env", [], {"CAMPO_ELEVATION_ENGINE": "v1"})):
         o = tmp_path / name
         cli(*common, *args, "--out", o, "--derived-out", o / "elevation.json", env=env)
         d = json.loads((o / "elevation.json").read_text(encoding="utf-8"))

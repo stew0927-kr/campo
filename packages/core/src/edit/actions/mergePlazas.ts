@@ -1,5 +1,5 @@
 // 평지 합치기 action: 두 평지에서 고른 변 사이를 채워 하나로 합칩니다. 합친 결과는 한 id(into)로 남고 from은 지워집니다.
-// 두 평지를 하나로 만드는 동작이라 E18(평지끼리 겹침)은 결과와 제3의 평지 사이에서만 봅니다.
+// 합친 평지는 다른 평지와 맞닿거나 겹쳐도 됩니다(이어진 평지, SPEC-v0.2 2.8).
 import { normalizePlazaRings, plazaRegionsOverlap } from '../../plaza/geometry.ts';
 import { closedRings, mergePlazaPolygons, type PlazaEdgeRef } from '../../plaza/merge.ts';
 import type { Position } from '../../types.ts';
@@ -22,7 +22,7 @@ export function mergedPlazaPolygon(state: EditState, intoId: string, fromId: str
   return mergePlazaPolygons(closedRings(into.polygon), edges.into, closedRings(from.polygon), edges.from);
 }
 
-/** The plaza the merged area would overlap, other than the two being merged, or undefined (E18). */
+/** The plaza the merged area would overlap, other than the two being merged, or undefined. Information only. */
 export function overlappingOtherPlaza(state: EditState, polygon: Position[][], except: readonly string[]): string | undefined {
   return sortedValues(state.plazas).find((p) => !except.includes(p.id) && plazaRegionsOverlap(p.polygon, polygon))?.id;
 }
@@ -31,8 +31,6 @@ export function overlappingOtherPlaza(state: EditState, polygon: Position[][], e
 function mergeResult(state: EditState, intoId: string, fromId: string, edges: PlazaMergeEdges): { polygon: Position[][] } | { error: string } {
   const made = mergedPlazaPolygon(state, intoId, fromId, edges);
   if ('error' in made) return made;
-  const other = overlappingOtherPlaza(state, made.polygon, [intoId, fromId]);
-  if (other !== undefined) return { error: `합친 평지가 평지 "${other}"와 겹칩니다. 그 평지와도 합치거나 모양을 고쳐 주세요.` };
   return { polygon: normalizePlazaRings(clone(made.polygon)) };
 }
 

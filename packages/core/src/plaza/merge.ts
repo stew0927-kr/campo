@@ -83,8 +83,7 @@ function polygonOf(rings: Position[][]): Polygon {
 }
 
 /**
- * 두 평지를, 고른 두 변 사이를 채우며 하나로 합친 결과. 겹침(E18)은 여기서 보지 않습니다: 이 동작 자체가 두 평지를
- * 합치는 것이라 합친 결과가 제3의 평지와 겹치는지는 부르는 쪽(edit action)이 봅니다.
+ * 두 평지를, 고른 두 변 사이를 채우며 하나로 합친 결과. 합친 결과가 다른 평지와 맞닿거나 겹쳐도 됩니다(이어진 평지).
  */
 export function mergePlazaPolygons(ringsA: Position[][], aRef: PlazaEdgeRef, ringsB: Position[][], bRef: PlazaEdgeRef): PlazaMergeGeometry {
   const bridge = bridgeRing(ringsA, aRef, ringsB, bRef);

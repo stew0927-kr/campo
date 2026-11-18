@@ -83,6 +83,7 @@ export * from './edit/index.ts';
 export {
   PLAZA_EPS_M,
   PLAZA_MAX_POSITIONS,
+  PLAZA_LINK_TOL_M,
   PLAZA_MIN_GAP_M,
   classifyPlazaRing,
   closeRingPositions,
@@ -96,8 +97,10 @@ export {
   plazaHoleProblem,
   plazaProblem,
   plazaRingProblem,
+  plazaClusters,
   plazaRegionsOverlap,
   plazaTouchesNetwork,
+  plazasLinked,
   nearestOnPlazaBoundary,
   pointInRingXY,
   ringAreaXY,

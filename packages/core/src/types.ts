@@ -331,8 +331,6 @@ export const ERROR_CODES = {
   plazaRingInvalid: 'plaza-ring-invalid',
   /** E17: a plaza hole leaves the outline, comes within 0.1 m of another ring, or overlaps another hole. */
   plazaHoleInvalid: 'plaza-hole-invalid',
-  /** E18: the solid areas of two plazas overlap. */
-  plazaOverlap: 'plaza-overlap',
 } as const;
 
 export const WARNING_CODES = {
@@ -362,7 +360,7 @@ export const WARNING_CODES = {
   flatExactNotFlat: 'flat-exact-not-flat',
   /** W16 */
   steepRamp: 'steep-ramp',
-  /** W17: a plaza touches no outdoor node and no walkable edge, so routes cannot cross it. */
+  /** W17: a plaza touches no outdoor node and no walkable edge, itself or through linked plazas, so routes cannot cross it. */
   plazaNoContact: 'plaza-no-contact',
   /** W18: a plaza's solid area overlaps a building outline. */
   plazaOverlapsBuilding: 'plaza-overlaps-building',

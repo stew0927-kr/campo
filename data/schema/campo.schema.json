@@ -379,7 +379,7 @@
     },
 
     "plazaProperties": {
-      "description": "A flat ground area (평지, v0.2 §2.8). Polygon rings after the first are holes. Ring rules (E16, E17) and overlaps (E18) are checked by npm run validate.",
+      "description": "A flat ground area (평지, v0.2 §2.8). Polygon rings after the first are holes. Ring rules (E16, E17) are checked by npm run validate. Plazas may touch or overlap; they are then linked for routing.",
       "type": "object",
       "required": ["kind", "source", "rev"],
       "additionalProperties": false,

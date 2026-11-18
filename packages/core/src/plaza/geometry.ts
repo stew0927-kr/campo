@@ -361,8 +361,10 @@ export type PlazaDraw =
   | { kind: 'error'; message: string };
 
 /**
- * 편집기에서 새로 그린 닫힌 링이 무엇인지: 어떤 평지의 고체 영역 안에 통째로 있으면 그 평지의 구멍, 어떤 평지와도
- * 겹치지 않거나 구멍 안에만 있으면 새 평지, 그 밖(테두리를 가로지름, 구멍이나 평지를 감쌈, 0.1 m 안 접근)은 오류.
+ * 편집기에서 새로 그린 닫힌 링이 무엇인지: 어떤 평지의 고체 영역 안에 통째로 있으면(테두리와 0.1 m 이상 떨어져) 그 평지의
+ * 구멍, 그 밖에는 새 평지입니다. 새 평지는 다른 평지와 떨어져 있어도, 테두리가 맞닿아도, 일부 겹쳐도 됩니다(맞닿거나 겹친
+ * 평지끼리는 서로 이어진 평지로 봅니다, SPEC-v0.2 2.8). 거절하는 것: 스스로 겹침·넓이 없음, 이미 있는 구멍을 감싸는 구멍,
+ * 테두리에 0.1 m 안으로 붙은 구멍(구멍-테두리 간격 규칙), 다른 평지를 통째로 감싸는 새 평지.
  */
 export function classifyPlazaRing(plazas: Iterable<{ id: string; polygon: Position[][] }>, ring: Position[]): PlazaDraw {
   const closed = closeRingPositions(ring);
@@ -375,36 +377,83 @@ export function classifyPlazaRing(plazas: Iterable<{ id: string; polygon: Positi
   let holeOf: string | undefined;
   let insideHoleOf: string | undefined;
   const list = [...plazas].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const insideOrOn = (p: XY) => pointInRingXY(p, r) || ringBoundaryDistance(p, r) <= PLAZA_EPS_M;
   for (const p of list) {
     if (p.polygon.length === 0) continue;
     const rings = normalizePlazaRings(p.polygon).map((x) => x.map(frame.toXY));
-    const d = Math.min(...rings.map((x) => ringsDistance(r, x)));
-    if (d <= PLAZA_EPS_M) return { kind: 'error', message: '다른 평지의 테두리를 가로지릅니다.' };
+    const outer = rings[0]!;
     const hits = r.slice(0, -1).map((v) => locateXY(rings, v, 0));
-    const enclosed = (x: XY[]) => pointInRingXY(x[0]!, r);
-    if (hits.every((h) => h === 'solid')) {
-      if (rings.slice(1).some(enclosed)) return { kind: 'error', message: '이 안에 이미 구멍이 있습니다. 먼저 그 구멍을 지워 주세요.' };
-      if (d < PLAZA_MIN_GAP_M) return { kind: 'error', message: '평지 테두리에 너무 가깝습니다(0.1 m 이상 떨어뜨려 주세요).' };
+    if (hits.every((h) => h === 'solid') && !ringsProperlyCross(r, outer)) {
+      // Inside the plaza: a hole of it, kept clear of every ring of the plaza.
+      if (rings.slice(1).some((x) => pointInRingXY(x[0]!, r))) return { kind: 'error', message: '이 안에 이미 구멍이 있습니다. 먼저 그 구멍을 지워 주세요.' };
+      const dOuter = ringsDistance(r, outer);
+      const dHoles = Math.min(Infinity, ...rings.slice(1).map((x) => ringsDistance(r, x)));
+      if (dHoles <= PLAZA_EPS_M) return { kind: 'error', message: '구멍 테두리를 가로지릅니다. 구멍과 떨어뜨려 그려 주세요.' };
+      if (Math.min(dOuter, dHoles) < PLAZA_MIN_GAP_M) return { kind: 'error', message: '평지 테두리에 너무 가깝습니다(구멍은 테두리와 0.1 m 이상 떨어뜨려 주세요).' };
       holeOf ??= p.id;
       continue;
     }
-    if (hits.every((h) => h === 'outside')) {
-      if (enclosed(rings[0]!)) return { kind: 'error', message: '다른 평지를 통째로 감쌉니다. 바깥 평지를 먼저 그리고 안쪽에 구멍을 뚫어 주세요.' };
-      if (d < PLAZA_MIN_GAP_M) return { kind: 'error', message: '다른 평지 테두리에 너무 가깝습니다(0.1 m 이상 떨어뜨려 주세요).' };
-      continue;
+    // Around the whole plaza (its outline inside the new ring, the two not crossing): one would hide the other.
+    if (!ringsProperlyCross(r, outer) && outer.every(insideOrOn) && hits.every((h) => h === 'outside')) {
+      return { kind: 'error', message: '다른 평지를 통째로 감쌉니다. 바깥 평지를 먼저 그리고 안쪽에 구멍을 뚫어 주세요.' };
     }
-    if (hits.every((h) => h === 'hole')) {
+    // Apart, touching, overlapping in part: a new plaza. Wholly in one hole of the plaza: an island in it.
+    if (hits.every((h) => h === 'hole') && !rings.some((x) => ringsProperlyCross(r, x))) {
       const holeIdx = rings.findIndex((x, i) => i > 0 && pointInRingXY(r[0]!, x));
-      const sameHole = holeIdx > 0 && r.every((v) => pointInRingXY(v, rings[holeIdx]!));
-      if (!sameHole) return { kind: 'error', message: '다른 평지의 테두리를 가로지릅니다.' };
-      if (d < PLAZA_MIN_GAP_M) return { kind: 'error', message: '구멍 테두리에 너무 가깝습니다(0.1 m 이상 떨어뜨려 주세요).' };
-      insideHoleOf ??= p.id;
-      continue;
+      if (holeIdx > 0 && r.every((v) => pointInRingXY(v, rings[holeIdx]!) || ringBoundaryDistance(v, rings[holeIdx]!) <= PLAZA_EPS_M)) insideHoleOf ??= p.id;
     }
-    return { kind: 'error', message: '다른 평지의 테두리를 가로지릅니다.' };
   }
   if (holeOf !== undefined) return { kind: 'hole', plazaId: holeOf };
   return insideHoleOf !== undefined ? { kind: 'new', insideHoleOf } : { kind: 'new' };
+}
+
+/** 평지끼리 맞닿았다고 보는 거리(m). 이 안이면 테두리가 맞닿은 것으로 보고 서로 오갈 수 있습니다. */
+export const PLAZA_LINK_TOL_M = 0.01;
+
+/**
+ * 두 평지가 이어져 있는지: 테두리(바깥·구멍)끼리 PLAZA_LINK_TOL_M 안으로 맞닿거나(변·꼭짓점), 고체 영역이 일부라도 겹치면
+ * true. 한 평지가 다른 평지의 구멍 안에 떨어져 있으면 false.
+ */
+export function plazasLinked(a: Position[][], b: Position[][], tolM = PLAZA_LINK_TOL_M): boolean {
+  if (a.length === 0 || b.length === 0 || a[0]!.length === 0 || b[0]!.length === 0) return false;
+  const frame = localFrame(normalizePlazaRings(a)[0]![0]!);
+  const ra = normalizePlazaRings(a).map((r) => r.map(frame.toXY));
+  const rb = normalizePlazaRings(b).map((r) => r.map(frame.toXY));
+  for (const x of ra) for (const y of rb) if (ringsDistance(x, y) <= tolM) return true;
+  return plazaRegionsOverlap(a, b);
+}
+
+/**
+ * 서로 이어진 평지 묶음(맞닿음·겹침을 따라 이어진 연결 요소). 각 묶음은 id 순, 묶음은 첫 id 순입니다.
+ * 묶음 안의 평지끼리는 걸어서 건너갈 수 있습니다(길찾기의 평지 전이).
+ */
+export function plazaClusters(plazas: Iterable<{ id: string; polygon: Position[][] }>, tolM = PLAZA_LINK_TOL_M): string[][] {
+  const list = [...plazas].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const parent = list.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i]!)));
+  const frame = list.length > 0 && list[0]!.polygon[0]?.[0] ? localFrame(list[0]!.polygon[0]![0]!) : null;
+  const box = list.map((p) => {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const ring of p.polygon.slice(0, 1)) for (const q of ring) {
+      const [x, y] = frame!.toXY(q);
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+    return [x0, y0, x1, y1] as const;
+  });
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const [a, b] = [box[i]!, box[j]!];
+      if (a[0] > b[2] + tolM || b[0] > a[2] + tolM || a[1] > b[3] + tolM || b[1] > a[3] + tolM) continue;
+      if (find(i) === find(j)) continue;
+      if (plazasLinked(list[i]!.polygon, list[j]!.polygon, tolM)) parent[find(i)] = find(j);
+    }
+  }
+  const groups = new Map<number, string[]>();
+  list.forEach((p, i) => {
+    const root = find(i);
+    groups.set(root, [...(groups.get(root) ?? []), p.id]);
+  });
+  return [...groups.values()].sort((a, b) => (a[0]! < b[0]! ? -1 : 1));
 }
 
 /**

@@ -42,11 +42,11 @@ describe('addPlaza', () => {
     expectUndoRedo(emptyState(), addPlaza({ id: 'plaza_a', polygon: [rect(0, 0, 5, 5)], props }));
   });
 
-  it('is disabled for a taken id, a broken ring and an overlap', () => {
+  it('is disabled for a taken id and a broken ring; touching or overlapping another plaza is allowed (linked plazas)', () => {
     const s = withPlaza();
     expect(addPlaza({ id: 'plaza_a', polygon: [rect(30, 0, 40, 5)], props }).disabled(s)).toMatch(/이미 있는 id/);
     expect(addPlaza({ id: 'plaza_b', polygon: [rect(30, 0, 40, 5).slice(0, 2)], props }).disabled(s)).toMatch(/닫힌 고리/);
-    expect(addPlaza({ id: 'plaza_b', polygon: [rect(10, 10, 30, 30)], props }).disabled(s)).toMatch(/plaza_a.*겹칩니다/);
+    expect(addPlaza({ id: 'plaza_b', polygon: [rect(10, 10, 30, 30)], props }).disabled(s)).toBe(false);
     expect(addPlaza({ id: 'plaza_b', polygon: [rect(30, 0, 40, 5)], props }).disabled(s)).toBe(false);
   });
 

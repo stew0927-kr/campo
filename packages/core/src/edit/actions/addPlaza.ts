@@ -13,12 +13,15 @@ export interface NewPlaza {
   props: NewProps<PlazaProperties>;
 }
 
-/** Which plaza's solid area `polygon` would overlap (E18), or undefined. */
+/**
+ * Which plaza's solid area `polygon` would overlap, or undefined. Information only: plazas may touch and overlap (they
+ * are then linked, SPEC-v0.2 2.8), so no action refuses on it.
+ */
 export function overlappingPlaza(state: EditState, polygon: Position[][], except?: string): string | undefined {
   return sortedValues(state.plazas).find((p) => p.id !== except && plazaRegionsOverlap(p.polygon, polygon))?.id;
 }
 
-/** Add a flat ground area (평지, rev 1). Its rings must pass plazaProblem and it may not overlap another plaza. */
+/** Add a flat ground area (평지, rev 1). Its rings must pass plazaProblem; it may touch or overlap other plazas. */
 export function addPlaza(input: NewPlaza, ctx?: EditContext): Action {
   if (input.id === undefined) needIds(ctx, 'addPlaza');
   const memo = idMemo();
@@ -28,9 +31,7 @@ export function addPlaza(input: NewPlaza, ctx?: EditContext): Action {
     disabled(state) {
       if (input.id !== undefined && idTaken(state, input.id)) return `이미 있는 id입니다: ${input.id}`;
       const problem = plazaProblem(polygon);
-      if (problem) return problem;
-      const other = overlappingPlaza(state, polygon);
-      return other === undefined ? false : `평지 "${other}"와 겹칩니다. 겹치지 않게 그리거나 그 평지 안쪽에 구멍으로 그려 주세요.`;
+      return problem || false;
     },
     recipe(draft) {
       const id = input.id ?? memo(0, draft, () => freshId(draft, ctx!.ids, plazaIdPrefix()));

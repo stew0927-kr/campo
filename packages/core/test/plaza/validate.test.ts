@@ -1,4 +1,4 @@
-// Plaza schema (campo.schema.json $defs/plazaProperties) and checks E16 / E17 / E18 / W18 (SPEC-v0.2 §8).
+// Plaza schema (campo.schema.json $defs/plazaProperties) and checks E16 / E17 / W17 / W18; touching or overlapping plazas are linked (no E18) (SPEC-v0.2 §8).
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { ERROR_CODES as E, WARNING_CODES as W, isValidFeature, validateCampus, type LoadedCampus, type Position } from '../../src/index.ts';
@@ -46,10 +46,9 @@ describe('plaza checks', () => {
     expect(codes(campus(plaza('p', [rect(0, 0, 10, 10), rect(8, 2, 12, 4, false)]))).errors).toEqual([E.plazaHoleInvalid]);
     expect(codes(campus(plaza('p', [rect(0, 0, 10, 10), rect(0.05, 2, 4, 4, false)]))).errors).toEqual([E.plazaHoleInvalid]);
   });
-  it('E18: overlapping plazas, but not one inside the other\'s hole', () => {
-    const r = codes(campus(plaza('a', [rect(0, 0, 10, 10)]), plaza('b', [rect(5, 5, 15, 15)])));
-    expect(r.errors).toEqual([E.plazaOverlap]);
-    expect(r.result.errors[0]!.featureId).toBe('b');
+  it('touching or overlapping plazas are fine (E18 was removed): no error, linked', () => {
+    expect(codes(campus(plaza('a', [rect(0, 0, 10, 10)]), plaza('b', [rect(5, 5, 15, 15)]))).errors).toEqual([]);
+    expect(codes(campus(plaza('a', [rect(0, 0, 10, 10)]), plaza('b', [rect(10, 0, 20, 10)]))).errors).toEqual([]);
     expect(codes(campus(plaza('a', [rect(0, 0, 20, 20), rect(5, 5, 15, 15, false)]), plaza('b', [rect(7, 7, 13, 13)]))).errors).toEqual([]);
   });
   it('W17: a plaza that touches no outdoor node or walkable edge', () => {
@@ -64,6 +63,19 @@ describe('plaza checks', () => {
     };
     expect(codes(campus(plaza('p', [rect(0, 0, 10, 10)]), n('a', -5, 5), n('b', 15, 5), e)).warnings).not.toContain(W.plazaNoContact);
     expect(codes(campus(plaza('p', [rect(0, 0, 10, 10)]), n('a', 5, 5))).warnings).not.toContain(W.plazaNoContact);
+  });
+  it('W17: a plaza reaching the network only through linked plazas has no warning; an isolated one still has', () => {
+    const n = {
+      type: 'Feature', id: 'n', geometry: { type: 'Point', coordinates: P(25, 5) },
+      properties: { kind: 'node', node_type: 'outdoor', building_id: null, level: null, source: 't', rev: 1 },
+    };
+    const chain = [plaza('a', [rect(0, 0, 10, 10)]), plaza('b', [rect(10, 0, 20, 10)]), plaza('c', [rect(18, 0, 30, 10)])];
+    const r = codes(campus(...chain, n));
+    expect(r.warnings).not.toContain(W.plazaNoContact);
+    const lone = codes(campus(...chain, n, plaza('d', [rect(50, 0, 60, 10)])));
+    expect(lone.result.warnings.filter((w) => w.code === W.plazaNoContact).map((w) => w.featureId)).toEqual(['d']);
+    // The same chain with no node anywhere: every plaza of it is warned about.
+    expect(codes(campus(...chain)).result.warnings.filter((w) => w.code === W.plazaNoContact).map((w) => w.featureId)).toEqual(['a', 'b', 'c']);
   });
   it('W18: a plaza over a building outline', () => {
     const building = {

@@ -7,8 +7,10 @@ import {
   plazaAreaM2,
   plazaPerimeterM,
   plazaProblem,
+  plazaClusters,
   plazaRegionsOverlap,
   plazaTouchesNetwork,
+  plazasLinked,
   segmentInPlazaDomain,
   signedAreaM2,
 } from '../../src/index.ts';
@@ -95,6 +97,27 @@ describe('plazaRegionsOverlap', () => {
   });
 });
 
+describe('plazasLinked / plazaClusters', () => {
+  it('touching sides or corners and partial overlaps link; apart or in a hole does not', () => {
+    expect(plazasLinked([rect(0, 0, 10, 10)], [rect(10, 0, 20, 10)])).toBe(true); // shared side
+    expect(plazasLinked([rect(0, 0, 10, 10)], [rect(10, 10, 20, 20)])).toBe(true); // shared corner
+    expect(plazasLinked([rect(0, 0, 10, 10)], [rect(5, 5, 15, 15)])).toBe(true); // overlap
+    expect(plazasLinked([rect(0, 0, 10, 10)], [rect(2, 2, 4, 4)])).toBe(true); // wholly inside
+    expect(plazasLinked([rect(0, 0, 10, 10)], [rect(10.5, 0, 20, 10)])).toBe(false);
+    expect(plazasLinked(square, [rect(8, 8, 12, 12)])).toBe(false); // island in the hole
+    expect(plazasLinked(square, [rect(7, 8, 12, 12)])).toBe(true); // island touching the hole edge
+  });
+  it('groups chains, in id order', () => {
+    const list = [
+      { id: 'c', polygon: [rect(20, 0, 30, 10)] },
+      { id: 'a', polygon: [rect(0, 0, 10, 10)] },
+      { id: 'b', polygon: [rect(10, 0, 20, 10)] },
+      { id: 'z', polygon: [rect(100, 0, 110, 10)] },
+    ];
+    expect(plazaClusters(list)).toEqual([['a', 'b', 'c'], ['z']]);
+  });
+});
+
 describe('classifyPlazaRing', () => {
   const plazas = [
     { id: 'pA', polygon: square },
@@ -109,9 +132,17 @@ describe('classifyPlazaRing', () => {
   it('around a whole plaza: error', () => {
     expect(classifyPlazaRing(plazas, rect(35, -5, 65, 25))).toEqual({ kind: 'error', message: expect.stringMatching(/바깥 평지를 먼저 그리고/) });
   });
-  it('crossing a ring: error', () => {
-    expect(classifyPlazaRing(plazas, rect(15, 2, 25, 5))).toEqual({ kind: 'error', message: '다른 평지의 테두리를 가로지릅니다.' });
-    expect(classifyPlazaRing(plazas, rect(9, 9, 15, 11))).toEqual({ kind: 'error', message: '다른 평지의 테두리를 가로지릅니다.' });
+  it('crossing another plaza\'s outline or a hole edge: a new plaza overlapping it (linked plazas)', () => {
+    expect(classifyPlazaRing(plazas, rect(15, 2, 25, 5))).toEqual({ kind: 'new' });
+    expect(classifyPlazaRing(plazas, rect(9, 9, 15, 11))).toEqual({ kind: 'new' });
+  });
+  it('touching another plaza along a side or at a corner: a new plaza', () => {
+    expect(classifyPlazaRing(plazas, rect(20, 0, 30, 10))).toEqual({ kind: 'new' });
+    expect(classifyPlazaRing(plazas, rect(20, 20, 30, 30))).toEqual({ kind: 'new' });
+  });
+  it('a ring all inside a plaza but poking out across its outline: a new plaza, not a hole', () => {
+    const u = [{ id: 'pU', polygon: [ring([[0, 0], [30, 0], [30, 30], [20, 30], [20, 10], [10, 10], [10, 30], [0, 30]])] }];
+    expect(classifyPlazaRing(u, rect(5, 20, 25, 25))).toEqual({ kind: 'new' });
   });
   it('inside a hole: a new plaza (an island)', () => {
     expect(classifyPlazaRing(plazas, rect(8, 8, 12, 12))).toEqual({ kind: 'new', insideHoleOf: 'pA' });
@@ -120,10 +151,12 @@ describe('classifyPlazaRing', () => {
     expect(classifyPlazaRing(plazas, rect(70, 0, 80, 10))).toEqual({ kind: 'new' });
     expect(classifyPlazaRing([], rect(0, 0, 3, 3).slice(0, -1))).toEqual({ kind: 'new' });
   });
-  it('within 0.1 m of a ring: error', () => {
+  it('a hole within 0.1 m of its plaza\'s rings: error; a new plaza near another plaza: fine', () => {
     expect(classifyPlazaRing(plazas, rect(0.05, 2, 5, 5)).kind).toBe('error');
-    expect(classifyPlazaRing(plazas, rect(60.05, 0, 70, 10)).kind).toBe('error');
-    expect(classifyPlazaRing(plazas, rect(7.05, 8, 12, 12)).kind).toBe('error');
+    expect(classifyPlazaRing(plazas, rect(2, 8, 6.95, 10)).kind).toBe('error');
+    expect(classifyPlazaRing(plazas, rect(60.05, 0, 70, 10))).toEqual({ kind: 'new' });
+    expect(classifyPlazaRing(plazas, rect(7.05, 8, 12, 12))).toEqual({ kind: 'new', insideHoleOf: 'pA' });
+    expect(classifyPlazaRing(plazas, rect(7, 8, 12, 12)).kind).toBe('new'); // an island touching the hole edge
   });
   it('self-crossing or degenerate drawings: error', () => {
     expect(classifyPlazaRing(plazas, ring([[70, 0], [80, 10], [80, 0], [70, 10]]))).toEqual({ kind: 'error', message: '그린 테두리가 스스로 겹칩니다.' });

@@ -80,15 +80,28 @@ describe('planPlaza', () => {
     expect(island.plazaId).not.toBe(id);
   });
 
-  it('crossing a ring, around a hole or a whole plaza, or too close: refused with the reason', () => {
+  it('around a hole or a whole plaza, or a hole too close to the edge: refused with the reason', () => {
     const { history } = withPlaza();
     run(history, planPlaza(history.current(), ctx(), rect(10, 10, 20, 20)).plan);
     const s = history.current();
-    expect(planPlaza(s, ctx(), rect(30, 5, 50, 10)).plan).toEqual({ error: '다른 평지의 테두리를 가로지릅니다.' });
     expect((planPlaza(s, ctx(), rect(5, 5, 25, 25)).plan as { error: string }).error).toMatch(/먼저 그 구멍을 지워/);
     expect((planPlaza(s, ctx(), rect(-5, -5, 50, 40)).plan as { error: string }).error).toMatch(/바깥 평지를 먼저 그리고/);
     expect((planPlaza(s, ctx(), rect(0.05, 2, 5, 5)).plan as { error: string }).error).toMatch(/0\.1 m/);
     expect(planPlaza(s, ctx(), [P(60, 0), P(61, 0)]).plan).toMatchObject({ error: expect.any(String) });
+  });
+
+  it('touching or partly overlapping another plaza: a new plaza that runs (linked plazas)', () => {
+    const { history } = withPlaza();
+    const s = history.current();
+    const [outer] = Object.values(s.plazas)[0]!.polygon;
+    const xs = outer!.map((p) => F.toXY(p)[0]);
+    const right = Math.max(...xs);
+    for (const ring of [rect(right, 0, right + 10, 10), rect(right - 5, 2, right + 10, 8)]) {
+      const made = planPlaza(s, ctx(), ring);
+      expect(made.created).toBe(true);
+      const h = createHistory(s);
+      expect(run(h, made.plan)).toEqual({ ok: true, warnings: [] });
+    }
   });
 
   it('a new plaza over a building goes in with a notice', () => {

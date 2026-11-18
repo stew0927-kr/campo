@@ -11,7 +11,7 @@ import * as Location from 'expo-location';
 import { Barometer, Magnetometer } from 'expo-sensors';
 import { useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { smoothHeading } from './heading.ts';
+import { SENSOR_HEADING_REF, headingAccuracyClass, smoothHeading } from './heading.ts';
 import { sharedSensor, type SensorLike, type SharedSensor } from './shared.ts';
 
 const barometer = sharedSensor(Barometer, 500);
@@ -143,14 +143,24 @@ export function usePressure(): SensorValue<number> {
   return useSensor(barometerSource, (r) => (Number.isFinite(r.pressure) && r.pressure > 0 ? r.pressure : undefined));
 }
 
+export interface HeadingValue extends SensorValue<number> {
+  tiltCompensated: boolean;
+  /** The system's accuracy class of the newest reading (3 best, 0 unreliable); undefined from the raw magnetometer. */
+  accuracy: 0 | 1 | 2 | 3 | undefined;
+  /** Which north `value` is against (always magnetic: see SENSOR_HEADING_REF). */
+  ref: typeof SENSOR_HEADING_REF;
+}
+
 /**
  * Where the phone's top edge points, degrees clockwise from magnetic north, smoothed. The system's tilt-compensated
  * heading when it is available, else the flat-held magnetometer.
  */
-export function useHeading(): SensorValue<number> & { tiltCompensated: boolean } {
+export function useHeading(): HeadingValue {
   const smoothed = useRef<number | undefined>(undefined);
+  const accuracy = useRef<0 | 1 | 2 | 3 | undefined>(undefined);
   const system = useSensor(headingSource, (r) => {
     if (!Number.isFinite(r.magHeading) || r.magHeading < 0) return undefined;
+    accuracy.current = headingAccuracyClass(r.accuracy);
     smoothed.current = smoothHeading(smoothed.current, normalizeDeg(r.magHeading));
     return smoothed.current;
   });
@@ -162,6 +172,6 @@ export function useHeading(): SensorValue<number> & { tiltCompensated: boolean }
     recent.current = [...recent.current.slice(-(HEADING_WINDOW - 1)), h];
     return circularMeanDeg(recent.current);
   });
-  if (system.available !== false) return { ...system, tiltCompensated: true };
-  return { ...raw, tiltCompensated: false };
+  if (system.available !== false) return { ...system, tiltCompensated: true, accuracy: system.value === undefined ? undefined : accuracy.current, ref: SENSOR_HEADING_REF };
+  return { ...raw, tiltCompensated: false, accuracy: undefined, ref: SENSOR_HEADING_REF };
 }

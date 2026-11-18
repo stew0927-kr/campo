@@ -31,6 +31,7 @@ import {
 import { OUTDOOR, type Scope } from '../model/scope.ts';
 import { dayOf } from '../time.ts';
 import { withSyncMirror } from './floors.ts';
+import { mergePhotoMeta, newPhotoMeta, type PhotoCapture } from './photoMeta.ts';
 import type { PlanOk } from './plans.ts';
 import { recentPressure, withinPressureWindow, storedHeading, storedPhotoHeading, storedPressure, verticalMeasurement, type PressureReading } from './readings.ts';
 
@@ -86,6 +87,8 @@ export interface Readings {
   photos?: number;
   /** The direction each picture looks (degrees, 0 up to 360), in the order of the pictures; null where none was set. */
   photoHeadings?: (number | null)[];
+  /** What was known about each picture when it was taken (photoMeta.ts photoCapture), in the same order; null where nothing. */
+  photoCaptures?: (PhotoCapture | null)[];
 }
 
 export interface SessionInit {
@@ -336,7 +339,7 @@ export class SurveySession {
       if (plan.edgeId !== undefined && startHpa !== null && endHpa !== null) {
         this.addVertical(verticalMeasurement({ state: this.state, edgeId: plan.edgeId, reversed: plan.edgeReversed === true, startHpa, endHpa, at: r.at }));
       }
-      paths = this.addPhotos(plan.featureId, r.photos ?? 0, r.at, r.photoHeadings);
+      paths = this.addPhotos(plan.featureId, r.photos ?? 0, r.at, r.photoHeadings, r.photoCaptures);
     });
     return paths;
   }
@@ -362,7 +365,7 @@ export class SurveySession {
    * with the note and the photos in the point's attachment as the record of where they came from. The walk stays where
    * it is; one 되돌리기 takes all of it back. Returns the paths reserved for the photos, or why nothing was written.
    */
-  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number; photoHeadings?: (number | null)[]; extra?: Action }, at: string): { paths: string[] } | { error: string } {
+  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number; photoHeadings?: (number | null)[]; photoCaptures?: (PhotoCapture | null)[]; extra?: Action }, at: string): { paths: string[] } | { error: string } {
     const node = this.state.nodes[nodeId];
     if (!node) return { error: '지점을 찾을 수 없습니다.' };
     const patch = accessPatch(node.props, edit.access);
@@ -390,7 +393,7 @@ export class SurveySession {
       if (kept !== undefined && kept !== '') next.note = kept;
       this.attachmentsById = { ...this.attachmentsById, [nodeId]: next };
       this.changed();
-      paths = this.addPhotos(nodeId, photos, at, edit.photoHeadings);
+      paths = this.addPhotos(nodeId, photos, at, edit.photoHeadings, edit.photoCaptures);
     });
     return { paths };
   }
@@ -443,15 +446,19 @@ export class SurveySession {
     this.changed();
   }
 
-  /** Reserve the paths of `count` new photos of `featureId` ("photos/<id>-<n>.jpg") and list them in the attachment. */
-  addPhotos(featureId: string, count: number, at: string, headings: readonly (number | null)[] = []): string[] {
+  /**
+   * Reserve the paths of `count` new photos of `featureId` ("photos/<id>-<n>.jpg") and list them in the attachment.
+   * `headings[i]` is the direction of picture i; `captures[i]` what was known when it was taken (focal length, size,
+   * the compass value before the dial). A picture with neither has no photo_meta entry.
+   */
+  addPhotos(featureId: string, count: number, at: string, headings: readonly (number | null)[] = [], captures: readonly (PhotoCapture | null)[] = []): string[] {
     const paths = Array.from({ length: count }, () => `photos/${featureId}-${++this.photoSeq}.jpg`);
     if (paths.length === 0) return paths;
     const old = this.attachmentsById[featureId];
     const meta: Record<string, PhotoMeta> = { ...old?.photo_meta };
     paths.forEach((path, i) => {
-      const h = headings[i];
-      if (h !== null && h !== undefined) meta[path] = { heading_deg: storedPhotoHeading(h) };
+      const entry = newPhotoMeta(headings[i], captures[i]);
+      if (entry) meta[path] = entry;
     });
     this.attachmentsById = {
       ...this.attachmentsById,
@@ -461,13 +468,21 @@ export class SurveySession {
     return paths;
   }
 
-  /** Set (or clear, with null) the direction a saved photo looks. One 되돌리기 takes it back; the map is not touched. */
+  /**
+   * Set (or clear, with null) the direction a saved photo looks, set on the dial: 'dial' when the photo has a compass value
+   * it started from, else 'manual'. The photo's other fields (focal length, size, the compass value) are kept; clearing
+   * removes only the direction and how it was set. One 되돌리기 takes it back; the map is not touched.
+   */
   setPhotoHeading(featureId: string, path: string, headingDeg: number | null): boolean {
     const old = this.attachmentsById[featureId];
     if (!old?.photos?.includes(path)) return false;
     const meta: Record<string, PhotoMeta> = { ...old.photo_meta };
-    if (headingDeg === null) delete meta[path];
-    else meta[path] = { heading_deg: storedPhotoHeading(headingDeg) };
+    const was = meta[path];
+    const next = headingDeg === null
+      ? mergePhotoMeta(was, { heading_deg: undefined, heading_source: undefined })
+      : mergePhotoMeta(was, { heading_deg: storedPhotoHeading(headingDeg), heading_source: was?.heading_sensor_deg !== undefined ? 'dial' : 'manual' });
+    if (next) meta[path] = next;
+    else delete meta[path];
     if (meta[path]?.heading_deg === old.photo_meta?.[path]?.heading_deg) return true;
     this.remember();
     this.place = { ...this.place, edited: false };

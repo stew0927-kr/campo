@@ -68,13 +68,14 @@ describe('photo directions in a walk', () => {
     const [p1, p2] = s.record(plan, { at: AT, pressureHpa: null, headingDeg: null, photos: 2, photoHeadings: [null, 10] }) as [string, string];
     const id = plan.featureId;
     expect(s.attachments[id]!.photo_meta).toEqual({ [p2]: { heading_deg: 10 } });
+    // Set on the dial without a compass value to start from: 'manual'.
     expect(s.setPhotoHeading(id, p1, 359.6)).toBe(true);
-    expect(s.attachments[id]!.photo_meta![p1]).toEqual({ heading_deg: 0 });
+    expect(s.attachments[id]!.photo_meta![p1]).toEqual({ heading_deg: 0, heading_source: 'manual' });
     expect(s.setPhotoHeading(id, p2, null)).toBe(true);
-    expect(s.attachments[id]!.photo_meta).toEqual({ [p1]: { heading_deg: 0 } });
+    expect(s.attachments[id]!.photo_meta).toEqual({ [p1]: { heading_deg: 0, heading_source: 'manual' } });
     expect(s.setPhotoHeading(id, 'photos/none.jpg', 5)).toBe(false);
     s.undo();
-    expect(s.attachments[id]!.photo_meta).toEqual({ [p1]: { heading_deg: 0 }, [p2]: { heading_deg: 10 } });
+    expect(s.attachments[id]!.photo_meta).toEqual({ [p1]: { heading_deg: 0, heading_source: 'manual' }, [p2]: { heading_deg: 10 } });
     s.undo();
     expect(s.attachments[id]!.photo_meta).toEqual({ [p2]: { heading_deg: 10 } });
     // the snapshot keeps the directions across an app restart

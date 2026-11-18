@@ -11,6 +11,10 @@ import { color, font, radius, space } from './theme.ts';
 export interface SensorValues {
   pressureHpa: number | null;
   headingDeg: number | null;
+  /** The compass accuracy class with headingDeg (3 best, 0 unreliable); left out when the sensor does not say. */
+  headingAccuracy?: 0 | 1 | 2 | 3 | null;
+  /** Which north headingDeg is against; left out without a heading. */
+  headingRef?: 'true' | 'magnetic' | null;
 }
 
 /**
@@ -22,8 +26,13 @@ export function SensorReadout({ into, reference }: { into: RefObject<SensorValue
   const heading = useHeading();
 
   useEffect(() => {
-    into.current = { pressureHpa: pressure.value ?? null, headingDeg: heading.value ?? null };
-  }, [into, pressure.value, heading.value]);
+    into.current = {
+      pressureHpa: pressure.value ?? null,
+      headingDeg: heading.value ?? null,
+      headingAccuracy: heading.value === undefined ? null : heading.accuracy ?? null,
+      headingRef: heading.value === undefined ? null : heading.ref,
+    };
+  }, [into, pressure.value, heading.value, heading.accuracy, heading.ref]);
   // Nothing stale is left for a record made after this line is gone.
   useEffect(() => () => {
     into.current = { pressureHpa: null, headingDeg: null };

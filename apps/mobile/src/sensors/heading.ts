@@ -20,3 +20,14 @@ export function smoothHeading(previous: number | undefined, reading: number, alp
   if (Math.abs(turn) > HEADING_JUMP_DEG) return normalizeDeg(reading);
   return normalizeDeg(previous + alpha * turn);
 }
+
+/**
+ * Which north the headings read here are against. Both sources give magnetic north: the system heading is read as
+ * `magHeading` (device.ts), and the raw magnetometer knows nothing else. A photo's sensor value is stored with this.
+ */
+export const SENSOR_HEADING_REF = 'magnetic' as const;
+
+/** The compass accuracy class the system reports (expo-location: 3 best, 0 unreliable), or undefined for anything else. */
+export function headingAccuracyClass(raw: unknown): 0 | 1 | 2 | 3 | undefined {
+  return raw === 0 || raw === 1 || raw === 2 || raw === 3 ? raw : undefined;
+}

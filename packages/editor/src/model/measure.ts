@@ -72,6 +72,25 @@ export interface DirectionSummary {
 export interface MeasureSummary {
   target: MeasureTarget;
   directions: DirectionSummary[];
+  /** Edge targets: the length of the stretch in metres, as the graph measured it (core's straight-line distance). */
+  lengthM?: number;
+}
+
+/** "12.4 m", or "12 m" when it is a whole number of metres. */
+export function formatLengthM(m: number): string {
+  const r = Math.round(m * 10) / 10;
+  return `${Number.isInteger(r) ? r : r.toFixed(1)} m`;
+}
+
+/** The length of an edge as the graph has it (the same number the route time is made from); undefined when it has no walk link. */
+function edgeLengthM(graph: CampusGraph, edgeId: string): number | undefined {
+  let found: number | undefined;
+  graph.graph.forEachLink((l) => {
+    if (l.data.kind !== 'walk' || l.data.edge.id !== edgeId) return false;
+    found = l.data.lengthM;
+    return true;
+  });
+  return found;
 }
 
 /** Records of every observations/*.jsonl among `extras` (bad lines are left to the 검사 tab). */
@@ -115,7 +134,8 @@ export function measureSummary(target: MeasureTarget, graph: CampusGraph, extras
     });
   }
   if (directions.length === 0) return { reason: '길찾기가 지나지 않는 구간이라 잴 수 없습니다. 엘리베이터 구간은 엘리베이터 정차 지점으로 재세요.' };
-  return { target, directions };
+  const lengthM = target.isEdge ? edgeLengthM(graph, target.target.slice('edge:'.length)) : undefined;
+  return { target, directions, ...(lengthM !== undefined ? { lengthM } : {}) };
 }
 
 export const directionLabel = (d: Direction): string => (d === 'forward' ? '그린 방향' : '반대 방향');

@@ -15,6 +15,7 @@ import type { OutdoorKind, PathVertex } from '../model/tools.ts';
 import type { MapLimits } from '@campo/core';
 import { startZoom, viewLimits } from '../model/viewLimits.ts';
 import { buildingInScope, edgeStrong, nodeStrong, scopeAt, scopeLabel, snappable, type Scope } from '../model/scope.ts';
+import type { RouteFocus } from '../model/routeFocus.ts';
 import { distanceToSegment, footOnSegment, nearestWithin, type ScreenPoint } from '../model/snap.ts';
 import { toolDef, type Tool } from '../ui/registry.ts';
 import { basemaps, type BasemapId } from './basemaps.ts';
@@ -112,6 +113,8 @@ interface Props {
   highlight: ReadonlySet<string>;
   /** Points 끊긴 지점 찾기 reports: ringed on the map. */
   broken: ReadonlySet<string>;
+  /** 경로 테스트: what stays sharp of buildings outside the floor shown (null: nothing special). */
+  routeFocus: RouteFocus | null;
   /** Which nodes a click may pick right now (e.g. outdoor points for the second click of 출입구 연결). */
   canPick: (node: EditNode) => boolean;
   routes: RouteLine[];
@@ -185,7 +188,7 @@ interface ActiveDrag {
 }
 
 export function MapView(props: Props) {
-  const { state, scope, tool, outdoorKind, basemap, highlight, broken, routes, focus, limits } = props;
+  const { state, scope, tool, outdoorKind, basemap, highlight, broken, routeFocus, routes, focus, limits } = props;
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
@@ -839,7 +842,7 @@ export function MapView(props: Props) {
     window.addEventListener('blur', onBlur);
 
     map.on('load', () => {
-      map.addSource(DATA_SOURCE, { type: 'geojson', data: toDisplayGeoJSON(latest.current.state, latest.current.scope, latest.current.highlight, latest.current.broken) });
+      map.addSource(DATA_SOURCE, { type: 'geojson', data: toDisplayGeoJSON(latest.current.state, latest.current.scope, latest.current.highlight, latest.current.broken, latest.current.routeFocus) });
       map.addSource(ROUTE_SOURCE, { type: 'geojson', data: routesGeoJSON(latest.current.routes) });
       map.addSource(DRAG_SOURCE, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource(PREVIEW_SOURCE, { type: 'geojson', data: previewGeoJSON(latest.current.previewShapes) });
@@ -972,7 +975,7 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     whenReady((map) => {
-      (map.getSource(DATA_SOURCE) as GeoJSONSource).setData(toDisplayGeoJSON(state, scope, highlight, broken));
+      (map.getSource(DATA_SOURCE) as GeoJSONSource).setData(toDisplayGeoJSON(state, scope, highlight, broken, routeFocus));
       if (clearDragAfterData.current) {
         // The new state is on its way to the main source: drop the temporary one once it has been drawn.
         map.once('idle', () => {
@@ -984,7 +987,7 @@ export function MapView(props: Props) {
         });
       }
     });
-  }, [state, scope, highlight, broken]);
+  }, [state, scope, highlight, broken, routeFocus]);
 
   // Another campus brings its own area: the limits follow campus.json.
   useEffect(() => {

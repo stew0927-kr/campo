@@ -1,12 +1,13 @@
 // How the edit state is drawn on the map. Display only: builds a throwaway GeoJSON from the EditState.
 import type { FeatureCollection } from 'geojson';
 import type { ExpressionSpecification, LayerSpecification } from 'maplibre-gl';
-import { PICTOGRAM_COLORS, beltEndIds, closeRing, edgeCoords, outlineOfLevel, edgesAt, movedTogether, pictogramOf, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
+import { PICTOGRAM_COLORS, beltEndIds, closeRing, edgeCoords, outlineOfLevel, edgesAt, movedTogether, pictogramOf, type EditEdge, type EditNode, type EditState, type PictogramKind, type Position, type Profile, type Wheelchair } from '@campo/core';
 import { unattachedIds } from '../model/connect.ts';
 import { edgeMidpoint } from '../model/split.ts';
 import { PAIR_OFFSET_PX, pairOffsets } from '../model/pairs.ts';
 import { buildingInScope, edgeStrong, nodeStrong, roomInScope, type Scope } from '../model/scope.ts';
 import type { RouteRef } from '../model/terrain3d.ts';
+import type { RouteFocus } from '../model/routeFocus.ts';
 
 export const DATA_SOURCE = 'campo-data';
 
@@ -44,8 +45,30 @@ function beltProps(conveying: string | undefined, pairOffset: number): Record<st
   };
 }
 
+/** A route edge kept sharp: stairs / elevator in a target building, corridor in a building only passed through. */
+export function routeEdgeStrong(state: Pick<EditState, 'nodes'>, e: EditEdge, focus: RouteFocus): boolean {
+  if (!focus.edgeIds.has(e.id)) return false;
+  const b = state.nodes[e.props.from]?.props.building_id ?? state.nodes[e.props.to]?.props.building_id ?? null;
+  if (b === null) return false;
+  if (focus.targetBuildings.has(b)) return e.props.highway === 'elevator' || e.props.highway === 'steps';
+  return focus.passBuildings.has(b) && e.props.highway === 'corridor';
+}
+
+/** A route point kept sharp: entrance / classroom door in a target building, a plain point (no icon) in one only passed through. */
+export function routeNodeStrong(n: EditNode, icon: string, focus: RouteFocus): boolean {
+  const b = n.props.building_id;
+  if (b === null || !focus.nodeIds.has(n.id)) return false;
+  if (focus.targetBuildings.has(b)) return n.props.node_type === 'entrance' || isClassroom(n);
+  return focus.passBuildings.has(b) && icon === '';
+}
+
 /** `broken`: points 끊긴 지점 찾기 reports; they get a ring. */
-export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: ReadonlySet<string> = new Set(), broken: ReadonlySet<string> = new Set()): FeatureCollection {
+/**
+ * `focus` (경로 테스트 with a found route): on the route, a target building keeps its stairs, elevator lines, entrances and
+ * classroom doors sharp even when it is not the floor shown; a building only passed through shows its corridors and plain
+ * points and hides its icons.
+ */
+export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: ReadonlySet<string> = new Set(), broken: ReadonlySet<string> = new Set(), focus: RouteFocus | null = null): FeatureCollection {
   const features: FeatureCollection['features'] = [];
   for (const b of Object.values(state.buildings)) {
     features.push({
@@ -88,7 +111,7 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
       geometry: { type: 'LineString', coordinates: edgeCoords(state, e) },
       properties: {
         id: e.id, kind: 'edge', highway: e.props.highway, node_type: null, classroom: false,
-        emphasis: edgeStrong(state, e, scope) ? 1 : 0, selected: false, highlight: highlight.has(e.id),
+        emphasis: edgeStrong(state, e, scope) || (focus !== null && routeEdgeStrong(state, e, focus)) ? 1 : 0, selected: false, highlight: highlight.has(e.id),
         ...beltProps(e.props.conveying, pairs.get(e.id) ?? 0),
       },
     });
@@ -101,14 +124,17 @@ export function toDisplayGeoJSON(state: EditState, scope: Scope, highlight: Read
   const waiting = unattachedIds(state);
   const beltEnds = beltEndIds(state);
   for (const n of Object.values(state.nodes)) {
+    const icon = nodeIcon(n, beltEnds);
+    // A building only passed through: its icons are hidden (its plain route points and corridors stay).
+    if (focus && icon !== '' && !nodeStrong(n, scope) && n.props.building_id !== null && focus.passBuildings.has(n.props.building_id)) continue;
     features.push({
       type: 'Feature',
       id: n.id,
       geometry: { type: 'Point', coordinates: n.coord },
       properties: {
         id: n.id, kind: 'node', highway: null, node_type: n.props.node_type, classroom: isClassroom(n),
-        emphasis: nodeStrong(n, scope) ? 1 : 0, selected: false, highlight: highlight.has(n.id),
-        unattached: waiting.has(n.id), icon: nodeIcon(n, beltEnds), synced: n.props.sync_group !== undefined, broken: broken.has(n.id),
+        emphasis: nodeStrong(n, scope) || (focus !== null && routeNodeStrong(n, icon, focus)) ? 1 : 0, selected: false, highlight: highlight.has(n.id),
+        unattached: waiting.has(n.id), icon, synced: n.props.sync_group !== undefined, broken: broken.has(n.id),
       },
     });
   }

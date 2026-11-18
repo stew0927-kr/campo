@@ -9,6 +9,7 @@ import { BottomSheet } from './BottomSheet.tsx';
 import { BigButton, Choice, FieldLabel } from './controls.tsx';
 import { compassWord } from './dial.ts';
 import { STEP_FREE_CHOICES, type StepFree } from './stepFree.ts';
+import { savedPhotosButton } from './savedPhotos.ts';
 import { filterBuildings, initialExpanded, isExpanded, toggleExpanded } from './scopeList.ts';
 import { TOUCH, TOUCH_LARGE, color, font, radius, space } from './theme.ts';
 
@@ -337,6 +338,10 @@ interface PointInfoSheetProps {
   note: string;
   photos: number;
   onPhoto: () => void;
+  /** Photos already saved on this point in this walk: they can be looked at, re-aimed and deleted one by one. */
+  savedPhotos?: number;
+  /** Opens the point's saved photos (SurveyScreen's 사진 창). Left out when there is nowhere to open them. */
+  onManagePhotos?: () => void;
   onSave: (answer: { access: Required<AccessInfo>; note: string; stepFree?: StepFree }) => void;
   onClose: () => void;
 }
@@ -368,13 +373,15 @@ function AccessInput({ name, value, onChange }: { name: AccessProp; value: strin
   );
 }
 
-export function PointInfoSheet({ header, title, sill, access, note, photos, onPhoto, onSave, onClose }: PointInfoSheetProps) {
+export function PointInfoSheet({ header, title, sill, access, note, photos, onPhoto, savedPhotos, onManagePhotos, onSave, onClose }: PointInfoSheetProps) {
   const [stepFree, setStepFree] = useState<StepFree | undefined>(sill?.value);
   const [values, setValues] = useState<Required<AccessInfo>>({ hours: access.hours ?? '', closed_period: access.closed_period ?? '', access_condition: access.access_condition ?? '' });
   const [memo, setMemo] = useState(note);
   // Mostly left empty, so folded away; open from the start when the point already has any of them.
   const filled = ACCESS_PROPS.filter((name) => (access[name] ?? '') !== '').length + (note !== '' ? 1 : 0);
   const [open, setOpen] = useState(filled > 0);
+  // Once the point has saved pictures, this window is the only way back to them.
+  const saved = savedPhotosButton(savedPhotos, onManagePhotos);
   return (
     <BottomSheet title={title} onClose={onClose}>
       {header}
@@ -416,6 +423,15 @@ export function PointInfoSheet({ header, title, sill, access, note, photos, onPh
         </>
       )}
       <PhotoRow count={photos} onPhoto={onPhoto} />
+      {saved && (
+        <BigButton
+          tone="plain"
+          label={saved.label}
+          hint="찍어 둔 사진의 방향을 고치거나 지웁니다"
+          onPress={saved.onPress}
+          style={styles.gapTop}
+        />
+      )}
       <BigButton label="이 지점에 저장" onPress={() => onSave({ access: values, note: memo, ...(stepFree !== undefined && stepFree !== sill?.value ? { stepFree } : {}) })} style={styles.gapTop} />
     </BottomSheet>
   );

@@ -88,7 +88,7 @@ export interface Readings {
   /** The direction each picture looks (degrees, 0 up to 360), in the order of the pictures; null where none was set. */
   photoHeadings?: (number | null)[];
   /** What was known about each picture when it was taken (photoMeta.ts photoCapture), in the same order; null where nothing. */
-  photoCaptures?: (PhotoCapture | null)[];
+  photoCaptures?: readonly (PhotoCapture | null)[];
 }
 
 export interface SessionInit {
@@ -365,7 +365,7 @@ export class SurveySession {
    * with the note and the photos in the point's attachment as the record of where they came from. The walk stays where
    * it is; one 되돌리기 takes all of it back. Returns the paths reserved for the photos, or why nothing was written.
    */
-  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number; photoHeadings?: (number | null)[]; photoCaptures?: (PhotoCapture | null)[]; extra?: Action }, at: string): { paths: string[] } | { error: string } {
+  annotate(nodeId: string, edit: { access: AccessInfo; note?: string; photos?: number; photoHeadings?: (number | null)[]; photoCaptures?: readonly (PhotoCapture | null)[]; extra?: Action }, at: string): { paths: string[] } | { error: string } {
     const node = this.state.nodes[nodeId];
     if (!node) return { error: '지점을 찾을 수 없습니다.' };
     const patch = accessPatch(node.props, edit.access);

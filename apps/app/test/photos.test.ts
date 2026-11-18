@@ -147,7 +147,7 @@ describe('routeStepPhotos (useRoutePhotos)', () => {
       snappedStartM: 3,
     };
     expect(nodePositions(view).get('a')).toEqual([127.1, 37.1]);
-    expect(nodePositions({ ...view, snappedStartM: undefined }).get('a')).toEqual([2, 1]);
+    expect(nodePositions({ polyline: view.polyline, nodeIds: view.nodeIds }).get('a')).toEqual([2, 1]);
   });
 });
 

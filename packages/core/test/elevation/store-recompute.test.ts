@@ -282,7 +282,7 @@ describe('deleting one Δh edge (survey app and editor 높이 차 삭제)', () =
     const { store: next } = removeEdge(store, first.edgeId);
     expect(next.edges).toHaveLength(1);
     expect('supersedes' in next.edges[0]!).toBe(false);
-    const keep = { ...store, edges: [{ ...second, supersedes: [first.edgeId, 'e-other'] }, first] };
+    const keep = { ...store, edges: [{ ...second, supersedes: [first.edgeId, 'e-other' as typeof first.edgeId] }, first] };
     expect(removeEdge(keep, first.edgeId).store.edges[0]!.supersedes).toEqual(['e-other']);
   });
 

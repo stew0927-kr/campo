@@ -1,6 +1,21 @@
 // 평지 위의 점에서 길망까지: 평지가 길과 닿는 접점, 구멍을 돌아가는 가시성 그래프, 접점까지의 최단 직선 경로.
+// 맞닿거나 겹친 평지(이어진 평지, SPEC-v0.2 2.8)는 한 묶음으로 봅니다: 묶음의 고체 영역 합집합 안을 곧게 걸어 건너가고,
+// 묶음의 어느 평지에 있는 접점이든 씁니다(평지 A → A·B 공유 경계 → 평지 B → B의 접점 → 길). 층 번호·높이는 읽지 않습니다.
 import type { CampusGraph } from '../graph.ts';
-import { framePlaza, locateXY, pointSegmentDistance, segmentInPlazaDomain, segmentIntersections, type FramedPlaza, type XY } from '../plaza/geometry.ts';
+import {
+  PLAZA_EPS_M,
+  PLAZA_LINK_TOL_M,
+  locateXY,
+  localFrame,
+  normalizePlazaRings,
+  plazaClusters,
+  pointSegmentDistance,
+  segmentInPlazasDomain,
+  segmentIntersections,
+  solidInAny,
+  type LocalFrame,
+  type XY,
+} from '../plaza/geometry.ts';
 import type { PlazaFeature, Position } from '../types.ts';
 
 export const PLAZA_NODE_TOL_M = 0.3;
@@ -18,6 +33,8 @@ export type PlazaContact =
 export interface PlazaGeodesic {
   lengthM: number;
   path: Position[];
+  /** The plazas the walk crosses, in the order it enters them (the start plaza first). Linked plazas only. */
+  plazaIds: string[];
 }
 
 interface VisNode {
@@ -26,9 +43,16 @@ interface VisNode {
   contact?: number;
 }
 
-interface PlazaData {
-  plaza: PlazaFeature;
-  framed: FramedPlaza;
+/** One plaza, or several linked plazas walked as one area, on one local plane. */
+interface ClusterData {
+  /** Plaza ids of the cluster, in id order. */
+  ids: string[];
+  plazas: PlazaFeature[];
+  frame: LocalFrame;
+  /** Rings per plaza (outer CCW, holes CW, closed), same order as ids. */
+  domains: XY[][][];
+  /** Tolerance of the solid test: PLAZA_EPS_M for a lone plaza, PLAZA_LINK_TOL_M across linked ones (a touching seam). */
+  tolM: number;
   contacts: PlazaContact[];
   /** 접점 i가 평지 영역 안에서 쓰는 점(테두리 밖 0.3 m 안의 지점은 테두리 위 가장 가까운 점). */
   contactXY: XY[];
@@ -37,7 +61,18 @@ interface PlazaData {
   adj: { to: number; w: number }[][];
 }
 
-const cache = new WeakMap<CampusGraph, Map<string, PlazaData>>();
+interface GraphPlazas {
+  /** plaza id → its cluster (shared by every plaza of the cluster). */
+  byPlaza: Map<string, ClusterData | null>;
+  /** plaza id → the ids of its cluster, in id order. */
+  groups: Map<string, string[]>;
+}
+
+/**
+ * Per graph. A CampusGraph is never changed after buildGraph (an edit builds a new graph), so contacts and visibility
+ * pairs computed for one graph stay right for it, and a graph built after an edit starts from nothing.
+ */
+const cache = new WeakMap<CampusGraph, GraphPlazas>();
 
 const hyp = (a: XY, b: XY): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
@@ -62,8 +97,8 @@ function closestOnRings(rings: readonly XY[][], p: XY): XY {
   return best;
 }
 
-function computeContacts(g: CampusGraph, framed: FramedPlaza): { contacts: PlazaContact[]; xy: XY[] } {
-  const { frame, rings } = framed;
+/** Where one plaza (its rings on the cluster's plane) meets the network. Same rules as for a lone plaza (SPEC-v0.2 2.8). */
+function plazaContactsOn(g: CampusGraph, frame: LocalFrame, rings: XY[][]): { node: { c: PlazaContact; xy: XY }[]; edge: { c: PlazaContact; xy: XY }[] } {
   const nodeContacts: { c: PlazaContact; xy: XY }[] = [];
   const asNode = (nodeId: string): { c: PlazaContact; xy: XY } | null => {
     const n = g.nodes.get(nodeId);
@@ -81,7 +116,6 @@ function computeContacts(g: CampusGraph, framed: FramedPlaza): { contacts: Plaza
   }
 
   const edgeContacts: { c: PlazaContact; xy: XY }[] = [];
-  const absorbed: { c: PlazaContact; xy: XY }[] = [];
   const seen = new Set<string>();
   g.graph.forEachLink((link) => {
     const data = link.data;
@@ -104,7 +138,7 @@ function computeContacts(g: CampusGraph, framed: FramedPlaza): { contacts: Plaza
             const end = hyp(at, fromXY) <= PLAZA_NODE_TOL_M ? edge.properties.from : hyp(at, toXY) <= PLAZA_NODE_TOL_M ? edge.properties.to : null;
             if (end !== null) {
               const c = asNode(end);
-              if (c) absorbed.push(c);
+              if (c) nodeContacts.push(c);
               continue;
             }
             const along = total > 0 ? Math.min(1, Math.max(0, (before + hit.t * seg[i]!) / total)) : 0;
@@ -115,14 +149,25 @@ function computeContacts(g: CampusGraph, framed: FramedPlaza): { contacts: Plaza
       before += seg[i]!;
     }
   });
+  return { node: nodeContacts, edge: edgeContacts };
+}
 
+/** Every contact of the cluster's plazas, without repeats (a node on two plazas, a seam crossed by one edge). */
+function computeContacts(g: CampusGraph, frame: LocalFrame, domains: XY[][][]): { contacts: PlazaContact[]; xy: XY[] } {
+  const nodeContacts: { c: PlazaContact; xy: XY }[] = [];
+  const edgeContacts: { c: PlazaContact; xy: XY }[] = [];
+  for (const rings of domains) {
+    const got = plazaContactsOn(g, frame, rings);
+    nodeContacts.push(...got.node);
+    edgeContacts.push(...got.edge);
+  }
+  const key = (c: PlazaContact) => (c.kind === 'node' ? c.nodeId : c.edgeId);
   const byNode = (a: { c: PlazaContact }, b: { c: PlazaContact }) => {
-    const ka = a.c.kind === 'node' ? a.c.nodeId : `${a.c.edgeId}`;
-    const kb = b.c.kind === 'node' ? b.c.nodeId : `${b.c.edgeId}`;
+    const [ka, kb] = [key(a.c), key(b.c)];
     if (ka !== kb) return ka < kb ? -1 : 1;
     return (a.c.kind === 'edge' ? a.c.along : 0) - (b.c.kind === 'edge' ? b.c.along : 0);
   };
-  const ordered = [...[...nodeContacts, ...absorbed].sort(byNode), ...edgeContacts.sort(byNode)];
+  const ordered = [...nodeContacts.sort(byNode), ...edgeContacts.sort(byNode)];
   const kept: { c: PlazaContact; xy: XY }[] = [];
   for (const item of ordered) {
     const dup = kept.some((k) =>
@@ -133,49 +178,104 @@ function computeContacts(g: CampusGraph, framed: FramedPlaza): { contacts: Plaza
 }
 
 /** 영역을 왼쪽에 두고 돌 때 오른쪽으로 꺾이는 꼭짓점(바깥 링의 오목 꼭짓점, 구멍 링의 볼록 꼭짓점). */
-function bendCandidates(framed: FramedPlaza): VisNode[] {
-  const out: VisNode[] = [];
-  framed.rings.forEach((ring, ri) => {
-    const n = ring.length - 1;
-    for (let i = 0; i < n; i++) {
-      const prev = ring[(i - 1 + n) % n]!;
-      const v = ring[i]!;
-      const next = ring[(i + 1) % n]!;
-      const turn = (v[0] - prev[0]) * (next[1] - v[1]) - (v[1] - prev[1]) * (next[0] - v[0]);
-      if (turn < 0) out.push({ xy: v, pos: framed.positions[ri]![i]! });
-    }
-  });
-  return out;
+function isReflex(ring: XY[], i: number): boolean {
+  const n = ring.length - 1;
+  const prev = ring[(i - 1 + n) % n]!;
+  const v = ring[i]!;
+  const next = ring[(i + 1) % n]!;
+  return (v[0] - prev[0]) * (next[1] - v[1]) - (v[1] - prev[1]) * (next[0] - v[0]) < 0;
 }
 
-function dataOf(g: CampusGraph, plazaId: string): PlazaData | null {
-  let byId = cache.get(g);
-  if (!byId) cache.set(g, (byId = new Map()));
-  const hit = byId.get(plazaId);
+function ringDistance(p: XY, rings: readonly XY[][]): number {
+  let best = Infinity;
+  for (const r of rings) for (let i = 0; i + 1 < r.length; i++) best = Math.min(best, pointSegmentDistance(p, r[i]!, r[i + 1]!));
+  return best;
+}
+
+/**
+ * Where a shortest walk across the cluster may bend. A lone plaza: its reflex corners. Linked plazas: the union's boundary
+ * can bend at a reflex corner of one plaza (not buried inside another), at any corner that lies on another plaza's edge
+ * (a shared corner, a corner on a shared side), and where the edges of two plazas cross (an overlap).
+ */
+function bendCandidates(c: Pick<ClusterData, 'domains' | 'frame' | 'tolM'>): VisNode[] {
+  const out: VisNode[] = [];
+  const { domains, frame } = c;
+  const lone = domains.length === 1;
+  domains.forEach((rings, k) => {
+    const others = domains.filter((_, j) => j !== k);
+    rings.forEach((ring) => {
+      for (let i = 0; i + 1 < ring.length; i++) {
+        const v = ring[i]!;
+        const onOther = !lone && others.some((o) => ringDistance(v, o) <= c.tolM);
+        const buried = !lone && !onOther && solidInAny(others, v, 0);
+        if ((isReflex(ring, i) && !buried) || onOther) out.push({ xy: v, pos: frame.toPos(v[0], v[1]) });
+      }
+    });
+  });
+  if (!lone) {
+    for (let a = 0; a < domains.length; a++) {
+      for (let b = a + 1; b < domains.length; b++) {
+        for (const ra of domains[a]!) for (const rb of domains[b]!) {
+          for (let i = 0; i + 1 < ra.length; i++) for (let j = 0; j + 1 < rb.length; j++) {
+            for (const hit of segmentIntersections(ra[i]!, ra[i + 1]!, rb[j]!, rb[j + 1]!)) out.push({ xy: hit.at, pos: frame.toPos(hit.at[0], hit.at[1]) });
+          }
+        }
+      }
+    }
+  }
+  // Corners met twice (a shared corner, a crossing on a corner) are one bend.
+  const kept: VisNode[] = [];
+  for (const v of out) if (!kept.some((k) => hyp(k.xy, v.xy) <= PLAZA_EPS_M)) kept.push(v);
+  return kept;
+}
+
+function plazasOf(g: CampusGraph): GraphPlazas {
+  let hit = cache.get(g);
   if (hit) return hit;
-  const plaza = g.plazas.get(plazaId);
-  if (!plaza) return null;
-  const framed = framePlaza(plaza.geometry.coordinates);
-  const { contacts, xy } = computeContacts(g, framed);
+  const groups = new Map<string, string[]>();
+  for (const group of plazaClusters([...g.plazas.values()].map((p) => ({ id: p.id, polygon: p.geometry.coordinates })))) {
+    for (const id of group) groups.set(id, group);
+  }
+  hit = { byPlaza: new Map(), groups };
+  cache.set(g, hit);
+  return hit;
+}
+
+/** The ids of the plazas linked to `plazaId` (itself included), in id order. Empty for an unknown plaza. */
+export function linkedPlazas(g: CampusGraph, plazaId: string): string[] {
+  return plazasOf(g).groups.get(plazaId) ?? [];
+}
+
+function dataOf(g: CampusGraph, plazaId: string): ClusterData | null {
+  const all = plazasOf(g);
+  if (all.byPlaza.has(plazaId)) return all.byPlaza.get(plazaId)!;
+  const ids = all.groups.get(plazaId);
+  if (!ids) return null;
+  const plazas = ids.map((id) => g.plazas.get(id)!);
+  const normalized = plazas.map((p) => normalizePlazaRings(p.geometry.coordinates));
+  const frame = localFrame(normalized[0]![0]![0]!);
+  const domains = normalized.map((rings) => rings.map((r) => r.map(frame.toXY)));
+  const tolM = ids.length > 1 ? PLAZA_LINK_TOL_M : PLAZA_EPS_M;
+  const { contacts, xy } = computeContacts(g, frame, domains);
   const vis: VisNode[] = [
-    ...bendCandidates(framed),
+    ...bendCandidates({ domains, frame, tolM }),
     ...contacts.map((c, i): VisNode => {
       const inner = xy[i]!;
-      const same = hyp(inner, framed.frame.toXY(c.at)) === 0;
-      return { xy: inner, pos: same ? c.at : framed.frame.toPos(inner[0], inner[1]), contact: i };
+      const same = hyp(inner, frame.toXY(c.at)) === 0;
+      return { xy: inner, pos: same ? c.at : frame.toPos(inner[0], inner[1]), contact: i };
     }),
   ];
   const adj: { to: number; w: number }[][] = vis.map(() => []);
   for (let i = 0; i < vis.length; i++) {
     for (let j = i + 1; j < vis.length; j++) {
-      if (!segmentInPlazaDomain(framed.rings, vis[i]!.xy, vis[j]!.xy)) continue;
+      if (!segmentInPlazasDomain(domains, vis[i]!.xy, vis[j]!.xy, tolM)) continue;
       const w = hyp(vis[i]!.xy, vis[j]!.xy);
       adj[i]!.push({ to: j, w });
       adj[j]!.push({ to: i, w });
     }
   }
-  const data: PlazaData = { plaza, framed, contacts, contactXY: xy, vis, adj };
-  byId.set(plazaId, data);
+  const data: ClusterData = { ids, plazas, frame, domains, tolM, contacts, contactXY: xy, vis, adj };
+  for (const id of ids) all.byPlaza.set(id, data);
   return data;
 }
 
@@ -184,37 +284,35 @@ export function plazaAt(g: CampusGraph, point: Position): { plaza: PlazaFeature;
   let hole: PlazaFeature | null = null;
   for (const id of [...g.plazas.keys()].sort()) {
     const d = dataOf(g, id)!;
-    const where = locateXY(d.framed.rings, d.framed.frame.toXY(point));
-    if (where === 'solid') return { plaza: d.plaza, hit: 'solid' };
-    if (where === 'hole') hole ??= d.plaza;
+    const where = locateXY(d.domains[d.ids.indexOf(id)]!, d.frame.toXY(point));
+    if (where === 'solid') return { plaza: g.plazas.get(id)!, hit: 'solid' };
+    if (where === 'hole') hole ??= g.plazas.get(id)!;
   }
+  // A point in one plaza's hole that another plaza covers is on that plaza (found above); only an uncovered hole is a hole.
   return hole ? { plaza: hole, hit: 'hole' } : null;
 }
 
-/** Where the plaza meets the network: outdoor nodes on it (within PLAZA_NODE_TOL_M of it) and walkable edges crossing its rings. */
+/**
+ * Where the plaza meets the network: outdoor nodes on it (within PLAZA_NODE_TOL_M of it) and walkable edges crossing its
+ * rings — its own and those of every plaza linked to it (touching or overlapping), since the walk crosses into them.
+ */
 export function plazaContacts(g: CampusGraph, plazaId: string): PlazaContact[] {
   return dataOf(g, plazaId)?.contacts ?? [];
 }
 
 /** Dijkstra from `start` over the visibility graph plus `extra` targets. Returns distance and previous per vis index. */
-function shortest(d: PlazaData, start: XY, extra: XY[] = []): { dist: number[]; prev: number[]; startSees: boolean[] } {
+function shortest(d: ClusterData, start: XY, extra: XY[] = []): { dist: number[]; prev: number[] } {
   const n = d.vis.length + extra.length;
   const pointOf = (i: number): XY => (i < d.vis.length ? d.vis[i]!.xy : extra[i - d.vis.length]!);
+  const sees = (a: XY, b: XY) => segmentInPlazasDomain(d.domains, a, b, d.tolM);
   const dist = new Array<number>(n).fill(Infinity);
   const prev = new Array<number>(n).fill(-1);
-  const startSees = new Array<boolean>(n).fill(false);
-  for (let i = 0; i < n; i++) {
-    if (segmentInPlazaDomain(d.framed.rings, start, pointOf(i))) {
-      dist[i] = hyp(start, pointOf(i));
-      startSees[i] = true;
-    }
-  }
+  for (let i = 0; i < n; i++) if (sees(start, pointOf(i))) dist[i] = hyp(start, pointOf(i));
   const extraAdj: { to: number; w: number }[][] = Array.from({ length: n }, () => []);
   for (let e = d.vis.length; e < n; e++) {
     for (let i = 0; i < d.vis.length; i++) {
-      if (!segmentInPlazaDomain(d.framed.rings, pointOf(e), pointOf(i))) continue;
-      const w = hyp(pointOf(e), pointOf(i));
-      extraAdj[i]!.push({ to: e, w });
+      if (!sees(pointOf(e), pointOf(i))) continue;
+      extraAdj[i]!.push({ to: e, w: hyp(pointOf(e), pointOf(i)) });
     }
   }
   const done = new Array<boolean>(n).fill(false);
@@ -231,10 +329,10 @@ function shortest(d: PlazaData, start: XY, extra: XY[] = []): { dist: number[]; 
       }
     }
   }
-  return { dist, prev, startSees };
+  return { dist, prev };
 }
 
-function pathTo(d: PlazaData, prev: number[], target: number, extraPos: Position[] = []): Position[] {
+function pathTo(d: ClusterData, prev: number[], target: number, extraPos: Position[] = []): Position[] {
   const out: Position[] = [];
   for (let i = target; i >= 0; i = prev[i]!) out.push(i < d.vis.length ? d.vis[i]!.pos : extraPos[i - d.vis.length]!);
   return out.reverse();
@@ -242,12 +340,46 @@ function pathTo(d: PlazaData, prev: number[], target: number, extraPos: Position
 
 const copy = (p: Position): Position => [p[0], p[1]];
 
-/** Shortest straight walks inside the plaza from `p.point` to every contact it can reach, path from the point to the contact. */
+/** The plazas a walk along `path` crosses, in the order it enters them; `first` (the plaza it starts on) leads. */
+function crossedPlazas(d: ClusterData, path: Position[], first: string): string[] {
+  const out = [first];
+  if (d.ids.length === 1) return out;
+  const add = (p: XY) => {
+    d.domains.forEach((rings, k) => {
+      const id = d.ids[k]!;
+      if (!out.includes(id) && locateXY(rings, p, d.tolM) === 'solid' && ringDistance(p, rings) > d.tolM) out.push(id);
+    });
+  };
+  const pts = path.map((p) => d.frame.toXY(p));
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const [a, b] = [pts[i]!, pts[i + 1]!];
+    const ts = [0, 1];
+    for (const ring of d.domains.flat()) for (let j = 0; j + 1 < ring.length; j++) for (const hit of segmentIntersections(a, b, ring[j]!, ring[j + 1]!)) ts.push(hit.t);
+    ts.sort((x, y) => x - y);
+    for (let k = 0; k + 1 < ts.length; k++) {
+      if (ts[k + 1]! - ts[k]! <= 1e-9) continue;
+      const m = (ts[k]! + ts[k + 1]!) / 2;
+      add([a[0] + m * (b[0] - a[0]), a[1] + m * (b[1] - a[1])]);
+    }
+  }
+  return out;
+}
+
+/** Whether `point` is on the solid area of the plaza `plazaId` of the cluster. */
+function onPlaza(d: ClusterData, plazaId: string, p: XY): boolean {
+  const k = d.ids.indexOf(plazaId);
+  return k >= 0 && locateXY(d.domains[k]!, p) === 'solid';
+}
+
+/**
+ * Shortest straight walks from `p.point` to every contact it can reach, inside the plaza and the plazas linked to it, path
+ * from the point to the contact (bends around holes and at the seams of linked plazas included).
+ */
 export function plazaGeodesics(g: CampusGraph, p: PlazaPoint): { contact: PlazaContact; geodesic: PlazaGeodesic }[] {
   const d = dataOf(g, p.plazaId);
   if (!d) return [];
-  const start = d.framed.frame.toXY(p.point);
-  if (locateXY(d.framed.rings, start) !== 'solid') return [];
+  const start = d.frame.toXY(p.point);
+  if (!onPlaza(d, p.plazaId, start)) return [];
   const { dist, prev } = shortest(d, start);
   const out: { contact: PlazaContact; geodesic: PlazaGeodesic }[] = [];
   d.vis.forEach((v, i) => {
@@ -255,22 +387,26 @@ export function plazaGeodesics(g: CampusGraph, p: PlazaPoint): { contact: PlazaC
     const contact = d.contacts[v.contact]!;
     const inner = d.contactXY[v.contact]!;
     const path = [copy(p.point), ...pathTo(d, prev, i).map(copy)];
-    const stub = hyp(inner, d.framed.frame.toXY(contact.at));
+    const stub = hyp(inner, d.frame.toXY(contact.at));
     if (stub > 0) path.push(copy(contact.at));
-    out.push({ contact, geodesic: { lengthM: dist[i]! + stub, path } });
+    out.push({ contact, geodesic: { lengthM: dist[i]! + stub, path, plazaIds: crossedPlazas(d, path, p.plazaId) } });
   });
   return out;
 }
 
-/** The shortest straight walk between two points of one plaza (both in its solid area), or null. */
-export function plazaDistance(g: CampusGraph, plazaId: string, a: Position, b: Position): PlazaGeodesic | null {
+/**
+ * The shortest straight walk between two points of one plaza, or of two linked plazas (`a` on `plazaId`, `b` on `toPlazaId`,
+ * default the same plaza), or null when they are not linked or a point is off its plaza.
+ */
+export function plazaDistance(g: CampusGraph, plazaId: string, a: Position, b: Position, toPlazaId: string = plazaId): PlazaGeodesic | null {
   const d = dataOf(g, plazaId);
-  if (!d) return null;
-  const sa = d.framed.frame.toXY(a);
-  const sb = d.framed.frame.toXY(b);
-  if (locateXY(d.framed.rings, sa) !== 'solid' || locateXY(d.framed.rings, sb) !== 'solid') return null;
+  if (!d || !d.ids.includes(toPlazaId)) return null;
+  const sa = d.frame.toXY(a);
+  const sb = d.frame.toXY(b);
+  if (!onPlaza(d, plazaId, sa) || !onPlaza(d, toPlazaId, sb)) return null;
   const { dist, prev } = shortest(d, sa, [sb]);
   const target = d.vis.length;
   if (dist[target] === Infinity) return null;
-  return { lengthM: dist[target]!, path: [copy(a), ...pathTo(d, prev, target, [b]).map(copy)] };
+  const path = [copy(a), ...pathTo(d, prev, target, [b]).map(copy)];
+  return { lengthM: dist[target]!, path, plazaIds: crossedPlazas(d, path, plazaId) };
 }

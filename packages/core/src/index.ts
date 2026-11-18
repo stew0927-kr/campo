@@ -23,6 +23,7 @@ export {
   PLAZA_NODE_TOL_M,
   plazaAt,
   plazaContacts,
+  linkedPlazas,
   plazaDistance,
   plazaGeodesics,
   type PlazaContact,

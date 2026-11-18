@@ -66,6 +66,10 @@ describe('route ends on a plaza', () => {
   it('the card sentence for a walk to a contact', () => {
     expect(plazaLegText({ plazaId: 'p', path: [P(0, 0), P(12.4, 0)], lengthM: 12.4, contact: { kind: 'node', nodeId: 'n' } }, '잔디 광장'))
       .toBe("평지 '잔디 광장'을 가로질러 접점까지 12 m (직선)");
+    expect(plazaLegText({ plazaId: 'p', plazaIds: ['p', 'q'], path: [P(0, 0), P(20, 0)], lengthM: 20, contact: { kind: 'node', nodeId: 'n' } }, ['잔디 광장', '분수 광장']))
+      .toBe("평지 '잔디 광장'·'분수 광장'을 가로질러 접점까지 20 m (직선)");
+    expect(plazaLines({ startPlaza: { plazaId: 'p', plazaIds: ['p', 'q'], path: [P(0, 0), P(20, 0)], lengthM: 20, contact: { kind: 'node', nodeId: 'n' } } }, (id) => id.toUpperCase()))
+      .toEqual(["평지 'P'·'Q'을 가로질러 접점까지 20 m (직선)"]);
     // A snapped end keeps its foot; nothing of a plaza is added.
     const stops = routeStops({ nodes: ['a'], startFoot: P(1, 1), endFoot: null }, () => P(2, 2), { scope: OUT }, { scope: OUT });
     expect(stops.coordinates).toEqual([P(1, 1), P(2, 2)]);

@@ -461,12 +461,25 @@ export function plazaClusters(plazas: Iterable<{ id: string; polygon: Position[]
  * 각 조각의 중점이 'solid'인지 봅니다. 테두리를 따라가거나 꼭짓점을 지나는 것은 허용합니다.
  */
 export function segmentInPlazaDomain(frameRings: readonly (readonly XY[])[], a: XY, b: XY): boolean {
+  return segmentInPlazasDomain([frameRings], a, b);
+}
+
+/** 점이 여러 평지(같은 국소 평면) 중 어느 하나의 고체 영역 안(테두리에서 `tolM` 안 포함)인지. */
+export function solidInAny(domains: readonly (readonly (readonly XY[])[])[], p: XY, tolM = PLAZA_EPS_M): boolean {
+  return domains.some((rings) => locateXY(rings, p, tolM) === 'solid');
+}
+
+/**
+ * segmentInPlazaDomain의 여러 평지판: 선분 a→b가 평지들의 고체 영역 합집합 안에만 있는지(이어진 평지를 건너가는 길찾기).
+ * 모든 평지의 모든 링과의 교차에서 쪼갠 각 조각의 중점이 어느 한 평지의 고체 영역(테두리에서 `tolM` 안 포함) 안인지 봅니다.
+ */
+export function segmentInPlazasDomain(domains: readonly (readonly (readonly XY[])[])[], a: XY, b: XY, tolM = PLAZA_EPS_M): boolean {
   const r = sub(b, a);
   const len2 = dot(r, r);
-  if (len2 <= PLAZA_EPS_M * PLAZA_EPS_M) return locateXY(frameRings, a) === 'solid';
+  if (len2 <= PLAZA_EPS_M * PLAZA_EPS_M) return solidInAny(domains, a, tolM);
   const ts = [0, 1];
   const tTol = 1e-12;
-  for (const ring of frameRings) {
+  for (const ring of domains.flat()) {
     for (let i = 0; i + 1 < ring.length; i++) {
       const c = ring[i]!;
       const d = ring[i + 1]!;
@@ -491,7 +504,7 @@ export function segmentInPlazaDomain(frameRings: readonly (readonly XY[])[], a: 
     const t1 = ts[i + 1]!;
     if (t1 - t0 <= tTol) continue;
     const m = (t0 + t1) / 2;
-    if (locateXY(frameRings, [a[0] + m * r[0], a[1] + m * r[1]]) !== 'solid') return false;
+    if (!solidInAny(domains, [a[0] + m * r[0], a[1] + m * r[1]], tolM)) return false;
   }
   return true;
 }

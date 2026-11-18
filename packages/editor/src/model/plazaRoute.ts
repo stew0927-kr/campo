@@ -58,13 +58,17 @@ export function plazaWalks(r: Pick<PointRoute, 'startPlaza' | 'endPlaza'>): Plaz
   return [r.startPlaza, r.endPlaza].filter((l): l is PlazaLeg => l !== undefined && l.path.length >= 2);
 }
 
-/** "평지 '분수 광장'을 가로질러 접점까지 12 m (직선)", or for both ends on one plaza "평지 '분수 광장' 안에서 바로 갑니다: 12 m (직선)". */
-export function plazaLegText(leg: PlazaLeg, name: string): string {
+/**
+ * "평지 '분수 광장'을 가로질러 접점까지 12 m (직선)", or for both ends on one plaza "평지 '분수 광장' 안에서 바로 갑니다: 12 m (직선)".
+ * A walk across linked plazas names them all in walking order: "평지 '분수 광장'·'잔디 광장'을 가로질러 …". `name` may be a list.
+ */
+export function plazaLegText(leg: PlazaLeg, name: string | readonly string[]): string {
   const m = `${Math.round(leg.lengthM)} m`;
-  return leg.contact.kind === 'direct' ? `평지 '${name}' 안에서 바로 갑니다: ${m} (직선)` : `평지 '${name}'을 가로질러 접점까지 ${m} (직선)`;
+  const names = (typeof name === 'string' ? [name] : name).map((n) => `'${n}'`).join('·');
+  return leg.contact.kind === 'direct' ? `평지 ${names} 안에서 바로 갑니다: ${m} (직선)` : `평지 ${names}을 가로질러 접점까지 ${m} (직선)`;
 }
 
 /** The sentences of a route's plaza walks, start first (the empty end of a direct route says nothing). */
 export function plazaLines(r: Pick<PointRoute, 'startPlaza' | 'endPlaza'>, nameOf: (plazaId: string) => string): string[] {
-  return plazaWalks(r).map((leg) => plazaLegText(leg, nameOf(leg.plazaId)));
+  return plazaWalks(r).map((leg) => plazaLegText(leg, (leg.plazaIds ?? [leg.plazaId]).map(nameOf)));
 }

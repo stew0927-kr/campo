@@ -234,4 +234,32 @@ describe('computeRoute', () => {
     const state = computeRoute(runtime, { from: { kind: 'node', nodeId: GATE }, to: { kind: 'node', nodeId: ROOM_408 } });
     expect(state.route!.polyline).toHaveLength(state.route!.nodeIds.length);
   });
+
+  it('평지를 사이에 둔 두 길: 평지를 건너 이어지고, 선은 구멍을 돌아가는 평지 위 꺾임을 지난다', async () => {
+    const m = 1 / 111_320;
+    const kx = m / Math.cos((37 * Math.PI) / 180);
+    const at = (x: number, y: number): [number, number] => [127 + x * kx, 37 + y * m];
+    const square = (x0: number, y0: number, x1: number, y1: number, ccw: boolean) => {
+      const r = [at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1)];
+      const ring = ccw ? r : r.reverse();
+      return [...ring, ring[0]!];
+    };
+    const plaza = {
+      type: 'Feature', id: 'plaza_p',
+      geometry: { type: 'Polygon', coordinates: [square(0, 0, 30, 20, true), square(10, 5, 20, 15, false)] },
+      properties: { kind: 'plaza', source: 'estimate', rev: 1, name: '분수 광장' },
+    };
+    const runtime = await loadBundledCampus(bundleFrom(META, [
+      plaza,
+      nodeFeature('a1', ...at(-20, 10)), nodeFeature('a2', ...at(0, 10)), edgeFeature('e_a', 'a1', 'a2', [at(-20, 10), at(0, 10)]),
+      nodeFeature('b1', ...at(30, 10)), nodeFeature('b2', ...at(50, 10)), edgeFeature('e_b', 'b1', 'b2', [at(30, 10), at(50, 10)]),
+    ]));
+    const state = computeRoute(runtime, { from: { kind: 'node', nodeId: 'a1' }, to: { kind: 'node', nodeId: 'b2' } });
+    expect(state.status).toBe('ok');
+    expect(state.route!.nodeIds).toEqual(['a1', 'a2', 'b1', 'b2']);
+    expect(state.route!.distanceM).toBeCloseTo(40 + 2 * Math.hypot(10, 5) + 10, 0);
+    // a1, a2, 구멍의 두 모서리(10, 5)·(20, 5), b1, b2
+    expect(state.route!.polyline).toHaveLength(6);
+    expect(state.route!.steps.some((s) => s.text.startsWith("평지 '분수 광장'을 가로질러"))).toBe(true);
+  });
 });

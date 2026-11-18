@@ -1,5 +1,5 @@
 // The right-click menu (SPEC-v0.2 5.1 작업): what it can edit at once on the selection, and the Plan that does it (setProps).
-import { setProps, type EditState } from '@campo/core';
+import { setProps, type EditEdge, type EditState } from '@campo/core';
 import { classify } from './ops.ts';
 import { kindChangeExtras } from './elevation.ts';
 import type { PlanResult } from './plan.ts';
@@ -44,7 +44,38 @@ export interface MenuFields {
   stepFree: boolean;
   /** 'true' / 'false' / 'null' when all selected edges share it, else null. */
   stepFreeValue: string | null;
+  /** 계단으로 바꾸기 / 일반 길로 바꾸기: null when no edge is selected, else the one switch item the menu offers. */
+  stairs: StairsSwitch | null;
 }
+
+export type StairsTarget = 'steps' | 'footway';
+
+export interface StairsSwitch {
+  /** What the item turns the edges into: steps, or a plain footway when every selected edge already is steps. */
+  to: StairsTarget;
+  label: string;
+  /** Why the item cannot be used (shown as the tooltip and under the item), or false. */
+  blocked: string | false;
+}
+
+export const STAIRS_LABEL: Record<StairsTarget, string> = { steps: '계단으로 바꾸기', footway: '일반 길로 바꾸기' };
+
+const STAIRS_REASON = {
+  mixed: '구간만 골랐을 때 바꿀 수 있습니다. 지점, 방, 건물, 평지는 빼고 골라 주세요.',
+  portal: '출입구 연결(portal)은 평지 길만 될 수 있어 바꿀 수 없습니다.',
+  indoorLike: '건물 안, 연결통로, 엘리베이터, 에스컬레이터 구간은 바꿀 수 없습니다. 같은 층 안의 계단 구간은 만들지 않습니다.',
+  unchanged: '이미 그 상태입니다.',
+} as const;
+
+/** The reason these edges cannot be switched between a plain way and steps, or false. Only outdoor footway / ramp / steps can. */
+function stairsBlocked(edges: readonly EditEdge[]): string | false {
+  if (edges.some((e) => e.props.edge_type === 'portal')) return STAIRS_REASON.portal;
+  const outdoorWay = (e: EditEdge) => e.props.edge_type === 'outdoor' && e.props.conveying === undefined && ['footway', 'steps', 'ramp'].includes(e.props.highway);
+  if (!edges.every(outdoorWay)) return STAIRS_REASON.indoorLike;
+  return false;
+}
+
+const stairsTargetOf = (edges: readonly EditEdge[]): StairsTarget => (edges.every((e) => e.props.highway === 'steps') ? 'footway' : 'steps');
 
 const same = <T,>(list: T[]): T | null => (list.length > 0 && list.every((v) => v === list[0]) ? list[0]! : null);
 
@@ -77,10 +108,18 @@ export function menuFields(state: EditState, ids: readonly string[]): MenuFields
     nameValue: nodes.length > 0 ? same(nodes.map((n) => n.props.name ?? '')) : null,
     stepFree: pure && edges.length > 0 && nodes.length === 0,
     stepFreeValue: edges.length > 0 ? same(edges.map((e) => String(e.props.step_free))) : null,
+    stairs: edges.length === 0 ? null : stairsSwitch(edges, pure && nodes.length === 0),
   };
 }
 
+function stairsSwitch(edges: readonly EditEdge[], edgesOnly: boolean): StairsSwitch {
+  const to = stairsTargetOf(edges);
+  return { to, label: STAIRS_LABEL[to], blocked: edgesOnly ? stairsBlocked(edges) : STAIRS_REASON.mixed };
+}
+
 export interface MenuEdits {
+  /** 계단으로 바꾸기 ('steps') or 일반 길로 바꾸기 ('footway'). */
+  stairs?: StairsTarget;
   kind?: string;
   /** Empty text removes the name. */
   name?: string;
@@ -91,6 +130,7 @@ export interface MenuEdits {
 export function planMenuEdit(state: EditState, ids: readonly string[], edits: MenuEdits): PlanResult {
   const f = menuFields(state, ids);
   const sel = classify(state, ids);
+  if (edits.stairs !== undefined) return planStairsSwitch(state, f, sel.edges, edits.stairs);
   const nodePatch: Record<string, unknown> = {};
   const edgePatch: Record<string, unknown> = {};
   if (edits.kind !== undefined) {
@@ -122,6 +162,27 @@ export function planMenuEdit(state: EditState, ids: readonly string[], edits: Me
   if (steps.length === 0) return { error: '바꿀 속성이 없습니다.' };
   const what = edits.kind !== undefined ? '종류' : edits.name !== undefined ? '이름' : 'step_free';
   return { annotation: `${what} 바꾸기`, steps };
+}
+
+/**
+ * Every selected edge to steps (step_free false, flat_exact removed) or to a plain footway (step_free null, incline removed).
+ * is_breakline stays: the schema allows it on both. Edges already in the target state are left alone. One Plan: one Ctrl+Z.
+ */
+function planStairsSwitch(state: EditState, f: MenuFields, edgeIds: readonly string[], to: StairsTarget): PlanResult {
+  if (!f.stairs) return { error: '구간을 골라 주세요.' };
+  if (f.stairs.blocked) return { error: f.stairs.blocked };
+  const changing = edgeIds.filter((id) => state.edges[id]!.props.highway !== to);
+  if (changing.length === 0) return { error: STAIRS_REASON.unchanged };
+  const steps: Array<() => ReturnType<typeof setProps>> = [];
+  const plain: string[] = [];
+  for (const id of changing) {
+    const p = state.edges[id]!.props;
+    const extra: Record<string, undefined> = { ...kindChangeExtras(p, to), ...(to === 'footway' && p.incline !== undefined ? { incline: undefined } : {}) };
+    if (Object.keys(extra).length === 0) plain.push(id);
+    else steps.push(() => setProps([id], { highway: to, step_free: to === 'steps' ? false : null, ...extra }));
+  }
+  if (plain.length > 0) steps.unshift(() => setProps(plain, { highway: to, step_free: to === 'steps' ? false : null }));
+  return { annotation: to === 'steps' ? '계단으로 바꾸기' : '일반 길로 바꾸기', steps };
 }
 
 /** "지점 5개, 구간 4개" for the menu's heading and the copy window. */

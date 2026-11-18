@@ -138,6 +138,8 @@ export function ContextMenu({ x, y, summary, fields, copyBlocked, deleteBlocked,
           {fields.name && <p className="field-help">이름은 Enter를 눌러 넣습니다.</p>}
         </div>
       )}
+      {fields.stairs && menuItem(fields.stairs.label, fields.stairs.blocked, () => fields.stairs && onEdit({ stairs: fields.stairs.to }), 'stairs')}
+      {fields.stairs && fields.stairs.blocked !== false && <p className="ctx-reason">{fields.stairs.blocked}</p>}
       {menuItem('다른 층에 복사…', copyBlocked, onCopy, 'copy')}
       {copyBlocked !== false && <p className="ctx-reason">{copyBlocked}</p>}
       {synced > 0 && menuItem('층 연동 취소', false, onUnsync, 'unsync')}

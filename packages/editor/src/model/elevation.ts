@@ -14,7 +14,10 @@ import {
 } from '@campo/core';
 import {
   applyDerivedElevation,
+  dhEdgeEnds,
   dropMError,
+  formatDhM,
+  liveDhEdges,
   emptyElevationStore,
   withBreakLineProps,
   type BreakLineSide,
@@ -99,6 +102,51 @@ export function elevationBadges(p: Pick<EdgeProperties, 'elev_diff_m' | 'elev_si
 export const GRADE_LIMITS = { gentle: GRADE_GENTLE_MAX_PCT, caution: GRADE_CAUTION_MAX_PCT } as const;
 
 // ---- 고도 다시 계산 ----
+
+// ---- 고도 Δh: the measured height differences of the store, listed and removed one by one ----
+
+/** One row of the 고도 Δh panel. */
+export interface DhEdgeRow {
+  edgeId: string;
+  from: string;
+  to: string;
+  /** The two height variables, for marking them dirty when the edge is removed. */
+  fromKey: HeightNodeKey;
+  toKey: HeightNodeKey;
+  /** "+2.4m" / "-1.1m". */
+  dh: string;
+  /** "σ 0.35m". */
+  sigma: string;
+  /** The measurement time in the browser's local time, "2026-11-18 14:32". */
+  at: string;
+  /** pending / ok / downweighted / rejected in Korean; superseded edges are not listed. */
+  qc: { key: string; label: string };
+  /** The first characters of the measuring session's id, to tell two walks apart. */
+  session: string;
+}
+
+const QC_LABEL: Readonly<Record<string, string>> = { pending: '대기', ok: '정상', downweighted: '감가', rejected: '제외' };
+const two = (n: number): string => String(n).padStart(2, '0');
+
+export function localDateTime(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+}
+
+/** The live Δh edges of the store, newest first (the same rule as the survey app's 저장된 높이 차 list). */
+export function dhEdgeRows(store: ElevationStore | null): DhEdgeRow[] {
+  if (!store) return [];
+  return liveDhEdges(store).map((e) => ({
+    edgeId: e.edgeId, ...dhEdgeEnds(store, e), fromKey: e.from, toKey: e.to,
+    dh: formatDhM(e.dhM), sigma: `σ ${(Math.round(e.sigmaM * 100) / 100).toString()}m`,
+    at: localDateTime(e.createdAt), qc: { key: e.qc, label: QC_LABEL[e.qc] ?? e.qc }, session: e.sessionId.slice(0, 6),
+  }));
+}
+
+/** The dirty marks after a Δh edge was removed: both of its measured heights are to be solved again. */
+export function dirtyAfterEdgeRemoved<D extends { heightNodes: ReadonlySet<HeightNodeKey> }>(d: D, removed: { from: string; to: string }): D {
+  return { ...d, heightNodes: new Set([...d.heightNodes, removed.from as HeightNodeKey, removed.to as HeightNodeKey]) };
+}
 
 /** "고도 다시 계산 필요 3곳": campus places (nodes, edges, buildings) plus measured heights waiting for a recompute. */
 export function dirtyLabel(count: number): string {

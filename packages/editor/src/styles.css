@@ -599,6 +599,7 @@ button.check-item:hover { background: var(--chrome); }
 .status-elev[data-state="stale"] .status-elev-run:hover { background: #ffe08a; color: var(--ink); }
 .status-elev-run[aria-disabled="true"] { border-color: #5b6875; color: #8e9aa6; cursor: help; }
 .status-elev[data-state="busy"] .status-elev-run { cursor: progress; }
+.status-elev-run:not([aria-disabled]):hover { background: rgb(255 255 255 / 0.12); }
 .status-elev-run:focus-visible { outline: 2px solid #ffe08a; outline-offset: 1px; }
 
 /* 고도 단절선 options row: the wall swatch and the one-line meaning, then the drawing order, then the lines drawn. */
@@ -715,3 +716,20 @@ button.check-item:hover { background: var(--chrome); }
 .plaza-holes li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--text-s); }
 .plaza-panel .field-help { margin: 0; }
 .plaza-panel .field-error { margin: 0; color: var(--danger, #c92a2a); font-size: var(--text-s); }
+
+/* 고도 Δh dialog: the measured height differences, one row each with its 삭제 button. */
+.dialog-dh { width: min(560px, calc(100vw - 32px)); }
+.dh-count { margin-left: 6px; color: var(--muted); font-size: var(--text-s); font-weight: 500; }
+.dh-note { margin: 0; color: var(--muted); font-size: var(--text-s); line-height: 1.5; }
+.dh-empty { margin: 8px 0; color: var(--muted); }
+.dh-list { display: flex; flex-direction: column; max-height: min(52vh, 420px); margin: 0; padding: 0; overflow-y: auto; list-style: none; border-top: 1px solid var(--rule); }
+.dh-row { display: flex; align-items: center; gap: 12px; padding: 8px 2px; border-bottom: 1px solid var(--rule); }
+.dh-main { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.dh-ends { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.dh-sub { color: var(--muted); font-size: var(--text-s); font-variant-numeric: tabular-nums; }
+.dh-qc { margin-left: 6px; padding: 0 6px; border: 1px solid var(--rule); border-radius: 8px; font-size: 11px; }
+.dh-qc[data-qc="rejected"] { border-color: var(--danger); color: var(--danger); }
+.dh-value { min-width: 56px; font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
+.dh-remove { padding: 4px 12px; border: 1px solid var(--danger); border-radius: 6px; background: var(--surface); color: var(--danger); cursor: pointer; }
+.dh-remove:disabled { opacity: 0.5; cursor: progress; }
+.dh-remove:focus-visible { outline: 2px solid var(--danger); outline-offset: 1px; }

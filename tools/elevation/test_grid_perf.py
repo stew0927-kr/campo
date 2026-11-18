@@ -87,3 +87,32 @@ def test_grid_stage_1500x1500_within_the_limit():
     rr = rasterize_corridors(grid, corr, cfg.raster)
     road = rr.road & ~(res.pad_id >= 0)
     assert np.all(res.h[road] == rr.z[road])
+
+
+@pytest.mark.skipif(os.environ.get("CAMPO_SKIP_PERF") == "1", reason="CAMPO_SKIP_PERF=1")
+def test_per_edge_width_raster_is_not_much_slower():
+    """The signed distance path (per segment half widths) against the legacy path on the same 1,100 segments.
+
+    The widths are mixed around the default (1 to 3 m, mean 2 m) so both paths scan windows of about the same area:
+    this measures the cost of the path itself, not of wider windows (a 6 m road scans a wider window by design).
+    """
+    import dataclasses
+
+    grid, corr, _ = scene()
+    assert len(corr.edge_ids) > 1000
+    rng = np.random.default_rng(1)
+    widths = rng.choice([1.0, 1.5, 2.0, 2.5, 3.0], len(corr.edge_ids))
+    mixed = dataclasses.replace(corr, half_width=widths / 2.0)
+    cfg = SolverConfig().raster
+
+    def run(c):
+        t = time.perf_counter()
+        rasterize_corridors(grid, c, cfg)
+        return time.perf_counter() - t
+
+    run(corr), run(mixed)  # warm up
+    times = [(run(corr), run(mixed)) for _ in range(7)]  # interleaved, so a slow spell of the machine hits both
+    legacy, signed = min(a for a, _ in times), min(b for _, b in times)
+    print(f"\nrasterize_corridors 1500x1500, {len(corr.edge_ids)} segments: legacy {legacy:.3f} s, "
+          f"per edge width {signed:.3f} s ({signed / legacy:.2f}x)")
+    assert signed <= 1.3 * legacy

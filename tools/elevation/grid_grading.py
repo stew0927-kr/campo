@@ -1,7 +1,8 @@
 """
 CAMPO height solver v2, grid stages 2-5 (docs/ELEVATION_SOLVER_V2.md).
 
-  2. 2 m corridor rasterisation (road cells fixed at a height that depends only on t: level across the width)
+  2. corridor rasterisation, each edge at its width_m (2 m by default; road cells fixed at a height that depends only on t:
+     level across the width)
   3. building pads (polygon -> ground plane, one plane or several portal terraces), aprons, cut / fill slope targets
   4. island detection and Laplace fill (h), mid regions (displacement only)
   5. shoulder screened Poisson on the displacement d = h - DEM:  (-Laplace + mu + alpha) d = alpha d_hat
@@ -44,6 +45,9 @@ class Corridors:
     t_range: np.ndarray  # (S, 2) float64: [t0, t1] of this segment within its whole edge (stair display)
     steps: np.ndarray  # (S,) int32: step count of the edge, 0 if not stairs
     edge_ids: tuple[str, ...]  # length S: campus edge id
+    # (S,) float64 half width per segment m, NaN = raster.half_width_m. None = every segment at the default half width
+    # (the path of the data without width_m: bit identical to the time before per edge widths)
+    half_width: Optional[np.ndarray] = None
 
     @staticmethod
     def empty() -> "Corridors":
@@ -127,7 +131,10 @@ class RoadRaster:
     dist: np.ndarray  # (H, W) float32: distance to the nearest segment m, inf where none reached
     seg: np.ndarray  # (H, W) int32: that segment, -1 if none
     ring: np.ndarray  # (H, W) bool: half_width < d <= half_width + soft_ring
-    half_width_m: float = 1.0  # the half width actually used
+    half_width_m: float = 1.0  # the default half width actually used (effective_half_width)
+    # (H, W) float32 half width of the winning segment, 0 where none reached (per edge widths only; None: half_width_m
+    # everywhere)
+    half_width_map: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -163,6 +170,7 @@ class GridResult:
     wall_report: list = field(default_factory=list)  # per drawn drop wall: id, drop_m, links, conflicts, measured_*_m
     plaza_id: Optional[np.ndarray] = None  # (H, W) int32 plaza of each held cell, -1 elsewhere (None without plazas)
     plaza_report: list = field(default_factory=list)  # per plaza: id, name, h_m, h_source, cells, cut / fill, ...
+    corridors_final: Optional[Corridors] = None  # the corridors rasterised (after the plaza cut): solve_report roads[]
 
 
 # ------------------------------------------------------------------ #
@@ -203,20 +211,47 @@ def _project(X: np.ndarray, Y: np.ndarray, xi: float, yi: float, xj: float, yj: 
 # ------------------------------------------------------------------ #
 
 
+def segment_half_widths(corridors: Corridors, cfg: RasterConfig, res: float) -> Optional[np.ndarray]:
+    """
+    (S,) half width of each segment (NaN -> raster.half_width_m, never below min_half_width_cells cells, the same floor
+    as effective_half_width), or None when every segment has the default one: the legacy path, bit identical.
+    """
+    if corridors.half_width is None:
+        return None
+    hw = np.asarray(corridors.half_width, float).reshape(-1)
+    hw = np.where(np.isfinite(hw), hw, cfg.half_width_m)
+    hw = np.maximum(hw, cfg.min_half_width_cells * res)
+    return None if np.all(hw == effective_half_width(cfg, res)) else hw
+
+
 def rasterize_corridors(grid: Grid, corridors: Corridors, cfg: RasterConfig) -> RoadRaster:
+    """
+    Road cells (fixed at the corridor height) and soft ring cells of the corridor segments.
+
+    One half width for every segment (no width_m in the data): the nearest segment wins a cell, road = d <= half width.
+    Per segment half widths: the signed distance sd = d - hw decides instead, so the corridor a cell is deepest inside
+    wins it (a 6 m road keeps its whole band against a 2 m footway beside it; with nearest axis the footway's axis would
+    cut into it). Road = sd <= 0, ring = 0 < sd <= soft_ring. With equal widths sd orders the cells like d does.
+    Ties keep the earlier segment in both paths.
+    """
     H, W = grid.height, grid.width
     xs, ys = grid.cell_centers()
-    best = np.full((H, W), np.inf)
+    best = np.full((H, W), np.inf)  # d of the winner, or its sd with per segment half widths
     zt = np.full((H, W), np.nan)
     seg = np.full((H, W), -1, np.int32)
     hw = effective_half_width(cfg, grid.res)
     outer = hw + cfg.soft_ring_m
     reach = outer + cfg.bbox_pad_m
+    hw_s = segment_half_widths(corridors, cfg, grid.res)
+    if hw_s is not None:
+        hw_map = np.zeros((H, W), np.float32)  # half width of the winning segment (0 where none reached)
     for s in range(len(corridors.edge_ids)):
         (xi, yi), (xj, yj) = corridors.xy[s]
         zi, zj = corridors.z[s]
         if not np.all(np.isfinite([xi, yi, xj, yj, zi, zj])):
             continue
+        if hw_s is not None:
+            reach = hw_s[s] + cfg.soft_ring_m + cfg.bbox_pad_m
         r0, r1, c0, c1 = _window(grid, min(xi, xj) - reach, max(xi, xj) + reach, min(yi, yj) - reach, max(yi, yj) + reach)
         if r0 >= r1 or c0 >= c1:
             continue
@@ -234,10 +269,20 @@ def rasterize_corridors(grid: Grid, corridors: Corridors, cfg: RasterConfig) -> 
         else:
             z = (1.0 - t) * zi + t * zj
         bw, zw, sw = best[r0:r1, c0:c1], zt[r0:r1, c0:c1], seg[r0:r1, c0:c1]
+        if hw_s is not None:
+            d -= hw_s[s]  # signed distance sd = d - hw: < 0 inside this corridor
         upd = d < bw  # ties keep the earlier segment
         bw[upd] = d[upd]
+        if hw_s is not None:
+            hw_map[r0:r1, c0:c1][upd] = hw_s[s]
         zw[upd] = z[upd]
         sw[upd] = s
+    if hw_s is not None:
+        road = best <= 0.0
+        ring = (best > 0.0) & (best <= cfg.soft_ring_m)
+        z = np.where(road | ring, zt, np.nan)
+        dist = (best + hw_map).astype(np.float32)  # distance to the winning segment (inf + 0 where none reached)
+        return RoadRaster(road, z, dist, seg, ring, half_width_m=hw, half_width_map=hw_map)
     road = best <= hw
     ring = (best > hw) & (best <= outer)
     z = np.where(road | ring, zt, np.nan)
@@ -782,13 +827,15 @@ def clip_corridors_to_plazas(corridors: Corridors, plazas: Sequence[Plaza], plaz
     Parts inside a hole stay (both ends at H). plaza_h[k] is the height of plazas[k].
     """
     xy, z, tr, st, ids = list(corridors.xy), list(corridors.z), list(corridors.t_range), list(corridors.steps), list(corridors.edge_ids)
+    has_hw = corridors.half_width is not None  # every piece keeps the half width of its segment
+    hw = list(corridors.half_width) if has_hw else [math.nan] * len(ids)
     for p, H in zip(plazas, plaza_h):
         if H is None or not math.isfinite(H):
             continue
         rings = [np.asarray(r, float)[:, :2] for r in p.rings if len(r) >= 3]
         if not rings:
             continue
-        nxy, nz, ntr, nst, nids = [], [], [], [], []
+        nxy, nz, ntr, nst, nids, nhw = [], [], [], [], [], []
         for s in range(len(ids)):
             p0, p1 = np.asarray(xy[s][0], float), np.asarray(xy[s][1], float)
             z0, z1 = float(z[s][0]), float(z[s][1])
@@ -798,6 +845,7 @@ def clip_corridors_to_plazas(corridors: Corridors, plazas: Sequence[Plaza], plaz
                 if _point_in_rings(rings, float(mid[0]), float(mid[1])):
                     continue  # wholly inside the solid area
                 nxy.append(xy[s]); nz.append(z[s]); ntr.append(tr[s]); nst.append(st[s]); nids.append(ids[s])
+                nhw.append(hw[s])
                 continue
             cuts = [0.0, *ts, 1.0]
             t0, t1 = float(tr[s][0]), float(tr[s][1])
@@ -814,11 +862,13 @@ def clip_corridors_to_plazas(corridors: Corridors, plazas: Sequence[Plaza], plaz
                 ntr.append(np.array([t0 + a * (t1 - t0), t0 + b * (t1 - t0)]))
                 nst.append(st[s])
                 nids.append(ids[s])
-        xy, z, tr, st, ids = nxy, nz, ntr, nst, nids
+                nhw.append(hw[s])
+        xy, z, tr, st, ids, hw = nxy, nz, ntr, nst, nids, nhw
     if not ids:
         return Corridors.empty()
     return Corridors(np.asarray(xy, float).reshape(-1, 2, 2), np.asarray(z, float).reshape(-1, 2),
-                     np.asarray(tr, float).reshape(-1, 2), np.asarray(st, np.int32), tuple(ids))
+                     np.asarray(tr, float).reshape(-1, 2), np.asarray(st, np.int32), tuple(ids),
+                     half_width=np.asarray(hw, float) if has_hw else None)
 
 
 def measure_plazas(plaza_raster: PlazaRaster, h: np.ndarray, dem: np.ndarray, res: float) -> list[dict]:
@@ -1418,7 +1468,9 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
     num = np.zeros(dem.shape)
     ring = road.ring & ~fixed2 & valid
     if ring.any():
-        a = (road.half_width_m + cfg.raster.soft_ring_m - road.dist[ring].astype(float)) / cfg.raster.soft_ring_m
+        # the half width of the segment that won the cell (per edge widths), or the one half width of every corridor
+        hw_ring = road.half_width_map[ring].astype(float) if road.half_width_map is not None else road.half_width_m
+        a = (hw_ring + cfg.raster.soft_ring_m - road.dist[ring].astype(float)) / cfg.raster.soft_ring_m
         alpha[ring] += a
         num[ring] += a * (road.z[ring] - dem[ring])
     sl = slope & ~fixed2 & valid
@@ -1488,4 +1540,4 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
                "cg": info["cg"], "total": total}
     return GridResult(h, residual, road.road, pr.pad_id, apron & ~pad, island, mid, unknown, stats, timings, log,
                       pr.terrace_of, pr.terrace_h, t_info, walls if len(walls) else None, wall_report,
-                      plaza_id, plaza_report)
+                      plaza_id, plaza_report, corridors_final=corridors)

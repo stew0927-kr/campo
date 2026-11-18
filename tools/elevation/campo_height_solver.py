@@ -1275,11 +1275,29 @@ def _corridor_edge(f: dict, cm: CampusModel, eid: str) -> bool:
     return va.startswith("cn:") or vb.startswith("cn:")
 
 
-def campus_corridors(features: list[dict], cm: CampusModel, project, heights: dict[str, float]):
-    """Corridor segments of the outside edges and portals whose both end heights are known (and not floating)."""
-    from grid_grading import Corridors
+def edge_half_width(p: dict, eid: str, raster_cfg, log: Optional[list[str]] = None) -> float:
+    """Half width (m) of an edge from its width_m, clamped to [width_min_m, width_max_m] (logged); NaN without one."""
+    w = _num(p.get("width_m"))
+    if w is None:
+        return math.nan
+    c = min(max(w, raster_cfg.width_min_m), raster_cfg.width_max_m)
+    if c != w and log is not None:
+        log.append(f"edge {eid}: width_m {w:g} clamped to {c:g}")
+    return c / 2.0
 
-    xy, z, tr, steps, ids = [], [], [], [], []
+
+def campus_corridors(features: list[dict], cm: CampusModel, project, heights: dict[str, float], *, raster_cfg=None,
+                     log: Optional[list[str]] = None):
+    """
+    Corridor segments of the outside edges and portals whose both end heights are known (and not floating).
+    Each segment carries the half width of its edge (width_m / 2, NaN = raster.half_width_m); when no edge has a
+    width_m, or raster.per_edge_width is false, half_width is None (one half width for all, as before per edge widths).
+    """
+    from grid_grading import Corridors
+    from solver_config import RasterConfig
+
+    rc = raster_cfg if raster_cfg is not None else RasterConfig()
+    xy, z, tr, steps, ids, hws = [], [], [], [], [], []
     for f in features:
         if _kind(f) != "edge" or not _corridor_edge(f, cm, f["id"]):
             continue
@@ -1296,15 +1314,19 @@ def campus_corridors(features: list[dict], cm: CampusModel, project, heights: di
             frac[-1] = 1.0
         n = p.get("step_count") if p.get("highway") == "steps" else 0
         n = n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 0
+        hw = edge_half_width(p, eid, rc, log) if rc.per_edge_width else math.nan
         for k in range(len(poly) - 1):
             xy.append([poly[k], poly[k + 1]])
             z.append([ha + (hb - ha) * frac[k], ha + (hb - ha) * frac[k + 1]])
             tr.append([frac[k], frac[k + 1]])
             steps.append(n)
             ids.append(eid)
+            hws.append(hw)
     if not ids:
         return Corridors.empty()
-    return Corridors(np.array(xy, float), np.array(z, float), np.array(tr, float), np.array(steps, np.int32), tuple(ids))
+    half_width = np.array(hws, float) if np.isfinite(hws).any() else None  # no width_m anywhere: the legacy path
+    return Corridors(np.array(xy, float), np.array(z, float), np.array(tr, float), np.array(steps, np.int32), tuple(ids),
+                     half_width=half_width)
 
 
 # ---- 평지 (plaza, docs/ELEVATION_SOLVER_V2.md 평지) ----
@@ -1799,6 +1821,26 @@ def plaza_report_rows(g) -> list[dict]:
     return out
 
 
+def roads_report_rows(g, raster_cfg) -> list[dict]:
+    """
+    solve_report roads[]: the corridors the grid actually fixed (after the plaza cut, GridResult.corridors_final), one row
+    per edge id (sorted), segments [x0, y0, z0, x1, y1, z1] in grid CRS m and absolute heights m, rounded to 1 mm, in
+    segment order. width_m = 2 x the segment half width (raster.half_width_m without one) - what the 3D view draws.
+    """
+    c = g.corridors_final
+    if c is None or not len(c.edge_ids):
+        return []
+    rows: dict[str, dict] = {}
+    for s, eid in enumerate(c.edge_ids):
+        hw = float(c.half_width[s]) if c.half_width is not None else math.nan
+        hw = hw if math.isfinite(hw) else raster_cfg.half_width_m
+        row = rows.setdefault(eid, {"id": eid, "width_m": round(2.0 * hw, 3), "segments": []})
+        (x0, y0), (x1, y1) = c.xy[s]
+        z0, z1 = c.z[s]
+        row["segments"].append([round(float(v), 3) for v in (x0, y0, z0, x1, y1, z1)])
+    return [rows[k] for k in sorted(rows)]
+
+
 def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: dict[str, float],
                  extra_log: Sequence[str] = ()) -> dict:
     from solver_config import config_to_dict
@@ -1842,6 +1884,8 @@ def solve_report(cfg, w, g, buildings: dict[str, dict], run_id: str, timings: di
     }
     if g.plaza_report:  # optional key, only with plazas: reports of a campus without them stay as they were
         out["plazas"] = plaza_report_rows(g)
+    if g.corridors_final is not None and len(g.corridors_final.edge_ids):  # optional key: the final corridors
+        out["roads"] = roads_report_rows(g, cfg.raster)
     return out
 
 
@@ -1931,7 +1975,11 @@ def _run_v2(a: argparse.Namespace):
     res = to_solve_result(w, solved, nodes, lambda n: _dem_value(grid, n))
 
     heights = {k: h for k, h in w.h.items() if not w.floating[k]}
-    corr = campus_corridors(features, cm, tf.transform, heights) if cm is not None else Corridors.empty()
+    c_log: list[str] = []
+    corr = (campus_corridors(features, cm, tf.transform, heights, raster_cfg=cfg.raster, log=c_log) if cm is not None
+            else Corridors.empty())
+    for line in c_log:
+        _say(line)
     dem0_at = lambda x, y: float(grid.sample_bilinear(x, y)[0])  # noqa: E731  (original DEM_0)
     portals = building_portals(features, cm, tf.transform, dem0_at) if cm is not None else {}
     t_log: list[str] = []
@@ -1972,7 +2020,7 @@ def _run_v2(a: argparse.Namespace):
         json.dumps(write_back(store, res, run_id, now_ms), ensure_ascii=False, indent=2), encoding="utf-8")
     timings = {"wls": t_wls, **g.timings, "run": time.perf_counter() - t_start}
     (out / "solve_report.json").write_text(
-        json.dumps(solve_report(cfg, w, g, b_extra, run_id, timings, extra_log=[*t_log, *x_log]), indent=2) + "\n",
+        json.dumps(solve_report(cfg, w, g, b_extra, run_id, timings, extra_log=[*c_log, *t_log, *x_log]), indent=2) + "\n",
         encoding="utf-8")
     _say(f"grid: {int(g.stats['road_cells'])} road, {int(g.stats['pad_cells'])} pad, {int(g.stats['island_cells'])} island, "
          f"{int(g.stats['shoulder_unknowns'])} shoulder cells, CG {int(g.stats['cg_iterations'])} iteration(s), "

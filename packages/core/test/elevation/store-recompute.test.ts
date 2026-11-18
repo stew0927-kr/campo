@@ -20,6 +20,7 @@ import {
   outdoorNodeKey,
   readDerivedElevation,
   recomputeRequest,
+  removeEdge,
   removeHeightNode,
   serializeElevationStore,
   statePatches,
@@ -252,5 +253,43 @@ describe('lazy recompute: 평지 (plaza) changes', () => {
     expect(gone.plazas.get('plaza_a')).toHaveLength(1); // the area it covered before
     // without plazas the request keeps its old shape
     expect('plazas' in request(none(), s0)).toBe(false);
+  });
+});
+
+describe('deleting one Δh edge (survey app and editor 높이 차 삭제)', () => {
+  it('takes out only that edge: both nodes stay, the edge’s profiles go, and an unknown id changes nothing', () => {
+    const { store } = measuredStore();
+    const roundtrip = store.edges[1]!;
+    const withProfiles = { ...store, profiles: [
+      { profileId: 'p1', edgeId: roundtrip.edgeId, sM: [0, 1], relHM: [0, 1], sigmaM: [0.1, 0.1] },
+      { profileId: 'p2', edgeId: store.edges[0]!.edgeId, sM: [0, 1], relHM: [0, 1], sigmaM: [0.1, 0.1] },
+    ] } as never as typeof store;
+    const { store: next, removed } = removeEdge(withProfiles, roundtrip.edgeId);
+    expect(removed?.edgeId).toBe(roundtrip.edgeId);
+    expect(next.edges.map((e) => e.edgeId)).toEqual([store.edges[0]!.edgeId]);
+    expect(next.nodes.map((n) => n.key)).toEqual([A, B]);
+    expect(next.profiles?.map((x) => x.profileId)).toEqual(['p2']);
+    expect(withProfiles.edges).toHaveLength(2); // the input is not changed
+    const same = removeEdge(next, 'e-nowhere');
+    expect(same.store).toBe(next);
+    expect(same.removed).toBeNull();
+  });
+
+  it('drops the removed id from other edges’ supersedes (an empty list goes away)', () => {
+    const { store } = measuredStore();
+    const [first, second] = [store.edges[0]!, store.edges[1]!];
+    expect(second.supersedes).toEqual([first.edgeId]);
+    const { store: next } = removeEdge(store, first.edgeId);
+    expect(next.edges).toHaveLength(1);
+    expect('supersedes' in next.edges[0]!).toBe(false);
+    const keep = { ...store, edges: [{ ...second, supersedes: [first.edgeId, 'e-other'] }, first] };
+    expect(removeEdge(keep, first.edgeId).store.edges[0]!.supersedes).toEqual(['e-other']);
+  });
+
+  it('reports the removed edge (so its two ends can be marked dirty) and the serialized file stays valid', () => {
+    const { store } = measuredStore();
+    const { store: next, removed } = removeEdge(store, store.edges[1]!.edgeId);
+    expect([removed!.from, removed!.to].sort()).toEqual([A, B].sort());
+    expect(JSON.parse(serializeElevationStore(next)).edges).toHaveLength(1);
   });
 });

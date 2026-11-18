@@ -46,6 +46,31 @@ export function removeHeightNode(store: ElevationStore, key: string): { store: E
   return { store: next, removed };
 }
 
+/**
+ * The store without the one Δh edge `edgeId` (a surveyor or editor user deleted that measurement). Both of its nodes stay:
+ * they are measured spots in their own right. The edge's profiles go with it, and other edges stop listing it in
+ * `supersedes` (an empty list is dropped). `removed` is the edge taken out (null when the id is unknown, and then the store
+ * is returned as it was), so the caller can mark its two ends for a recompute.
+ */
+export function removeEdge(store: ElevationStore, edgeId: string): { store: ElevationStore; removed: DhEdge | null } {
+  const removed = store.edges.find((e) => e.edgeId === edgeId) ?? null;
+  if (!removed) return { store, removed };
+  const edges = store.edges
+    .filter((e) => e.edgeId !== edgeId)
+    .map((e) => {
+      if (!e.supersedes?.includes(removed.edgeId)) return e;
+      const { supersedes: _old, ...rest } = e;
+      const left = e.supersedes.filter((id) => id !== removed.edgeId);
+      return left.length > 0 ? { ...rest, supersedes: left } : rest;
+    });
+  const next: ElevationStore = {
+    ...store,
+    edges,
+    ...(store.profiles ? { profiles: store.profiles.filter((x) => x.edgeId !== edgeId) } : {}),
+  };
+  return { store: next, removed };
+}
+
 type Obj = Record<string, unknown>;
 
 /** Only `keys`, in that order, leaving out undefined. Nested objects are picked by `nested`. */

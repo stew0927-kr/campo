@@ -84,7 +84,8 @@ def test_a_hole_is_not_flattened_and_is_no_island():
     assert hole.sum() > 50
     assert np.all(g.h[solid] == 60.0)
     assert not g.island[hole].any() and not g.mid[hole].any()
-    assert np.mean(g.h[hole] == 60.0) < 0.05  # the hole keeps a shape of its own
+    # the hole keeps a shape of its own (outside the plaza collar: its 1 cell rim is held at H, plaza.collar_cells)
+    assert np.mean(g.h[hole & ~g.plaza_collar] == 60.0) < 0.05
     # the shoulder pulls the hole towards H near its edge only: the centre stays close to the DEM
     centre = (slice(28, 33), slice(28, 33))
     assert hole[centre].all()
@@ -129,7 +130,7 @@ def test_ground_around_the_plaza_eases_back_to_the_dem():
     g = run(grid, [Plaza("p", (small,), h=53.0, h_source="fixed")])
     m = cells_of(grid, [small])
     assert np.all(g.h[m] == 53.0)
-    edt = ndimage_edt(~m) * RES
+    edt = ndimage_edt(~(m | g.plaza_collar)) * RES  # measured from the collar out: its 1 cell ring is held at H too
     lift = g.h - 50.0
     rings_ = [lift[(edt > d - 1) & (edt <= d + 1)] for d in (2, 6, 10, 20)]
     means = [float(np.mean(r)) for r in rings_]
@@ -324,3 +325,216 @@ def test_no_plaza_report_key_without_plazas(tmp_path):
     rep = json.loads((o / "solve_report.json").read_text(encoding="utf-8"))
     assert "plazas" not in rep and "plazas" not in rep["grid"]
     assert math.isfinite(rep["grid"]["max_abs_residual_m"])
+
+
+# ---------------------------------------------------------------- 8. 평지 경계 콜러(collar)
+# collar_cells = k: 평지 고체 셀(중심 규칙)을 8방향으로 k번 넓힌 셀 중 건물 대지·길 경성 셀·다른 평지 고체 셀이 아닌 것을 H로
+# 고정한다. 평지 위 점을 둘러싼 격자 사각형(네 셀 중심)의 네 꼭짓점이 모두 H가 되어, 쌍선형으로 읽는 소비자에게도 평지가
+# 경계까지 평평하다. collar_cells = 0은 콜러 도입 전과 비트 동일(golden/grade_grid_plaza_legacy.npz).
+
+PLAZA_GOLDEN = HERE / "golden" / "grade_grid_plaza_legacy.npz"
+EIGHT = np.ones((3, 3), bool)
+
+
+def collar_cfg(k):
+    return with_overrides(CFG, {"plaza.collar_cells": k})
+
+
+def dilate8(mask, k=1):
+    from scipy import ndimage
+    return ndimage.binary_dilation(mask, structure=EIGHT, iterations=k)
+
+
+def crossing_road(grid, v=60.3):
+    dem = lambda u: float(grid.sample_bilinear(*P(u, v))[0])  # noqa: E731
+    xy = np.array([[P(5.3, v), P(115.3, v)]], float)
+    return Corridors(xy, np.array([[dem(5.3) + 0.2, dem(115.3) + 0.2]]), np.array([[0.0, 1.0]]), np.zeros(1, np.int32), ("e",))
+
+
+def plaza_golden_scene():
+    """A holed plaza at 60 m, a DEM-median plaza 1.6 m east of it, a pad over the plaza edge and a road across both."""
+    grid = grid_of()
+    plazas = [Plaza("p", (SQUARE, HOLE), h=60.0, h_source="fixed"), Plaza("q", (ring(92.3, 30.3, 110.7, 50.7),))]
+    pads = [Pad("bldg_x", (ring(40.3, 20.3, 50.7, 35.7),), 64.0)]
+    return grid, plazas, pads, crossing_road(grid)
+
+
+def write_plaza_golden():  # pragma: no cover (run once with the grade_grid from before the plaza collar)
+    grid, plazas, pads, road = plaza_golden_scene()
+    g = run(grid, plazas, corridors=road, pads=pads)
+    import scipy
+    np.savez_compressed(PLAZA_GOLDEN, h=g.h, residual=g.residual, plaza_id=g.plaza_id, stats=json.dumps(g.stats),
+                        log=json.dumps(g.log), report=json.dumps(g.plaza_report),
+                        versions=json.dumps([np.__version__, scipy.__version__]))
+
+
+def test_collar_cells_config_default_override_and_validation():
+    from solver_config import config_from_dict, config_to_dict, parse_set_args, validate
+    assert SolverConfig().plaza.collar_cells == 1
+    cfg = with_overrides(SolverConfig(), parse_set_args(["plaza.collar_cells=2"]))
+    assert cfg.plaza.collar_cells == 2 and isinstance(cfg.plaza.collar_cells, int)
+    assert config_to_dict(cfg)["plaza"]["collar_cells"] == 2
+    assert config_from_dict(json.loads(json.dumps(config_to_dict(cfg)))) == cfg
+    assert validate(collar_cfg(0)) == []
+    msgs = validate(collar_cfg(-1))
+    assert len(msgs) == 1 and "plaza.collar_cells" in msgs[0]
+
+
+def test_collar_cells_zero_is_legacy():
+    import scipy
+    gold = np.load(PLAZA_GOLDEN)
+    same_versions = json.loads(str(gold["versions"])) == [np.__version__, scipy.__version__]
+    grid, plazas, pads, road = plaza_golden_scene()
+    g = run(grid, plazas, corridors=road, pads=pads, cfg=collar_cfg(0))
+    assert g.stats["cg_converged"] == 1.0
+    if same_versions:  # bit for bit against the grade_grid from before the collar
+        assert np.array_equal(g.h, gold["h"], equal_nan=True) and np.array_equal(g.residual, gold["residual"])
+        assert g.stats == json.loads(str(gold["stats"]))
+    else:  # another numpy / scipy may round the shoulder CG differently (the held cells stay bit for bit)
+        assert np.allclose(g.h, gold["h"], atol=1e-9, equal_nan=True)
+    held = gold["plaza_id"] >= 0
+    assert np.array_equal(g.plaza_id, gold["plaza_id"]) and np.array_equal(g.h[held], gold["h"][held])
+    assert g.log == json.loads(str(gold["log"]))
+    assert [{k: v for k, v in r.items() if k != "collar_cells"} for r in g.plaza_report] == json.loads(str(gold["report"]))
+    assert g.plaza_collar is not None and not g.plaza_collar.any()
+    assert all(r["collar_cells"] == 0 for r in g.plaza_report)
+
+
+def test_collar_ring_is_held_exactly_at_h():
+    grid = grid_of()
+    g = run(grid, [Plaza("p", (SQUARE,), h=60.0, h_source="fixed")], cfg=collar_cfg(1))
+    m = cells_of(grid, [SQUARE])
+    want = dilate8(m) & ~m
+    assert want.sum() == 4 * 30 + 4  # one cell all round a 30 x 30 cell square
+    assert np.array_equal(g.plaza_collar, want)
+    assert np.array_equal(g.h[want], np.full(want.sum(), 60.0))
+    assert np.array_equal(g.h[m], np.full(m.sum(), 60.0))
+    assert np.array_equal(g.plaza_id >= 0, m)  # plaza_id keeps the centre rule
+    assert g.stats["plaza_cells"] == m.sum() and g.plaza_report[0]["cells"] == m.sum()
+    assert g.plaza_report[0]["collar_cells"] == want.sum()
+    # the shoulder starts outside the collar: the next ring out is free (eased, not held)
+    nxt = dilate8(m, 2) & ~dilate8(m)
+    assert not g.unknown[want].any() and g.unknown[nxt].all()
+
+
+def _quad_corners(grid, x, y):
+    """Row and column of the north-west of the four cell centres around (x, y)."""
+    c = np.floor((x - grid.origin_x) / grid.res - 0.5).astype(int)
+    r = np.floor((grid.origin_y - y) / grid.res - 0.5).astype(int)
+    return r, c
+
+
+def _square_points(n, seed=11):
+    rng = np.random.default_rng(seed)
+    u0, u1 = 30.3, 90.7
+    inside = rng.uniform(u0, u1, (n // 2, 2))
+    side = rng.integers(0, 4, n - n // 2)
+    t = rng.uniform(u0, u1, n - n // 2)
+    edge = np.stack([np.where(side == 0, u0, np.where(side == 1, u1, t)), np.where(side == 2, u0, np.where(side == 3, u1, t))], 1)
+    pts = np.concatenate([inside, edge])
+    corners = np.array([[u0, u0], [u0, u1], [u1, u0], [u1, u1]])
+    far = np.min(np.hypot(pts[:, None, 0] - corners[None, :, 0], pts[:, None, 1] - corners[None, :, 1]), axis=1) >= 0.3 * RES
+    return pts[far]
+
+
+def test_every_lattice_quad_touching_the_polygon_is_flat():
+    grid = grid_of()
+    pts = _square_points(2000)
+    assert len(pts) > 1900
+    x, y = P(pts[:, 0], pts[:, 1])
+    r, c = _quad_corners(grid, x, y)
+
+    def flat(g):
+        return (g.h[r, c] == 60.0) & (g.h[r + 1, c] == 60.0) & (g.h[r, c + 1] == 60.0) & (g.h[r + 1, c + 1] == 60.0)
+
+    on = run(grid, [Plaza("p", (SQUARE,), h=60.0, h_source="fixed")], cfg=collar_cfg(1))
+    assert flat(on).all()
+    # bilinear reads (Grid.sample_bilinear: the consumers of corrected_dem) are H there too, up to the rounding of the
+    # interpolation weights (the four corners themselves are bit for bit H above)
+    assert np.abs(Grid(on.h, grid.origin_x, grid.origin_y, grid.res).sample_bilinear(x, y) - 60.0).max() <= 1e-12
+    off = run(grid, [Plaza("p", (SQUARE,), h=60.0, h_source="fixed")], cfg=collar_cfg(0))
+    assert not flat(off).all()  # without the collar the quads on the plaza edge lean towards the DEM
+
+
+def test_collar_never_overrides_pad_or_road():
+    grid = grid_of()
+    plazas = [Plaza("p", (SQUARE,), h=60.0, h_source="fixed")]
+    pads = [Pad("bldg_x", (ring(40.3, 20.3, 50.7, 35.7),), 64.0)]
+    road = crossing_road(grid)
+    g0 = run(grid, plazas, corridors=road, pads=pads, cfg=collar_cfg(0))
+    g1 = run(grid, plazas, corridors=road, pads=pads, cfg=collar_cfg(1))
+    pad, hard = g1.pad_id >= 0, g1.road
+    assert np.array_equal(g0.pad_id >= 0, pad) and np.array_equal(g0.road, hard)
+    assert np.array_equal(g0.h[pad], g1.h[pad]) and np.all(g1.h[pad] == 64.0)
+    assert np.array_equal(g0.h[hard], g1.h[hard])
+    m = cells_of(grid, [SQUARE])
+    ring1 = dilate8(m & ~pad) & ~m
+    assert (ring1 & pad).any() and (ring1 & hard).any()  # the pad and the road both sit where the collar would go
+    assert not (g1.plaza_collar & (pad | hard)).any()
+    assert np.array_equal(g1.plaza_collar, ring1 & ~pad & ~hard)
+    assert np.all(g1.h[g1.plaza_collar] == 60.0)
+
+
+def test_collar_around_a_hole():
+    grid = grid_of()
+    g = run(grid, [Plaza("p", (SQUARE, HOLE), h=60.0, h_source="fixed")], cfg=collar_cfg(1))
+    outer = cells_of(grid, [SQUARE])
+    solid = cells_of(grid, [SQUARE, HOLE])
+    hole = outer & ~solid
+    rim = hole & dilate8(solid)  # the hole cells one cell in from its edge
+    inner = hole & ~dilate8(solid)  # two cells or more in from its edge
+    assert rim.sum() == 36 and inner.sum() == 64
+    assert np.all(g.h[rim] == 60.0) and g.plaza_collar[rim].all()
+    assert not g.plaza_collar[inner].any()
+    assert np.mean(g.h[inner] == 60.0) < 0.05  # the middle keeps a shape of its own
+    assert not g.island[hole].any() and not g.mid[hole].any() and g.unknown[inner].all()
+    centre = (slice(28, 33), slice(28, 33))
+    assert inner[centre].all()
+    assert np.median(np.abs(g.h[centre] - grid.data[centre])) < np.median(np.abs(60.0 - grid.data[centre]))
+
+
+def test_collar_between_two_plazas_goes_to_the_nearer_then_the_earlier():
+    grid = grid_of()
+    east = ring(92.3, 30.3, 110.7, 50.7)  # 1.6 m east of SQUARE: one free cell column (centre u = 91) between them
+    a, b = Plaza("p", (SQUARE,), h=60.0, h_source="fixed"), Plaza("q", (east,), h=61.0, h_source="fixed")
+    m_p, m_q = cells_of(grid, [SQUARE]), cells_of(grid, [east])
+    gap = dilate8(m_p) & dilate8(m_q) & ~m_p & ~m_q
+    d_p, d_q = ndimage_edt(~m_p), ndimage_edt(~m_q)  # centre distance to the nearest solid cell of each plaza
+    tie = gap & (d_p == d_q)
+    assert tie.sum() > 5 and (gap & (d_p < d_q)).any()
+    for order, h_tie in (((a, b), 60.0), ((b, a), 61.0)):  # as far from both: the earlier plaza keeps the cell
+        g = run(grid, order, cfg=collar_cfg(1))
+        assert np.all(g.h[tie] == h_tie) and g.plaza_collar[gap].all()
+        assert np.all(g.h[gap & (d_p < d_q)] == 60.0) and np.all(g.h[gap & (d_q < d_p)] == 61.0)  # else the nearer
+        assert np.all(g.h[m_p] == 60.0) and np.all(g.h[m_q] == 61.0)  # a solid cell is never another plaza's collar
+    # two rings: the far side of the gap is solid q, so the p collar stops there; the q collar stays q's
+    g = run(grid, (a, b), cfg=collar_cfg(2))
+    assert np.all(g.h[m_q] == 61.0) and np.all(g.h[dilate8(m_q) & ~m_q & ~dilate8(m_p, 2)] == 61.0)
+    near_q = dilate8(m_q) & ~m_q & ~gap & dilate8(m_p, 2)  # one cell from q, two from p: the nearer plaza q
+    assert near_q.any() and np.all(g.h[near_q] == 61.0)
+
+
+def test_report_has_collar_cells_key(tmp_path):
+    camp = _scene(tmp_path)
+    o = tmp_path / "o"
+    cli("--engine", "v2", "--store", tmp_path / "store.json", "--dem", tmp_path / "dem.json", "--campus", camp, "--out", o)
+    rep = json.loads((o / "solve_report.json").read_text(encoding="utf-8"))
+    assert rep["config"]["plaza"]["collar_cells"] == 1
+    for r in rep["plazas"]:
+        assert isinstance(r["collar_cells"], int) and r["collar_cells"] > 0, r["id"]
+    o0 = tmp_path / "o0"
+    cli("--engine", "v2", "--store", tmp_path / "store.json", "--dem", tmp_path / "dem.json", "--campus", camp, "--out", o0,
+        "--set", "plaza.collar_cells=0")
+    rep0 = json.loads((o0 / "solve_report.json").read_text(encoding="utf-8"))
+    assert rep0["config"]["plaza"]["collar_cells"] == 0 and all(r["collar_cells"] == 0 for r in rep0["plazas"])
+    # without plazas: no plazas[] at all, so no collar_cells key anywhere outside the config
+    from test_solver_v2_cli import basic_scene
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    camp2 = basic_scene(plain)
+    o2 = plain / "o"
+    cli("--engine", "v2", "--store", plain / "store.json", "--dem", plain / "dem.json", "--campus", camp2, "--out", o2)
+    rep2 = json.loads((o2 / "solve_report.json").read_text(encoding="utf-8"))
+    assert "plazas" not in rep2
+    rep2["config"]["plaza"].pop("collar_cells")
+    assert "collar_cells" not in json.dumps(rep2)

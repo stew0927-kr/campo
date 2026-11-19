@@ -1816,8 +1816,12 @@ def plaza_report_rows(g) -> list[dict]:
         row.update({k: _num(r[k]) for k in keys})
         row.update({k: int(r[k]) for k in ("cells", "hole_cells", "nodes", "overlap_pad_cells")})
         row["bbox_xy"] = [_num(v) for v in r["bbox_xy"]]
-        out.append({k: row[k] for k in ("id", "name", "h_m", "h_source", "cells", "hole_cells", "area_m2", "cut_m3", "fill_m3",
-                                        "max_cut_m", "max_fill_m", "flat_error_m", "nodes", "overlap_pad_cells", "bbox_xy")})
+        keys_out = ("id", "name", "h_m", "h_source", "cells", "hole_cells", "area_m2", "cut_m3", "fill_m3", "max_cut_m",
+                    "max_fill_m", "flat_error_m", "nodes", "overlap_pad_cells", "bbox_xy")
+        if "collar_cells" in r:  # cells held at H around the solid cells (plaza.collar_cells rings)
+            row["collar_cells"] = int(r["collar_cells"])
+            keys_out += ("collar_cells",)
+        out.append({k: row[k] for k in keys_out})
     return out
 
 

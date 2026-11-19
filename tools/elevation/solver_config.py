@@ -130,6 +130,7 @@ class PlazaConfig:
     erode_cells: int = 1  # the reference reads only cells this many cells inside the plaza edge
     relief_warn_m: float = 3.0  # log a plaza whose DEM relief (max - min) is larger
     node_tol_m: float = 0.1  # an outdoor node within this of the plaza edge counts as on the plaza
+    collar_cells: int = 1  # hold this many cells (8-neighbour rings) around the solid cells at H too; 0 = no collar
 
 
 @dataclass(frozen=True)
@@ -287,7 +288,8 @@ def validate(cfg: SolverConfig) -> list[str]:
     pz = cfg.plaza
     if not 0.0 <= pz.ref_percentile <= 100.0:
         out.append(f"plaza.ref_percentile must be within [0, 100] (got {pz.ref_percentile!r})")
-    for name, v in (("plaza.min_cells", pz.min_cells), ("plaza.erode_cells", pz.erode_cells)):
+    for name, v in (("plaza.min_cells", pz.min_cells), ("plaza.erode_cells", pz.erode_cells),
+                    ("plaza.collar_cells", pz.collar_cells)):
         if not (isinstance(v, int) and not isinstance(v, bool) and v >= 0):
             out.append(f"{name} must be an integer >= 0 (got {v!r})")
     for name, v in (("plaza.relief_warn_m", pz.relief_warn_m), ("plaza.node_tol_m", pz.node_tol_m)):

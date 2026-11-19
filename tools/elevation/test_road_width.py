@@ -302,3 +302,74 @@ def test_cli_v2_width_end_to_end(tmp_path):
         "--set", "raster.per_edge_width=false")
     rep2 = json.loads((o2 / "solve_report.json").read_text(encoding="utf-8"))
     assert {r["id"]: r for r in rep2["roads"]}["e_out_w__e"]["width_m"] == 2.0
+
+
+# ---------------------------------------------------------------- 3D 리본의 쌍둥이 fixture (feat/terrain-road-ribbon-3d)
+#
+# packages/editor/test/fixtures/road-twin.json: the corridors of solve_report roads[] (the same shape), and 1,000 cell
+# centres of a 0.25 m grid with what rasterize_corridors itself gives there (z of a road cell, its winning segment, null
+# off the hard band). The editor's corridorZ (src/model/roadRibbon.ts) must give the same numbers (road-ribbon.test.ts).
+# Make it again after changing the corridor rule:  cd tools/elevation && python test_road_width.py --write-road-twin
+
+ROAD_TWIN_PATH = HERE.parent.parent / "packages" / "editor" / "test" / "fixtures" / "road-twin.json"
+ROAD_TWIN_RES = 0.25
+# roads[] as solve_report has them (EPSG:5186 m to the mm, absolute heights): one bent road (a gentle and a sharp bend),
+# and a wider straight one apart from it. Mixed widths: the per segment (signed distance) path of rasterize_corridors.
+ROAD_TWIN_ROADS = [
+    {"id": "r_bend", "width_m": 2.0, "segments": [
+        [X0 + 12.345, Y0 - 30.123, 30.0, X0 + 40.517, Y0 - 22.871, 31.25],
+        [X0 + 40.517, Y0 - 22.871, 31.25, X0 + 61.203, Y0 - 41.659, 30.6],
+        [X0 + 61.203, Y0 - 41.659, 30.6, X0 + 70.911, Y0 - 70.432, 33.1]]},
+    {"id": "r_wide", "width_m": 3.5, "segments": [[X0 + 20.437, Y0 - 75.309, 29.5, X0 + 50.813, Y0 - 90.127, 29.9]]},
+]
+
+
+def road_twin() -> dict:
+    """The fixture: the roads, and the solver's own raster at 1,000 seeded cell centres (700 road cells, 300 near ones)."""
+    segs, widths, ids = [], [], []
+    for row in ROAD_TWIN_ROADS:
+        for x0, y0, z0, x1, y1, z1 in row["segments"]:
+            segs.append(((x0 - X0, y0 - Y0), (x1 - X0, y1 - Y0), z0, z1))
+            widths.append(row["width_m"])
+            ids.append(row["id"])
+    c = dataclasses.replace(corridors_w(segs, widths), edge_ids=tuple(ids))
+    # the absolute coordinates themselves (corridors() adds X0, Y0 back: the same doubles only if that is exact)
+    c = dataclasses.replace(c, xy=np.array([[[s[0], s[1]], [s[3], s[4]]] for r in ROAD_TWIN_ROADS for s in r["segments"]], float))
+    g = Grid(np.zeros((400, 320)), X0, Y0, ROAD_TWIN_RES)
+    rr = rasterize_corridors(g, c, CFG.raster)
+    assert rr.half_width_map is not None  # the per segment path
+    xs, ys = g.cell_centers()
+    rng = np.random.default_rng(20261119)
+    road = np.flatnonzero(rr.road.ravel())
+    near = np.flatnonzero(((rr.seg >= 0) & ~rr.road).ravel())
+    pick = np.sort(np.concatenate([rng.choice(road, 700, replace=False), rng.choice(near, 300, replace=False)]))
+    points = []
+    for q in pick:
+        r, col = divmod(int(q), g.width)
+        on = bool(rr.road[r, col])
+        points.append({"x": float(xs[col]), "y": float(ys[r]), "z": float(rr.z[r, col]) if on else None,
+                       "seg": int(rr.seg[r, col]) if on else None})
+    return {"about": "tools/elevation/test_road_width.py road_twin(): rasterize_corridors at 1,000 cell centres "
+                     "(python test_road_width.py --write-road-twin)",
+            "res": ROAD_TWIN_RES, "roads": ROAD_TWIN_ROADS, "points": points}
+
+
+def write_road_twin(path: Path = ROAD_TWIN_PATH) -> None:
+    d = road_twin()
+    lines = ",\n".join("  " + json.dumps(p, separators=(",", ":")) for p in d["points"])
+    head = json.dumps({k: v for k, v in d.items() if k != "points"}, separators=(",", ":"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(head[:-1] + ',"points":[\n' + lines + "\n]}\n", encoding="utf-8")
+
+
+def test_road_twin_fixture_is_current():
+    """The fixture the editor's twin test reads is what the solver gives today (regenerate it with --write-road-twin)."""
+    want = road_twin()
+    assert sum(p["z"] is not None for p in want["points"]) == 700
+    have = json.loads(ROAD_TWIN_PATH.read_text(encoding="utf-8"))
+    assert have == want
+
+
+if __name__ == "__main__" and "--write-road-twin" in sys.argv:
+    write_road_twin()
+    print(f"wrote {ROAD_TWIN_PATH}")

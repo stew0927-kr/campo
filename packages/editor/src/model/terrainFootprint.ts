@@ -75,9 +75,9 @@ function tileVertex(cells: ReadonlyMap<number, TerrainTile>, W: number, t: Terra
   return { kind: 'own' };
 }
 
-// ---- footprints in the plan, with a 10 m hash of their edges ----
+// ---- footprints in the plan, with a 4 m hash of their edges and boxes (road pieces are 2 m long) ----
 
-const HASH_M = 10;
+const HASH_M = 4;
 /**
  * A triangle within this of a footprint's edge counts as meeting it (m): pressing one triangle too many is safe, one too few
  * is not. 1 mm: well over the ≈ 10 µm that EPSG:5186 → [lng, lat] → EPSG:5186 moves a point (korea2000.ts), so a triangle
@@ -95,13 +95,17 @@ interface FootprintIndex {
   /** Each footprint's edges and its box. */
   edges: number[][];
   box: [number, number, number, number][];
+  /** Footprints per hash cell their box (grown by TOUCH_M) covers: the candidates for a triangle, without a loop over all of them. */
+  boxHash: Map<number, number[]>;
   all: [number, number, number, number];
 }
 
 const hashKey = (hx: number, hy: number) => hx * 1_048_576 + hy;
 
 function indexFootprints(footprints: readonly Footprint[]): FootprintIndex {
-  const idx: FootprintIndex = { caps: [], ex: [], fp: [], hash: new Map(), edges: [], box: [], all: [Infinity, Infinity, -Infinity, -Infinity] };
+  const idx: FootprintIndex = {
+    caps: [], ex: [], fp: [], hash: new Map(), edges: [], box: [], boxHash: new Map(), all: [Infinity, Infinity, -Infinity, -Infinity],
+  };
   for (const f of footprints) {
     if (!Number.isFinite(f.zCap)) continue;
     const k = idx.caps.length;
@@ -132,6 +136,13 @@ function indexFootprints(footprints: readonly Footprint[]): FootprintIndex {
     idx.caps.push(f.zCap - CARVE_GAP_M);
     idx.edges.push(own);
     idx.box.push(box);
+    for (let hx = Math.floor((box[0] - TOUCH_M) / HASH_M); hx <= Math.floor((box[2] + TOUCH_M) / HASH_M); hx++) {
+      for (let hy = Math.floor((box[1] - TOUCH_M) / HASH_M); hy <= Math.floor((box[3] + TOUCH_M) / HASH_M); hy++) {
+        const list = idx.boxHash.get(hashKey(hx, hy));
+        if (list) list.push(k);
+        else idx.boxHash.set(hashKey(hx, hy), [k]);
+      }
+    }
     idx.all = [Math.min(idx.all[0], box[0]), Math.min(idx.all[1], box[1]), Math.max(idx.all[2], box[2]), Math.max(idx.all[3], box[3])];
   }
   return idx;
@@ -307,7 +318,9 @@ export function terrainSurface(
   const idx = indexFootprints(footprints);
   if (idx.caps.length > 0) {
     const seen = new Int32Array(idx.fp.length).fill(-1);
-    const meets = new Uint8Array(idx.caps.length);
+    /** The triangle (its first index m) for which a footprint was last found to meet it, and last looked at as a candidate. */
+    const met = new Int32Array(idx.caps.length).fill(-1);
+    const tried = new Int32Array(idx.caps.length).fill(-1);
     const tri = [0, 0, 0, 0, 0, 0];
     for (let m = 0; m < tris.length; m += 3) {
       const [a, b, c] = [tris[m]!, tris[m + 1]!, tris[m + 2]!];
@@ -318,29 +331,37 @@ export function terrainSurface(
       const y0 = Math.min(tri[1], tri[3], tri[5]) - TOUCH_M;
       const y1 = Math.max(tri[1], tri[3], tri[5]) + TOUCH_M;
       if (x1 < idx.all[0] || x0 > idx.all[2] || y1 < idx.all[1] || y0 > idx.all[3]) continue;
-      meets.fill(0);
+      const [hx0, hx1, hy0, hy1] = [Math.floor(x0 / HASH_M), Math.floor(x1 / HASH_M), Math.floor(y0 / HASH_M), Math.floor(y1 / HASH_M)];
       // A footprint edge near the triangle: does it meet it?
-      for (let hx = Math.floor(x0 / HASH_M); hx <= Math.floor(x1 / HASH_M); hx++) {
-        for (let hy = Math.floor(y0 / HASH_M); hy <= Math.floor(y1 / HASH_M); hy++) {
+      for (let hx = hx0; hx <= hx1; hx++) {
+        for (let hy = hy0; hy <= hy1; hy++) {
           for (const e of idx.hash.get(hashKey(hx, hy)) ?? []) {
             if (seen[e] === m) continue;
             seen[e] = m;
             const f = idx.fp[e]!;
-            if (meets[f] === 1) continue;
-            if (segMeetsTriangle(idx.ex[4 * e]!, idx.ex[4 * e + 1]!, idx.ex[4 * e + 2]!, idx.ex[4 * e + 3]!, tri)) meets[f] = 1;
-            else meets[f] = 2; // near, but no edge of it meets the triangle yet
+            if (met[f] === m) continue;
+            const [ax, ay, bx, by] = [idx.ex[4 * e]!, idx.ex[4 * e + 1]!, idx.ex[4 * e + 2]!, idx.ex[4 * e + 3]!];
+            if ((ax < x0 && bx < x0) || (ax > x1 && bx > x1) || (ay < y0 && by < y0) || (ay > y1 && by > y1)) continue; // apart (boxes)
+            if (segMeetsTriangle(idx.ex[4 * e]!, idx.ex[4 * e + 1]!, idx.ex[4 * e + 2]!, idx.ex[4 * e + 3]!, tri)) met[f] = m;
           }
         }
       }
+      // The footprints whose box comes near the triangle (any that meets it is among them: its edge is within TOUCH_M).
       let lim = Infinity;
-      for (let f = 0; f < idx.caps.length; f++) {
-        if (meets[f] !== 1) {
-          // No edge of f meets the triangle: the triangle is wholly inside f's solid area or wholly outside it.
-          const bx = idx.box[f]!;
-          if (x1 < bx[0] || x0 > bx[2] || y1 < bx[1] || y0 > bx[3]) continue;
-          if (!inSolid(idx, f, tri[0], tri[1])) continue;
+      for (let hx = hx0; hx <= hx1; hx++) {
+        for (let hy = hy0; hy <= hy1; hy++) {
+          for (const f of idx.boxHash.get(hashKey(hx, hy)) ?? []) {
+            if (tried[f] === m) continue;
+            tried[f] = m;
+            if (met[f] !== m) {
+              // No edge of f meets the triangle: the triangle is wholly inside f's solid area or wholly outside it.
+              const bx = idx.box[f]!;
+              if (x1 < bx[0] || x0 > bx[2] || y1 < bx[1] || y0 > bx[3]) continue;
+              if (!inSolid(idx, f, tri[0], tri[1])) continue;
+            }
+            lim = Math.min(lim, idx.caps[f]!);
+          }
         }
-        lim = Math.min(lim, idx.caps[f]!);
       }
       if (lim === Infinity) continue;
       const q = triCell[m / 3]!;

@@ -2,10 +2,15 @@
 // (paths, flat_exact, stairs, barometer Δh and break lines already folded in), else the plain DEM, else none.
 // A campo-grid file is <name>.json (meta) + <name>.bin (row-major from the north, little-endian float32 or uint16).
 // It is thinned to at most MAX_CELLS cells a side: the view needs the shape of the ground, not every metre. The drawn
-// retaining walls (break lines with lowSide and dropM) go with it as 1 m sections read from the grid as it is (terrainWalls).
+// retaining walls (break lines with lowSide and dropM) go with it as 1 m sections read from the grid as it is (terrainWalls),
+// and round every 평지 the thinned cells are sent again at 1 m (terrainTiles), so the view can press the relief under the
+// plaza's plane exactly where its edge is (model/terrainFootprint.ts).
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { coarseVertexXY } from '../src/model/gridXY.ts';
 import { toKorea2000 } from '../src/model/korea2000.ts';
+
+export { coarseVertexXY } from '../src/model/gridXY.ts';
 
 export const MAX_CELLS = 160;
 
@@ -74,7 +79,10 @@ export function gridValues(meta: GridMeta, bytes: Uint8Array): GridValues {
   };
 }
 
-/** Decode and thin a grid (every `stride`-th cell each way, the cell centres kept where they are). */
+/**
+ * Decode and thin a grid (every `stride`-th cell each way, the cell centres kept where they are): the thinned origin is
+ * shifted so that coarseVertexXY(thinned, r, c) is the centre of the full cell (r × stride, c × stride) whose value it takes.
+ */
 export function decodeGrid(meta: GridMeta, bytes: Uint8Array, source: TerrainGridJson['source'], maxCells = MAX_CELLS): TerrainGridJson {
   const g = gridValues(meta, bytes);
   const stride = Math.max(1, Math.ceil(Math.max(meta.width, meta.height) / maxCells));
@@ -97,13 +105,32 @@ export async function readGridFile(jsonPath: string, source: TerrainGridJson['so
   return decodeGrid(meta, bytes, source, maxCells);
 }
 
+/** A road's corridor as the solver fixed it (solve_report.json roads[]); read and drawn from PR ⑤ on, always [] here. */
+export interface RoadSegmentJson {
+  id: string;
+  width_m: number;
+  /** [x0, y0, z0, x1, y1, z1]: EPSG:5186 m and absolute heights m. */
+  segments: [number, number, number, number, number, number][];
+}
+
+/** GET /terrain's answer (the editor reads it in api.ts fetchTerrain; every key after `walls` may be missing from an older server). */
+export interface TerrainJson {
+  grid: TerrainGridJson;
+  walls: TerrainWallJson[];
+  plazaHeights: Record<string, number>;
+  tiles: TerrainTileJson[];
+  roads: RoadSegmentJson[];
+}
+
 /**
  * GET /terrain's answer: the thinned grid, the 1 m sections across the store's walls (none when the store is missing or
- * broken), and the height the solver held each 평지 at (solve_report.json plazas[]: id → h_m; empty without a report).
+ * broken), the height the solver held each 평지 at (solve_report.json plazas[]: id → h_m; empty without a report), the 1 m
+ * tiles round each plaza of the report that has a bbox_xy (none without: the view then presses the coarse cells), and the
+ * roads (always [] until the view draws them).
  */
 export async function readTerrain(
   jsonPath: string, source: TerrainGridJson['source'], storeText: string | null, maxCells = MAX_CELLS, reportText: string | null = null,
-): Promise<{ grid: TerrainGridJson; walls: TerrainWallJson[]; plazaHeights: Record<string, number> }> {
+): Promise<TerrainJson> {
   const { meta, bytes } = await readGridBytes(jsonPath);
   const grid = decodeGrid(meta, bytes, source, maxCells);
   let walls: TerrainWallJson[] = [];
@@ -112,7 +139,13 @@ export async function readTerrain(
   } catch {
     walls = []; // a wall that cannot be read never keeps the relief from being drawn
   }
-  return { grid, walls, plazaHeights: plazaHeightsFromReport(reportText) };
+  let tiles: TerrainTileJson[] = [];
+  try {
+    tiles = terrainTiles(gridValues(meta, bytes), grid, plazaTileAreas(reportText));
+  } catch {
+    tiles = []; // tiles that cannot be made never keep the relief from being drawn (the view presses the coarse cells)
+  }
+  return { grid, walls, plazaHeights: plazaHeightsFromReport(reportText), tiles, roads: [] };
 }
 
 /** 평지 heights from a solve_report.json text: { plaza id → h_m }. A missing or broken report, or one without plazas, gives {}. */
@@ -129,6 +162,160 @@ export function plazaHeightsFromReport(text: string | null): Record<string, numb
   } catch {
     return {}; // a report that cannot be read never keeps the relief from being drawn
   }
+}
+
+// ---- 평지 tiles: the thinned cells round a plaza again at 1 m, from the grid at its own resolution ----
+//
+// The thinned grid (10 m on 한양대) cannot follow a plaza's edge: a triangle there reaches up to 14 m past it. Round every
+// plaza the coarse cells (the squares between four thinned vertices) are sent again split sub × sub, read from the full
+// grid, so the view can press the relief under the plane only where the edge is (model/terrainFootprint.ts terrainSurface).
+// Sewing: a tile's four corners are the coarse values themselves; a vertex on its edge is read from the full grid when the
+// cell across that edge is a tile of the same sub too (both read the very same point: the same value), and is otherwise the
+// straight line between the two corners — on the coarse triangle's edge beside it, so there is no crack.
+
+/** A plaza's bbox is grown by this before it is tiled (≥ the solver's shoulder ease of 8 m + 2 m). */
+export const TILE_MARGIN_M = 10;
+/** The size of a plaza tile's cells (m): sub = ceil(coarse res / this), 10 on a 10 m grid. */
+export const PLAZA_TILE_RES_M = 1;
+/** The most tile triangles (2 × sub² a coarse cell) sent in all; areas past it are left to the coarse cells. */
+export const TILE_MAX_TRIANGLES = 250_000;
+
+/** A coarse cell (vertices (r, c) … (r + 1, c + 1)) split sub × sub, read from the grid at its own resolution. */
+export interface TerrainTileJson {
+  /** The row and column of the cell's north-west vertex in the thinned grid. */
+  r: number;
+  c: number;
+  /** Pieces a side (≥ 2). */
+  sub: number;
+  /**
+   * (sub + 1)² heights (m), row by row from the north: the corners as the coarse grid has them, an edge vertex with no tile
+   * beside it on the straight line between its corners, the rest read from the full grid to the mm; null without data.
+   */
+  z: (number | null)[];
+}
+
+/** Where to tile: a plaza's (or, later, a road's) box, EPSG:5186 [xmin, ymin, xmax, ymax] m, the margin already in it. */
+export interface TileArea {
+  kind: 'plaza' | 'road';
+  id: string;
+  box: [number, number, number, number];
+}
+
+/** Height at (x, y) (EPSG:5186 m) from the grid at its own resolution: bilinear between cell centres; null off it or next to no data. */
+export function sampleGridValues(g: GridValues, x: number, y: number): number | null {
+  const EPS = 1e-9;
+  const fc = (x - g.originX) / g.res - 0.5;
+  const fr = (g.originY - y) / g.res - 0.5;
+  if (!(fc >= -EPS && fr >= -EPS && fc <= g.width - 1 + EPS && fr <= g.height - 1 + EPS)) return null;
+  const col = Math.min(Math.max(fc, 0), g.width - 1);
+  const row = Math.min(Math.max(fr, 0), g.height - 1);
+  const c0 = Math.max(0, Math.min(Math.floor(col), g.width - 2));
+  const r0 = Math.max(0, Math.min(Math.floor(row), g.height - 2));
+  const [u, v] = [col - c0, row - r0];
+  let sum = 0;
+  for (const [dr, dc, w] of [[0, 0, (1 - u) * (1 - v)], [0, 1, u * (1 - v)], [1, 0, (1 - u) * v], [1, 1, u * v]] as const) {
+    if (w <= 0) continue; // a cell with no weight here (a point on a centre or an edge) may have no data
+    const h = g.at(r0 + dr, c0 + dc);
+    if (h === null) return null;
+    sum += w * h;
+  }
+  return sum;
+}
+
+/** The plazas of a solve_report.json text with a bbox_xy, as tile areas grown by TILE_MARGIN_M. None for no text, a broken one, or no bbox_xy. */
+export function plazaTileAreas(text: string | null): TileArea[] {
+  if (text === null) return [];
+  try {
+    const rows = (JSON.parse(text) as { plazas?: unknown }).plazas;
+    if (!Array.isArray(rows)) return [];
+    const out: TileArea[] = [];
+    for (const r of rows as { id?: unknown; bbox_xy?: unknown }[]) {
+      const b = r?.bbox_xy;
+      if (typeof r?.id !== 'string' || !Array.isArray(b) || b.length !== 4 || !b.every((v) => typeof v === 'number' && Number.isFinite(v))) continue;
+      const [x0, y0, x1, y1] = b as number[];
+      if (!(x0! <= x1! && y0! <= y1!)) continue;
+      out.push({ kind: 'plaza', id: r.id, box: [x0! - TILE_MARGIN_M, y0! - TILE_MARGIN_M, x1! + TILE_MARGIN_M, y1! + TILE_MARGIN_M] });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+const mm = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * The tiles for `areas` over the thinned grid `coarse`, read from the full grid `g`: every coarse cell an area's box meets.
+ * Budget (opts.maxTriangles, TILE_MAX_TRIANGLES): the plazas first, in the order given, a whole plaza at a time (one that
+ * does not fit is left out and the next is tried); then the roads, the longest box first, until one does not fit. What is
+ * left out is drawn from the coarse cells (the view presses those instead). A grid already as fine as the tiles gives none.
+ */
+export function terrainTiles(g: GridValues, coarse: TerrainGridJson, areas: readonly TileArea[], opts: { maxTriangles?: number } = {}): TerrainTileJson[] {
+  const max = opts.maxTriangles ?? TILE_MAX_TRIANGLES;
+  const W = coarse.width;
+  const sub = Math.ceil(coarse.res / PLAZA_TILE_RES_M - 1e-9);
+  if (sub < 2 || W < 2 || coarse.height < 2) return [];
+  const cost = 2 * sub * sub;
+  /** The coarse cells (r × W + c) a box meets, edges included. */
+  const cellsOf = (box: TileArea['box']): number[] => {
+    const [x0, y0, x1, y1] = box;
+    const c0 = Math.max(0, Math.floor((x0 - coarse.originX) / coarse.res - 0.5) - 1);
+    const c1 = Math.min(W - 2, Math.ceil((x1 - coarse.originX) / coarse.res - 0.5) + 1);
+    const r0 = Math.max(0, Math.floor((coarse.originY - y1) / coarse.res - 0.5) - 1);
+    const r1 = Math.min(coarse.height - 2, Math.ceil((coarse.originY - y0) / coarse.res - 0.5) + 1);
+    const out: number[] = [];
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const [ax, ay] = coarseVertexXY(coarse, r, c);
+        const [bx, by] = coarseVertexXY(coarse, r + 1, c + 1);
+        if (bx >= x0 && ax <= x1 && ay >= y0 && by <= y1) out.push(r * W + c);
+      }
+    }
+    return out;
+  };
+  const span = (a: TileArea) => Math.max(a.box[2] - a.box[0], a.box[3] - a.box[1]);
+  const order = [
+    ...areas.filter((a) => a.kind === 'plaza'),
+    ...areas.filter((a) => a.kind === 'road').sort((a, b) => span(b) - span(a)),
+  ];
+  const chosen = new Set<number>();
+  let used = 0;
+  for (const a of order) {
+    const fresh = cellsOf(a.box).filter((q) => !chosen.has(q));
+    if (used + fresh.length * cost > max) {
+      if (a.kind === 'road') break;
+      continue;
+    }
+    for (const q of fresh) chosen.add(q);
+    used += fresh.length * cost;
+  }
+  const at = (r: number, c: number) => coarse.z[r * W + c] ?? null;
+  const read = (r: number, c: number): number | null => {
+    const [x, y] = coarseVertexXY(coarse, r, c);
+    const h = sampleGridValues(g, x, y);
+    return h === null ? null : mm(h);
+  };
+  const lerp = (a: number | null, b: number | null, t: number) => (a === null || b === null ? null : a + (b - a) * t);
+  const out: TerrainTileJson[] = [];
+  for (const q of [...chosen].sort((a, b) => a - b)) {
+    const [r, c] = [Math.floor(q / W), q % W];
+    const [nw, ne, sw, se] = [at(r, c), at(r, c + 1), at(r + 1, c), at(r + 1, c + 1)];
+    const beside = { n: chosen.has(q - W), s: chosen.has(q + W), w: c > 0 && chosen.has(q - 1), e: chosen.has(q + 1) && c + 1 < W - 1 };
+    const z: (number | null)[] = [];
+    for (let i = 0; i <= sub; i++) {
+      for (let j = 0; j <= sub; j++) {
+        const [ti, tj] = [i / sub, j / sub];
+        if ((i === 0 || i === sub) && (j === 0 || j === sub)) z.push(i === 0 ? (j === 0 ? nw : ne) : j === 0 ? sw : se);
+        else if (i === 0) z.push(beside.n ? read(r, c + tj) : lerp(nw, ne, tj));
+        else if (i === sub) z.push(beside.s ? read(r + 1, c + tj) : lerp(sw, se, tj));
+        else if (j === 0) z.push(beside.w ? read(r + ti, c) : lerp(nw, sw, ti));
+        else if (j === sub) z.push(beside.e ? read(r + ti, c + 1) : lerp(ne, se, ti));
+        else z.push(read(r + ti, c + tj));
+      }
+    }
+    out.push({ r, c, sub, z });
+  }
+  return out;
 }
 
 // ---- 옹벽: sections across the drawn walls, read from the grid at its own resolution ----

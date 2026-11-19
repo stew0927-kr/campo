@@ -1,5 +1,6 @@
 import type { LoadedFile } from '@campo/core';
 import type { TerrainGrid, TerrainWall } from './model/terrain3d.ts';
+import type { TerrainTile } from './model/terrainFootprint.ts';
 
 export async function fetchCampusFiles(campusId: string): Promise<LoadedFile[]> {
   const res = await fetch(`/api/campuses/${encodeURIComponent(campusId)}`);
@@ -123,15 +124,19 @@ export interface ElevationInfo {
 export type { TerrainWall } from './model/terrain3d.ts';
 
 /**
- * 지형 3D's height grid: the solver's corrected grid, else the DEM, else null (the view then offers a sample); and the
- * 1 m sections across the drawn retaining walls (none from an older server).
+ * 지형 3D's height grid: the solver's corrected grid, else the DEM, else null (the view then offers a sample); the 1 m
+ * sections across the drawn retaining walls, and the 1 m tiles round each plaza (none of either from an older server).
  */
-export async function fetchTerrain(campusId: string): Promise<{ grid: TerrainGrid | null; walls: TerrainWall[]; plazaHeights: Record<string, number> }> {
+export async function fetchTerrain(campusId: string): Promise<{
+  grid: TerrainGrid | null; walls: TerrainWall[]; plazaHeights: Record<string, number>; tiles: TerrainTile[];
+}> {
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/terrain`);
-  const body = (await res.json()) as { grid?: TerrainGrid | null; walls?: TerrainWall[]; plazaHeights?: Record<string, number>; error?: string };
+  const body = (await res.json()) as {
+    grid?: TerrainGrid | null; walls?: TerrainWall[]; plazaHeights?: Record<string, number>; tiles?: TerrainTile[]; error?: string;
+  };
   if (!res.ok) throw new Error(body.error ?? `고도 그리드를 불러오지 못했습니다 (HTTP ${res.status}).`);
   const plazaHeights = typeof body.plazaHeights === 'object' && body.plazaHeights !== null ? body.plazaHeights : {};
-  return { grid: body.grid ?? null, walls: Array.isArray(body.walls) ? body.walls : [], plazaHeights };
+  return { grid: body.grid ?? null, walls: Array.isArray(body.walls) ? body.walls : [], plazaHeights, tiles: Array.isArray(body.tiles) ? body.tiles : [] };
 }
 
 export async function fetchElevation(campusId: string): Promise<ElevationInfo> {

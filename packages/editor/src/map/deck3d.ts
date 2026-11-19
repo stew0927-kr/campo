@@ -13,6 +13,7 @@ import {
   routePath3D, terrainBase, terrainMesh, terrainWire, wallCells, wallMesh, type Ground, type PlazaFlat, type PlazaSurface, type RouteRef,
   type Segment3D, type TerrainGrid, type TerrainWall, type WallTriangle,
 } from '../model/terrain3d.ts';
+import { fineGround, plazaFootprints, terrainSurface, type TerrainTile } from '../model/terrainFootprint.ts';
 import type { SlopeLine } from '../model/elevation.ts';
 import { pictogramDataUrl, routePinDataUrl } from './iconUrls.ts';
 import { ELEVATION_COLORS, PLAZA_COLORS, ROUTE_COLORS, ROUTE_PIN_COLORS, WAY_COLORS, type RouteLine } from './layers.ts';
@@ -45,10 +46,13 @@ const WALL_LIFT_M = 0.03;
 /** The face of a wall: concrete grey, apart from the relief's sage-sand-clay. */
 const WALL_FACE = rgb('#8d8f8c');
 /**
- * 평지: the plane floats this far (× 높이 과장) over the relief it replaces, so the two never flicker where they meet.
- * (depthBias was not used: it could not be checked on screen here, and lines do not take it; the lift works for both.)
+ * 평지: how far (× 높이 과장) the plane floats over the relief. 0: the relief is pressed CARVE_GAP_M (2 cm, display m) under
+ * every plaza (model/terrainFootprint.ts terrainSurface), so the plane needs no lift and is drawn at its own height.
+ * (No depthBias / polygonOffset / depthCompare either: what keeps the plane out of the relief is the geometry.)
  */
-const PLAZA_LIFT_M = 0.03;
+const PLAZA_LIFT_M = 0;
+/** The lift of the old way (exactFootprints: false: the relief clamped to the plane within 0.75 cell, the plane 3 cm over it). */
+const LEGACY_PLAZA_LIFT_M = 0.03;
 /** The plaza's outline floats a little higher still, over its own plane. */
 const PLAZA_OUTLINE_LIFT_M = 0.08;
 
@@ -70,6 +74,13 @@ export interface Deck3DInput {
   /** 평지 (id and rings) and the heights the solver held them at (/terrain plazaHeights; a plaza missing there takes the relief's median). */
   plazas?: readonly Pick<PlazaSurface, 'id' | 'rings'>[];
   plazaHeights?: Readonly<Record<string, number>>;
+  /** 평지 tiles: the grid again at 1 m round each plaza (/terrain tiles; none from an older server or before a recompute). */
+  tiles?: readonly TerrainTile[];
+  /**
+   * true (default): the relief pressed under every plaza (terrainSurface, from the tiles where there are some, else the
+   * coarse cells), the plane drawn at its height. false: the old way (the relief clamped within 0.75 cell, the plane lifted).
+   */
+  exactFootprints?: boolean;
 }
 
 interface Slab {
@@ -80,9 +91,9 @@ interface Slab {
 
 export function deckLayers({
   state, scope, grid, walls = [], terrain, buildings, measured, exaggeration: k, routes, slopes, plazas = [], plazaHeights = {},
+  tiles = [], exactFootprints = true,
 }: Deck3DInput): Layer[] {
   const layers: Layer[] = [];
-  const bare: Ground = terrain ? groundOf(grid, k) : () => 0;
   // 평지: each plane at (H − the grid's lowest height) × k; paths, buildings and routes stand on it (plazaGround).
   const flats: PlazaFlat[] = [];
   if (terrain && grid) {
@@ -92,13 +103,20 @@ export function deckLayers({
       if (h !== null) flats.push({ id: p.id, rings: p.rings, z: (h - base) * k });
     }
   }
+  const exact = exactFootprints && terrain && grid !== null && flats.length > 0;
+  // The ground things stand on: the 1 m tiles where there are some (the exact way), else the coarse relief.
+  const bare: Ground = !terrain ? () => 0 : exact ? fineGround(grid, tiles, k) : groundOf(grid, k);
   const ground: Ground = plazaGround(bare, flats);
   const mode: StackMode = terrain ? 'terrain' : 'flat';
 
   if (terrain && grid) {
     // The thinned cells a wall crosses are left out: the wall's 1 m section is drawn there instead.
     const cut = walls.length > 0 ? wallCells(grid, walls) : undefined;
-    const cells = terrainMesh(grid, 1, k, cut, flats);
+    // Exact: the relief pressed under every plaza (never above its plane, I5); the wire stays off the cells drawn from a
+    // tile or pressed (its coarse line would float over them). Old way: the relief clamped to the plane within 0.75 cell.
+    const surface = exact ? terrainSurface(grid, tiles, k, plazaFootprints(flats), cut) : null;
+    const cells = surface ? surface.cells : terrainMesh(grid, 1, k, cut, flats);
+    const wireSkip = surface ? new Set([...(cut ?? []), ...surface.skippedCells, ...surface.carvedCells]) : cut;
     const top = Math.max(1, ...cells.map((c) => c.z));
     layers.push(new SolidPolygonLayer({
       id: 'terrain-mesh', data: cells, _full3d: true, filled: true, extruded: false, opacity: 0.93,
@@ -121,14 +139,15 @@ export function deckLayers({
       );
     }
     // A light wire every few cells: the eye reads slope from how the lines bend.
-    const lines = terrainWire(grid, Math.max(2, Math.round(grid.width / 24)), k, cut, flats);
+    const lines = terrainWire(grid, Math.max(2, Math.round(grid.width / 24)), k, wireSkip, surface ? undefined : flats);
     layers.push(new PathLayer({
       id: 'terrain-wire', data: lines, getPath: (l: [number, number, number][]) => l,
       getColor: [255, 255, 255, 80], getWidth: 1, widthUnits: 'pixels',
     }));
     if (flats.length > 0) {
       // The plane as its own exact mesh: deck.gl's SolidPolygonLayer cuts the holes ([outer, ...holes]) itself.
-      const lift = PLAZA_LIFT_M * k;
+      const lift = (exact ? PLAZA_LIFT_M : LEGACY_PLAZA_LIFT_M) * k;
+      // The fill side's cliff reaches the ground under it (the tiles' where there are some); the cut side has none.
       const skirts = flats.flatMap((f) => plazaSkirt(f, bare));
       layers.push(
         new SolidPolygonLayer({

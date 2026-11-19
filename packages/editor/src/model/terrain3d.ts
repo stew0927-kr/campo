@@ -196,7 +196,8 @@ function flatOf(framed: readonly FramedFlat[], at: Position, grow: number): { in
  * `skip`: cells (row × width + col of their north-west centre) left out, where a wall's section is drawn instead (wallCells).
  * `flat`: 평지. A cell centre inside a plaza grown by 0.75 cell takes the plaza's plane; a triangle whose three corners are
  * inside one plaza's solid area (and its middle too) is left out, as the plaza's own exact mesh is drawn there. Without
- * `flat` the mesh is as before.
+ * `flat` the mesh is as before. (map/deck3d.ts uses `flat` only with exactFootprints: false; by default the relief round
+ * the plazas comes from model/terrainFootprint.ts terrainSurface, which presses it under each plane instead.)
  */
 export function terrainMesh(grid: TerrainGrid, step = 1, k = 1, skip?: ReadonlySet<number>, flat?: readonly PlazaFlat[]): TerrainCell[] {
   const base = terrainBase(grid);
@@ -628,8 +629,10 @@ export function pickSurface(rayAt: (z: number) => Position, ground: Ground, top:
  * The plaza's cliff (절벽 스커트) where the ground outside it is lower (fill): upright quads along every ring (outer and
  * holes), from the plane down to the ground a little past it − `extraM`. Each ring is cut into pieces of at most `stepM`;
  * a piece gets a quad only where the ground `probeM` out from it (away from the solid area) is more than 2 cm under the
- * plane. Where the ground is higher (cut) there is none: the clamped relief meets the plane there. `ground` is the bare
- * relief (not plazaGround).
+ * plane. Where the ground is higher (cut) there is none: the relief meets the plane there (the old way clamps it to the
+ * plane; the exact way, model/terrainFootprint.ts terrainSurface, presses it under the plane and it rises from there as a
+ * slope, so no wall is needed). `ground` is the bare relief (not plazaGround): with fineGround (the 1 m tiles) the wall
+ * reaches the ground the tiles draw, not the 10 m cells'.
  */
 export function plazaSkirt(
   flat: PlazaFlat, ground: Ground, opts: { stepM?: number; probeM?: number; extraM?: number } = {},

@@ -8,7 +8,8 @@
 //   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null, walls: TerrainWall[], plazaHeights, tiles, roads }
 //        solve/corrected_dem first, else dem.json; walls: 1 m sections across the store's break lines with lowSide and
 //        dropM > 0 (server/terrain.ts terrainWalls); tiles: the grid again at 1 m round each plaza of solve_report.json
-//        (terrainTiles); roads: [] (the solver's corridors, drawn from a later change)
+//        and at 2 m round each road (terrainTiles); roads: solve_report.json roads[], the corridors the solver fixed
+//        (roadsFromReport; the editor draws them as ribbons, model/roadRibbon.ts)
 // Per campus folder <elevationDir>/<id>/ (default derived/<id>/, git-ignored):
 //   store.json      ElevationStore (copy the survey app's elevation_store.json here)
 //   dem.json        campo-grid DEM meta (dem_prep.py output, read only). CAMPO_ELEVATION_DEM overrides it.

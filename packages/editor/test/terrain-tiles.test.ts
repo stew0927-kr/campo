@@ -200,7 +200,7 @@ describe('tile budget', () => {
 });
 
 describe('readTerrain tiles and roads', () => {
-  it('tiles round every plaza with a bbox_xy in the report; roads [] for now; no report or no bbox_xy: no tiles', async () => {
+  it('tiles round every plaza with a bbox_xy in the report; no roads in it: roads []; no report or no bbox_xy: no tiles', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'campo-tiles-'));
     try {
       const json = join(dir, 'corrected_dem.json');

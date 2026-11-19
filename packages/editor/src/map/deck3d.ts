@@ -1,5 +1,5 @@
 // The 3D views drawn with deck.gl over MapLibre (MapView adds a MapboxOverlay): 지형 3D (the height grid as a surface,
-// the outdoor paths and the ground-floor outlines laid on it) and 건물 3D (every building's floors as slabs standing on
+// the outdoor paths (the solver's corridors as ribbons where it sent them) and the ground-floor outlines laid on it) and 건물 3D (every building's floors as slabs standing on
 // that ground, and for the building shown its indoor points, paths and the vertical links between floors), and the
 // routes of 경로 테스트 over both. Every height is multiplied by 높이 과장 (`exaggeration`).
 // Nothing here is pickable: clicks, drags and hovers stay with the 2D editor underneath (MapView finds the relief under
@@ -9,11 +9,12 @@ import { IconLayer, LineLayer, PathLayer, ScatterplotLayer, SolidPolygonLayer } 
 import { PICTOGRAM_COLORS, STACK_COLORS, beltEndIds, buildingById, edgeCoords, outlineOfLevel, pictogramOf, stackLayout, type EditState, type Level, type Position, type StackMode } from '@campo/core';
 import type { Scope } from '../model/scope.ts';
 import {
-  ROUTE_LIFT_M, buildingGround, buildingSegments, drapePath, floorBases, groundOf, nodeHeights, plazaGround, plazaHeight, plazaSkirt,
+  ROUTE_LIFT_M, buildingGround, buildingSegments, drapePath, floorBases, fromKorea2000, groundOf, nodeHeights, plazaGround, plazaHeight, plazaSkirt,
   routePath3D, terrainBase, terrainMesh, terrainWire, wallCells, wallMesh, type Ground, type PlazaFlat, type PlazaSurface, type RouteRef,
   type Segment3D, type TerrainGrid, type TerrainWall, type WallTriangle,
 } from '../model/terrain3d.ts';
 import { fineGround, plazaFootprints, terrainSurface, type TerrainTile } from '../model/terrainFootprint.ts';
+import { footprintsOfRoads, ribbonEdges, ribbonSkirt, roadPieces, type RibbonPiece, type RoadSegmentJson } from '../model/roadRibbon.ts';
 import type { SlopeLine } from '../model/elevation.ts';
 import { pictogramDataUrl, routePinDataUrl } from './iconUrls.ts';
 import { ELEVATION_COLORS, PLAZA_COLORS, ROUTE_COLORS, ROUTE_PIN_COLORS, WAY_COLORS, type RouteLine } from './layers.ts';
@@ -55,6 +56,14 @@ const PLAZA_LIFT_M = 0;
 const LEGACY_PLAZA_LIFT_M = 0.03;
 /** The plaza's outline floats a little higher still, over its own plane. */
 const PLAZA_OUTLINE_LIFT_M = 0.08;
+/**
+ * 길 리본: the two edge lines float this far (× 높이 과장) over the ribbon so they do not flicker with it. The ribbon itself
+ * has no lift: the relief is pressed CARVE_GAP_M under every piece (I5), and the pieces are drawn in data order.
+ */
+const ROAD_EDGE_LIFT_M = 0.03;
+
+/** How 지형 3D draws the outdoor roads: the solver's corridors as ribbons, as metre-wide paths, or the pixel lines of before. */
+export type RoadRender = 'ribbon' | 'path-meters' | 'path-pixels';
 
 export interface Deck3DInput {
   state: EditState;
@@ -81,6 +90,15 @@ export interface Deck3DInput {
    * coarse cells), the plane drawn at its height. false: the old way (the relief clamped within 0.75 cell, the plane lifted).
    */
   exactFootprints?: boolean;
+  /** 길: the corridors the solver fixed (/terrain roads, solve_report.json roads[]; none from an older server or before a recompute). */
+  roads?: readonly RoadSegmentJson[];
+  /**
+   * 'ribbon': each corridor width_m wide and level across (model/roadRibbon.ts), the relief pressed under it, a skirt on the
+   * fill side. 'path-meters': the corridors as PathLayer lines width_m wide in metres (the same carve). 'path-pixels': the
+   * pixel lines of before. Default: 'ribbon' when there are roads and tiles, else 'path-pixels'. Without roads, without the
+   * relief, or with exactFootprints: false it is always 'path-pixels'.
+   */
+  roadRender?: RoadRender;
 }
 
 interface Slab {
@@ -91,7 +109,7 @@ interface Slab {
 
 export function deckLayers({
   state, scope, grid, walls = [], terrain, buildings, measured, exaggeration: k, routes, slopes, plazas = [], plazaHeights = {},
-  tiles = [], exactFootprints = true,
+  tiles = [], exactFootprints = true, roads = [], roadRender,
 }: Deck3DInput): Layer[] {
   const layers: Layer[] = [];
   // 평지: each plane at (H − the grid's lowest height) × k; paths, buildings and routes stand on it (plazaGround).
@@ -103,7 +121,11 @@ export function deckLayers({
       if (h !== null) flats.push({ id: p.id, rings: p.rings, z: (h - base) * k });
     }
   }
-  const exact = exactFootprints && terrain && grid !== null && flats.length > 0;
+  // 길: the corridors as pieces of ribbon (also the footprints the relief is pressed under, in 'path-meters' too).
+  const render: RoadRender = !terrain || !grid || !exactFootprints || roads.length === 0 ? 'path-pixels'
+    : roadRender ?? (tiles.length > 0 ? 'ribbon' : 'path-pixels');
+  const pieces: RibbonPiece[] = render !== 'path-pixels' && grid ? roadPieces(roads, terrainBase(grid), k) : [];
+  const exact = exactFootprints && terrain && grid !== null && (flats.length > 0 || pieces.length > 0);
   // The ground things stand on: the 1 m tiles where there are some (the exact way), else the coarse relief.
   const bare: Ground = !terrain ? () => 0 : exact ? fineGround(grid, tiles, k) : groundOf(grid, k);
   const ground: Ground = plazaGround(bare, flats);
@@ -112,9 +134,10 @@ export function deckLayers({
   if (terrain && grid) {
     // The thinned cells a wall crosses are left out: the wall's 1 m section is drawn there instead.
     const cut = walls.length > 0 ? wallCells(grid, walls) : undefined;
-    // Exact: the relief pressed under every plaza (never above its plane, I5); the wire stays off the cells drawn from a
-    // tile or pressed (its coarse line would float over them). Old way: the relief clamped to the plane within 0.75 cell.
-    const surface = exact ? terrainSurface(grid, tiles, k, plazaFootprints(flats), cut) : null;
+    // Exact: the relief pressed under every plaza and every piece of ribbon (never above them, I5); the wire stays off the
+    // cells drawn from a tile or pressed (its coarse line would float over them). Old way: the relief clamped to the plane
+    // within 0.75 cell.
+    const surface = exact ? terrainSurface(grid, tiles, k, [...plazaFootprints(flats), ...footprintsOfRoads(pieces)], cut) : null;
     const cells = surface ? surface.cells : terrainMesh(grid, 1, k, cut, flats);
     const wireSkip = surface ? new Set([...(cut ?? []), ...surface.skippedCells, ...surface.carvedCells]) : cut;
     const top = Math.max(1, ...cells.map((c) => c.z));
@@ -170,11 +193,26 @@ export function deckLayers({
   if (terrain) {
     // The outdoor paths and the outline of every ground floor, laid on the ground.
     const outdoorEdges = Object.values(state.edges).filter((e) => state.nodes[e.props.from]?.props.building_id === null && state.nodes[e.props.to]?.props.building_id === null);
-    const paths = outdoorEdges.map((e) => ({ path: drapePath(edgeCoords(state, e), ground), color: rgb(WAY_COLORS[e.props.highway as keyof typeof WAY_COLORS] ?? WAY_COLORS.other) }));
-    layers.push(
-      new PathLayer({ id: 'terrain-paths-casing', data: paths, getPath: (d: (typeof paths)[number]) => d.path, getColor: [255, 255, 255, 230], getWidth: 7, widthUnits: 'pixels', capRounded: true, jointRounded: true }),
-      new PathLayer({ id: 'terrain-paths', data: paths, getPath: (d: (typeof paths)[number]) => d.path, getColor: (d: (typeof paths)[number]) => d.color, getWidth: 4, widthUnits: 'pixels', capRounded: true, jointRounded: true }),
-    );
+    const wayColor = (highway: unknown) => rgb(WAY_COLORS[highway as keyof typeof WAY_COLORS] ?? WAY_COLORS.other);
+    const pixelPaths = (edges: typeof outdoorEdges) => edges.map((e) => ({ path: drapePath(edgeCoords(state, e), ground), color: wayColor(e.props.highway) }));
+    if (render === 'path-pixels') {
+      const paths = pixelPaths(outdoorEdges);
+      layers.push(
+        new PathLayer({ id: 'terrain-paths-casing', data: paths, getPath: (d: (typeof paths)[number]) => d.path, getColor: [255, 255, 255, 230], getWidth: 7, widthUnits: 'pixels', capRounded: true, jointRounded: true }),
+        new PathLayer({ id: 'terrain-paths', data: paths, getPath: (d: (typeof paths)[number]) => d.path, getColor: (d: (typeof paths)[number]) => d.color, getWidth: 4, widthUnits: 'pixels', capRounded: true, jointRounded: true }),
+      );
+    } else {
+      layers.push(...roadLayers(state, roads, pieces, render, bare, terrainBase(grid!), k, wayColor));
+      // An outdoor edge the solver did not fix (drawn after the last recompute, a bridge): the pixel line of before, so it stays in sight.
+      const solved = new Set(roads.map((r) => r.id));
+      const rest = pixelPaths(outdoorEdges.filter((e) => !solved.has(e.id)));
+      if (rest.length > 0) {
+        layers.push(new PathLayer({
+          id: 'road-unsolved', data: rest, getPath: (d: (typeof rest)[number]) => d.path, getColor: (d: (typeof rest)[number]) => d.color,
+          getWidth: 4, widthUnits: 'pixels', capRounded: true, jointRounded: true,
+        }));
+      }
+    }
     const footprints = Object.values(state.buildings).flatMap((b) =>
       (b.props.ground_levels.length > 0 ? b.props.ground_levels : [1]).map((level) => drapePath(outlineOfLevel(b, level)[0] ?? [], ground, 3, 0.3)));
     layers.push(new PathLayer({
@@ -264,6 +302,64 @@ export function deckLayers({
   }
   layers.push(...routeLayers(state, ground, measured, k, mode, routes, slopes));
   return layers;
+}
+
+/**
+ * 길 in 지형 3D from the solver's corridors. 'ribbon': `road-skirt` (the fill side's cliff down to the bare ground),
+ * `road-ribbon` (the pieces, in data order: no z offset between them) and `road-edge` (1 px lines along its sides, so a
+ * road reads from afar). 'path-meters': `terrain-paths` as PathLayer lines width_m wide in metres, flat to the ground
+ * (billboard: false), on the corridors' own heights. Either way the relief under them is pressed (deckLayers).
+ */
+function roadLayers(
+  state: EditState, roads: readonly RoadSegmentJson[], pieces: readonly RibbonPiece[], render: Exclude<RoadRender, 'path-pixels'>,
+  bare: Ground, base: number, k: number, wayColor: (highway: unknown) => RGBA,
+): Layer[] {
+  const colorOf = new Map<string, RGBA>();
+  const color = (edgeId: string): RGBA => {
+    let c = colorOf.get(edgeId);
+    if (!c) {
+      c = wayColor(state.edges[edgeId]?.props.highway);
+      colorOf.set(edgeId, c);
+    }
+    return c;
+  };
+  if (render === 'path-meters') {
+    // Each run of joined segments as one path.
+    const paths: { path: [number, number, number][]; width: number; color: RGBA }[] = [];
+    for (const r of roads) {
+      let path: [number, number, number][] = [];
+      let last: readonly number[] | null = null;
+      for (const s of r.segments) {
+        const joined = last !== null && Math.hypot(s[0] - last[3]!, s[1] - last[4]!) <= 1e-6 && Math.abs(s[2] - last[5]!) <= 1e-9;
+        if (!joined) {
+          if (path.length > 1) paths.push({ path, width: r.width_m, color: color(r.id) });
+          path = [[...fromKorea2000(s[0], s[1]), (s[2] - base) * k]];
+        }
+        path.push([...fromKorea2000(s[3], s[4]), (s[5] - base) * k]);
+        last = s;
+      }
+      if (path.length > 1) paths.push({ path, width: r.width_m, color: color(r.id) });
+    }
+    return [new PathLayer({
+      id: 'terrain-paths', data: paths, getPath: (d: (typeof paths)[number]) => d.path, getColor: (d: (typeof paths)[number]) => d.color,
+      getWidth: (d: (typeof paths)[number]) => d.width, widthUnits: 'meters', billboard: false, capRounded: true, jointRounded: true,
+    })];
+  }
+  const skirts = ribbonSkirt(pieces, bare);
+  const edges = ribbonEdges(pieces, ROAD_EDGE_LIFT_M * k);
+  return [
+    new SolidPolygonLayer({
+      id: 'road-skirt', data: skirts, _full3d: true, filled: true, extruded: false, opacity: 1,
+      getPolygon: (q: (typeof skirts)[number]) => q.polygon, getFillColor: WALL_FACE,
+    }),
+    new SolidPolygonLayer({
+      id: 'road-ribbon', data: pieces, _full3d: true, filled: true, extruded: false, opacity: 1,
+      getPolygon: (p: RibbonPiece) => p.polygon, getFillColor: (p: RibbonPiece) => color(p.edgeId),
+    }),
+    new PathLayer({
+      id: 'road-edge', data: edges, getPath: (l: [number, number, number][]) => l, getColor: [255, 255, 255, 230], getWidth: 1, widthUnits: 'pixels',
+    }),
+  ];
 }
 
 /** A route over the 3D views: a white casing and the profile's colour, drawn over whatever is in front so it stays readable. */

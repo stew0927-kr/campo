@@ -28,6 +28,9 @@ class RasterConfig:
     bbox_pad_m: float = 2.0  # segment bounding box margin
     stair_display: bool = False  # stepped target: z = H_i + floor(t*n)/n * (H_j - H_i)
     min_half_width_cells: float = 0.71  # half width is at least this many cells (coarse grids keep the centre line)
+    per_edge_width: bool = True  # read each edge's width_m (half width = width_m / 2); False: half_width_m everywhere
+    width_min_m: float = 0.5  # edge width_m below this is clamped up to it (logged)
+    width_max_m: float = 20.0  # edge width_m above this is clamped down to it (logged)
 
 
 @dataclass(frozen=True)
@@ -237,7 +240,8 @@ def validate(cfg: SolverConfig) -> list[str]:
 
     r, i, s, b, w = cfg.raster, cfg.island, cfg.shoulder, cfg.building, cfg.wls
     for name, v in (("raster.half_width_m", r.half_width_m), ("raster.soft_ring_m", r.soft_ring_m),
-                    ("raster.bbox_pad_m", r.bbox_pad_m), ("island.area_max_m2", i.area_max_m2),
+                    ("raster.bbox_pad_m", r.bbox_pad_m), ("raster.width_min_m", r.width_min_m),
+                    ("raster.width_max_m", r.width_max_m), ("island.area_max_m2", i.area_max_m2),
                     ("island.radius_max_m", i.radius_max_m), ("island.area_big_m2", i.area_big_m2),
                     ("shoulder.decay_length_m", s.decay_length_m), ("shoulder.decay_min_m", s.decay_min_m),
                     ("shoulder.decay_max_m", s.decay_max_m), ("shoulder.side_slope", s.side_slope),
@@ -260,6 +264,8 @@ def validate(cfg: SolverConfig) -> list[str]:
                     ("wls.ramp_active_sigma_m", w.ramp_active_sigma_m), ("wls.huber_delta", w.huber_delta),
                     ("wls.outlier_ratio", w.outlier_ratio), ("wls.breakline_dem_sigma_factor", w.breakline_dem_sigma_factor)):
         pos(name, v)
+    if r.width_max_m < r.width_min_m:
+        out.append(f"raster.width_max_m must be >= raster.width_min_m (got {r.width_max_m!r} < {r.width_min_m!r})")
     if not 0.0 <= i.kappa <= 0.3:
         out.append(f"island.kappa must be within [0, 0.3] (got {i.kappa!r})")
     for name, v in (("building.up_share_point_below", b.up_share_point_below),

@@ -37,7 +37,7 @@ E(H, r) = Σ_c (H_c − z̄_c)²/σ_c²
 
 가중치 표: flat_exact=변수 병합 / 건물 출입구↔H_1F=변수 병합 / 계단 Δh σ=0.05 m + 0.01·n / 단높이 σ_r=0.015 m(r_0=0.16) / 실측 Δh(건물↔지점) σ_meas=0.02 m / soft_flat σ=0.15 m / 경사로 Δh σ=1.0 m + g_max 상한 / 클러스터 prior σ=0.6~3 m(면적 비례) / 건물 H_1F prior: 하한 H_1F ≥ H_1F⁰ + σ_B(아래 규칙에서 정함) / 단독 노드 prior σ=3 m(계단 중간 5 m).
 
-## 2단계: 폭 2 m 회랑 래스터화
+## 2단계: 회랑 래스터화(길마다 폭 `width_m`, 기본 2 m)
 선분 e=(i,j)에 대해 셀 중심 p를 투영:
 t(p) = clip(((p−P_i)·(P_j−P_i))/‖P_j−P_i‖², 0, 1), d(p) = ‖p − (P_i + t(P_j−P_i))‖, z(p) = (1−t)H_i + tH_j.
 d ≤ w/2 (=1 m)인 셀이 길 셀. 목표고는 t에만 의존 → 폭 방향 수평.
@@ -46,6 +46,11 @@ d ≤ w/2 (=1 m)인 셀이 길 셀. 목표고는 t에만 의존 → 폭 방향 �
 - 계단 표시(옵션): z = H_i + floor(t·n)/n·(H_j − H_i).
 - 1 m 격자 톱니: 1.0 < d ≤ 1.5 셀은 "부분 피복 링". 5단계에서 α(d)=(1.5−d)/0.5 가중치로 목표에 약하게 당김.
 - 성능: 선분별 바운딩 박스(반폭+2 m)만 잘라 numpy 벡터화, best_d 배열로 최근접 갱신.
+- 길마다 폭(feat/solver-edge-width): `campus_corridors`가 길의 `width_m`을 읽어 선분마다 반폭 `Corridors.half_width`(S,)를 싣는다(NaN = `raster.half_width_m`). 범위 밖 폭은 `raster.width_min_m`~`width_max_m`(0.5~20 m)로 자르고 로그. 반폭 하한 `min_half_width_cells`·res는 그대로. `raster.per_edge_width=false`이거나 어느 길에도 `width_m`이 없으면 `half_width=None`이고, 위의 최근접 규칙을 그대로 쓴다(비트 동일).
+- 폭이 다르면 부호 거리 sd = d − hw_e로 고른다: sd가 가장 작은 선분(가장 깊이 안쪽인 회랑)이 이기고(동률은 앞 선분), 길 셀 = sd ≤ 0, 부분 피복 링 = 0 < sd ≤ SOFT_RING, 링 가중치 α = (hw_e + SOFT_RING − d)/SOFT_RING(이긴 선분의 반폭 `RoadRaster.half_width_map`). 폭이 모두 같으면 sd와 d의 순서가 같아 결과가 같다. 그래서 6 m 차도에 붙은 2 m 보도의 중심선이 차도 띠를 잘라먹지 않는다. 보도 칸은 보도 쪽으로 더 깊은 곳(d_차도 − d_보도 ≥ hw_차도 − hw_보도)에서만 보도 높이를 갖는다.
+- 평지 컷(`clip_corridors_to_plazas`)은 조각마다 원래 선분의 반폭을 유지한다. 컷 이후 실제로 래스터에 쓰인 회랑은 `GridResult.corridors_final`이고, `solve_report.json`의 선택 키 `roads[]`로 공개한다(`campo-solve-report/1` 유지, 회랑이 없으면 키 없음):
+  `"roads": [{"id": "<edge id>", "width_m": 2.0, "segments": [[x0, y0, z0, x1, y1, z1], ...]}]` — id 오름차순, 선분 순서 유지, 격자 CRS m·절대 높이 m, 소수 3자리(1 mm). `width_m` = 2 × 선분 반폭(없으면 2 × `raster.half_width_m`).
+- 노드 WLS의 회랑 DEM 표본 `corridor_dem_values`는 전역 반폭을 그대로 쓴다(노드 높이 사전확률용 표본이라 폭이 넓어져도 표본이 조금 늘 뿐이고, 바꾸면 노드 높이가 흔들림: 후속 과제).
 
 ## 건물 1층 대지(Building Pad)
 - 1층 폴리곤을 래스터화(numpy/scipy만)해 pad_B로 두고, pad_B 안 모든 셀을 h = H_1F로 고정(DEM 값은 버림; DSM이면 지붕이 섞여 있음).
@@ -110,7 +115,7 @@ fixed = road ∪ pad ∪ apron(제외 마스크는 별도).
 - 프로토타입 관찰: 적응형 ℓ 없이 어깨 최대 경사 0.50(원 DEM 최대 0.28). 적응형 ℓ 적용 후 재측정 필요.
 
 ## 권장 파라미터 표
-HALF_W 1.0 m / SOFT_RING 0.5 m / A_max 400 m² / R_max 5 m / A_big 3000 m² / κ 0 / ℓ 3 m(적응형 2~8 m) / s_side 0.5 / BAND 15 m / 앞마당 a 1.0 m / s_cut 0.67 / s_fill 0.5 / smooth-min k 0.3 m / α_B 4 / h_step 0.5 m / σ_meas 0.02 m / building_up_share(지점이 아래일 때) 0.95 / building_up_share(지점이 위일 때) 0.80 / CG rtol 1e-6, maxiter 500 / 계단 r_0 0.16 m, σ_r 0.015 m / 경사로 g_max 1/12(무장애), 일반 1/8.
+HALF_W 1.0 m(길마다 `width_m`/2가 우선, `per_edge_width` 켬, 폭 0.5~20 m) / SOFT_RING 0.5 m / A_max 400 m² / R_max 5 m / A_big 3000 m² / κ 0 / ℓ 3 m(적응형 2~8 m) / s_side 0.5 / BAND 15 m / 앞마당 a 1.0 m / s_cut 0.67 / s_fill 0.5 / smooth-min k 0.3 m / α_B 4 / h_step 0.5 m / σ_meas 0.02 m / building_up_share(지점이 아래일 때) 0.95 / building_up_share(지점이 위일 때) 0.80 / CG rtol 1e-6, maxiter 500 / 계단 r_0 0.16 m, σ_r 0.015 m / 경사로 g_max 1/12(무장애), 일반 1/8.
 
 ## 검증 체크리스트
 길 셀 max|h−z|=0 / 평지 클러스터 내부 표준편차 0 / 길 셀 폭 방향 기울기 0 / 아일랜드 max h ≤ 주변 고정 셀 max / 계단 |Δh/n − r_e| ≤ 0.02 m, r_e∈[0.13, 0.19] m / 경사로 |Δh|/L ≤ g_max / 건물 대지·앞마당 내부 h=H_1F / 모든 건물에서 A_bur(H_1F) ≤ A_bur(H_1F⁰) / 실측 |H_1F − h_P − D_meas| ≤ 0.03 m / 4분면 각각에서 건물·지점 이동 방향과 비율이 표와 일치 / 깎기 사면 최대 경사 ≤ s_cut + 0.05, 수직 단차 > h_step 로그 / 어깨 경사 재측정 / WLS 잔차 |r|/σ > 3 간선 목록.

@@ -57,7 +57,7 @@
 - `splitEdgeAt`: 두 조각 모두에서 계산 값을 지운다(구간 전체의 값이었으므로). `flat_exact`, `is_breakline`은 사실이므로 둘 다 유지.
 - `deleteNodes` heal: 계산 값이 달라도 합치기를 막지 않고, 남는 구간에서 지운다.
 
-**길 폭 `width_m`(사람, 선택, 기본 2.0 m, 0.5~20 m, 벗어나면 E19).** 길 폭은 솔버의 회랑(corridor) 폭으로 쓰인다: 솔버 v2는 실외 길을 중심선에서 `width_m / 2`(반폭) 안의 칸을 길 높이로 고정하고, 그 높이는 중심선 위 위치만의 함수라 길 가로 방향 기울기가 0이다. 3D 화면도 같은 폭으로 길을 그린다. 지금 솔버는 전역 `raster.half_width_m`(1.0 m, 곧 폭 2.0 m)을 모든 길에 쓰고, 길마다 `width_m`을 읽는 것은 후속 작업 `feat/solver-edge-width`에서 붙는다(그때까지 `width_m`은 저장·검사·편집기 표시만 된다). 폭은 사실이므로 `splitEdgeAt`이 두 조각에 그대로 남기고, 편집 동작 `setEdgeWidth`만 바꾼다. 길찾기는 폭을 읽지 않는다.
+**길 폭 `width_m`(사람, 선택, 기본 2.0 m, 0.5~20 m, 벗어나면 E19).** 길 폭은 솔버의 회랑(corridor) 폭으로 쓰인다: 솔버 v2는 실외 길을 중심선에서 `width_m / 2`(반폭) 안의 칸을 길 높이로 고정하고, 그 높이는 중심선 위 위치만의 함수라 길 가로 방향 기울기가 0이다. 3D 화면도 같은 폭으로 길을 그린다. 솔버 v2는 길마다 `width_m`(없으면 2.0 m, 곧 전역 `raster.half_width_m` 1.0 m의 두 배)의 반폭으로 회랑을 고정한다. 범위를 벗어난 값은 `raster.width_min_m`~`raster.width_max_m`(0.5~20 m)로 잘라 쓰고 로그에 `edge <id>: width_m <w> clamped to <x>`를 남긴다. 폭이 다른 길이 겹치면 더 깊이 안쪽에 있는 회랑(부호 거리 `d − 반폭`이 작은 쪽)이 그 칸을 가져가 넓은 길이 좁은 길에 잘리지 않는다. 평지 컷 이후 솔버가 실제로 고정한 최종 회랑은 `solve_report.json`의 선택 키 `roads[]`(길 id·`width_m`·선분 `[x0, y0, z0, x1, y1, z1]`, 격자 CRS m·절대 높이 m, 1 mm 반올림)로 공개되고, 3D 화면은 이 값을 그대로 그린다. `--set raster.per_edge_width=false`로 예전 동작(모든 길 2.0 m)으로 되돌릴 수 있고, `width_m`이 하나도 없는 데이터는 예전과 비트 단위로 같다. 노드 높이 사전확률용 회랑 DEM 표본(`corridor_dem_values`)은 아직 전역 반폭을 쓴다(후속 과제). 편집기는 폭을 바꾸거나 지우면 그 구간을 고도 재계산 대상으로 표시한다(`EDGE_INPUTS`에 `width_m`). 폭은 사실이므로 `splitEdgeAt`이 두 조각에 그대로 남기고, 편집 동작 `setEdgeWidth`만 바꾼다. 길찾기는 폭을 읽지 않는다.
 - 지운 값은 다음 재계산이 다시 쓴다(편집이 dirty를 남기므로).
 
 ## 4. 경사 길찾기 (costs.ts, graph.ts, route.ts)

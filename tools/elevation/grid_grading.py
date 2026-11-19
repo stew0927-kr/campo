@@ -171,6 +171,9 @@ class GridResult:
     plaza_id: Optional[np.ndarray] = None  # (H, W) int32 plaza of each held cell, -1 elsewhere (None without plazas)
     plaza_report: list = field(default_factory=list)  # per plaza: id, name, h_m, h_source, cells, cut / fill, ...
     corridors_final: Optional[Corridors] = None  # the corridors rasterised (after the plaza cut): solve_report roads[]
+    # (H, W) bool cells held at a plaza's H around its solid cells (plaza_collar; all False with collar_cells 0, None without
+    # plazas). Not in plaza_id, which keeps the centre rule.
+    plaza_collar: Optional[np.ndarray] = None
 
 
 # ------------------------------------------------------------------ #
@@ -787,6 +790,49 @@ def rasterize_plazas(grid: Grid, plazas: Sequence[Plaza], pad_mask: np.ndarray, 
                        "overlap_pad_cells": overlap_pad, "relief_m": relief,
                        "bbox_xy": [float(allp[:, 0].min()), float(allp[:, 1].min()), float(allp[:, 0].max()), float(allp[:, 1].max())]})
     return PlazaRaster(pid, np.asarray(hs, float), hole, report, log)
+
+
+_EIGHT = np.ones((3, 3), bool)
+
+
+def plaza_collar(plaza_id: np.ndarray, blocked: np.ndarray, k: int) -> np.ndarray:
+    """
+    (H, W) int32 plaza index of each collar cell, -1 elsewhere: the solid plaza cells (plaza_id >= 0, the centre rule)
+    grown k times over the 8 neighbours, through cells that are neither solid (a cell inside another plaza is that
+    plaza's) nor blocked (building pads and hard road cells win over the collar). A plaza hole is not solid, so the
+    collar also runs into a hole (its rim is held at H, the middle stays free). Where the collars of several plazas
+    meet, a cell goes to the plaza whose nearest solid cell centre is closest; on a tie the earlier plaza keeps it.
+
+    Why (the cells are read as a bilinear lattice: their centres are the corners of the quads that corrected_dem
+    consumers such as Grid.sample_bilinear interpolate over): take a point p of the plaza and the quad of the four cell
+    centres around it. The centre of the cell that contains p is one of those four corners, and the four corners are
+    within one cell of each other over the 8 neighbours. So when that cell (or any of the four corners) is in the
+    centre rule mask, k = 1 puts all four corners at H - unless one of them is a building pad, a hard road cell or
+    another plaza, which win on purpose - and the bilinear surface is exactly H at p. The assumption fails only where
+    the plaza is thinner than a cell: a sharp tip at a polygon vertex, or a sliver under one cell wide whose points
+    have no solid cell centre among their four corners. There the solver does not promise a flat quad: the guarantee
+    belongs to the 3D viewer, which carves its terrain mesh under the drawn footprint itself (planned as PR 4,
+    feat/terrain-exact-plaza-3d, of the plaza / road width plan). This collar only keeps corrected_dem visibly flat.
+    """
+    out = np.full(plaza_id.shape, -1, np.int32)
+    if k <= 0 or not (plaza_id >= 0).any():
+        return out
+    H, W = plaza_id.shape
+    free = (plaza_id < 0) & ~blocked
+    best = np.full(plaza_id.shape, np.inf)
+    for i, sl in enumerate(ndimage.find_objects(plaza_id + 1)):
+        if sl is None:
+            continue
+        r0, r1 = max(sl[0].start - k, 0), min(sl[0].stop + k, H)
+        c0, c1 = max(sl[1].start - k, 0), min(sl[1].stop + k, W)
+        win = (slice(r0, r1), slice(c0, c1))
+        own = plaza_id[win] == i
+        reach = ndimage.binary_dilation(own, structure=_EIGHT, iterations=k, mask=own | free[win]) & ~own
+        d = ndimage.distance_transform_edt(~own)
+        take = reach & (d < best[win])
+        out[win][take] = i
+        best[win][take] = d[take]
+    return out
 
 
 def _point_in_rings(rings: Sequence[np.ndarray], x: float, y: float) -> bool:
@@ -1420,10 +1466,16 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
     h_fixed[pad] = pr.terrace_h[pr.terrace_of[pad]]  # one plane per terrace (the pad plane when there are no terraces)
     fixed = (pad | road.road | apron) & valid
     plaza_cells = np.zeros_like(valid)
-    if pz is not None:  # priority: building pad > plaza > road > apron (pad cells were never plaza cells)
+    collar_id = None
+    collar = np.zeros_like(valid)
+    if pz is not None:  # priority: building pad > plaza > road > plaza collar > apron (pad cells were never plaza cells)
         plaza_cells = (pz.id >= 0) & ~pad
         h_fixed[plaza_cells] = pz.h[pz.id[plaza_cells]]
         fixed |= plaza_cells & valid
+        collar_id = plaza_collar(np.where(plaza_cells, pz.id, -1), pad | road.road, cfg.plaza.collar_cells)
+        collar = collar_id >= 0
+        h_fixed[collar] = pz.h[collar_id[collar]]  # over the apron; h = h_fixed below keeps the same bits
+        fixed |= collar & valid
     owner = np.where(pad, pr.terrace_of, owner)
     wall_e, wall_s = terrace_walls(owner, pr.terrace_pad)
     n_steps, max_step, worst = _vertical_steps(h_fixed, fixed, grid, cfg.building.step_max_m, (~wall_e, ~wall_s))
@@ -1534,10 +1586,12 @@ def grade_grid(grid: Grid, corridors: Corridors, pads: Sequence[Pad], cfg: Solve
     plaza_id = None
     if pz is not None:  # only with plazas, so the stats of a run without them stay as they were
         plaza_report = measure_plazas(pz, h, dem, res)
+        n_collar = np.bincount(collar_id[collar], minlength=len(pz.report))
+        plaza_report = [{**r, "collar_cells": int(n_collar[k])} for k, r in enumerate(plaza_report)]
         plaza_id = np.where(plaza_cells, pz.id, -1).astype(np.int32)
         stats.update(plazas=float(len(pz.report)), plaza_cells=float(plaza_cells.sum()))
     timings = {"rasterize": t_raster, "buildings": t_build, "islands": t_island, "assemble": info["assemble"],
                "cg": info["cg"], "total": total}
     return GridResult(h, residual, road.road, pr.pad_id, apron & ~pad, island, mid, unknown, stats, timings, log,
                       pr.terrace_of, pr.terrace_h, t_info, walls if len(walls) else None, wall_report,
-                      plaza_id, plaza_report, corridors_final=corridors)
+                      plaza_id, plaza_report, corridors_final=corridors, plaza_collar=collar if pz is not None else None)

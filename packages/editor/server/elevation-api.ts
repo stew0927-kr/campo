@@ -5,8 +5,10 @@
 //        → { derived, mode: 'solved' | 'existing', log }
 //   DELETE /api/elevation/:id/edges/:edgeId  one Δh edge out of store.json (core removeEdge; both nodes stay)
 //        → { written: true, store: text, removed: { edgeId, from, to } }; 404 for an unknown campus store or edge
-//   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null, walls: TerrainWall[] }  solve/corrected_dem first, else dem.json;
-//        walls: 1 m sections across the store's break lines with lowSide and dropM > 0 (server/terrain.ts terrainWalls)
+//   GET  /api/elevation/:id/terrain    → { grid: TerrainGrid | null, walls: TerrainWall[], plazaHeights, tiles, roads }
+//        solve/corrected_dem first, else dem.json; walls: 1 m sections across the store's break lines with lowSide and
+//        dropM > 0 (server/terrain.ts terrainWalls); tiles: the grid again at 1 m round each plaza of solve_report.json
+//        (terrainTiles); roads: [] (the solver's corridors, drawn from a later change)
 // Per campus folder <elevationDir>/<id>/ (default derived/<id>/, git-ignored):
 //   store.json      ElevationStore (copy the survey app's elevation_store.json here)
 //   dem.json        campo-grid DEM meta (dem_prep.py output, read only). CAMPO_ELEVATION_DEM overrides it.
@@ -219,7 +221,7 @@ export function createElevationApi(opts: ElevationApiOptions) {
         const report = await readIfExists(join(paths.solve, 'solve_report.json')).catch(() => null);
         if (await exists(corrected)) return send(res, 200, await readTerrain(corrected, 'corrected', store, undefined, report));
         if (await exists(paths.dem)) return send(res, 200, await readTerrain(paths.dem, 'dem', store, undefined, report));
-        return send(res, 200, { grid: null, walls: [] });
+        return send(res, 200, { grid: null, walls: [] }); // no grid: no tiles or roads either (the editor reads them as [])
       }
       if (m[2] === '/store' && req.method === 'PUT') {
         const body = JSON.parse(await readBody(req)) as { text?: unknown };

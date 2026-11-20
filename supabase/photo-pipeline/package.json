@@ -1,0 +1,28 @@
+{
+  "name": "@campo/photo-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Field survey photos -> 1280px/128px WebP -> Supabase Storage (campus-photos) + campus_photos rows. Owner: D.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "upload:photos": "tsx src/upload-photos.ts",
+    "make-sample": "tsx src/make-sample.ts",
+    "clean-sample": "tsx src/clean-sample.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.119.2",
+    "dotenv": "18.0.10",
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.1.1"
+  }
+}

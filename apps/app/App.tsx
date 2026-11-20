@@ -1,38 +1,19 @@
-// 캠포 사용자 앱의 유일한 화면. 5탭 UI와 네비게이션은 프론트 담당이 붙인다(그래서 여기는 비워 두었다).
-// 지금은 캠퍼스 데이터가 정상적으로 읽히는지만 보여 주고, 새 화면을 만들 때 이 파일을 출발점으로 쓰면 된다.
-// 사용법과 훅 계약: docs/FRONTEND_HANDOFF.md
+import { useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { useCampusData } from './src/hooks/useCampusData.ts';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { MapScreen } from './src/features/map/MapScreen.tsx';
 
+const TABS = ['지도·길찾기', '논술', '축제', '학교행사', '내정보'] as const;
 export default function App() {
-  const campus = useCampusData();
-
-  const status =
-    campus.status === 'error'
-      ? (campus.error ?? '캠퍼스 데이터를 읽지 못했습니다.')
-      : campus.campus === null
-        ? '캠퍼스 데이터를 읽는 중입니다.'
-        : `${campus.campus.name} · 지점 ${campus.counts.nodes} · 구간 ${campus.counts.edges} · 건물 ${campus.counts.buildings}`;
-
-  return (
-    <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <View style={styles.screen}>
-        <Text style={styles.title}>캠포</Text>
-        <Text style={styles.status}>{status}</Text>
-        {campus.issues.length > 0 && <Text style={styles.issue}>읽지 못한 항목 {campus.issues.length}개</Text>}
-        <Text style={styles.hint}>다섯 탭 화면은 여기에 붙입니다. docs/FRONTEND_HANDOFF.md를 보세요.</Text>
-      </View>
-    </SafeAreaProvider>
-  );
+  const [tab, setTab] = useState<(typeof TABS)[number]>('지도·길찾기');
+  return <SafeAreaProvider><StatusBar style="dark" /><SafeAreaView style={styles.screen}>
+    <View style={[styles.content, tab !== '지도·길찾기' && styles.hidden]}><MapScreen /></View>
+    {tab !== '지도·길찾기' && <View style={styles.placeholder}><Text style={styles.title}>{tab}</Text><Text style={styles.hint}>아직 준비 중인 화면입니다.</Text><Text style={styles.hint}>지도·길찾기 탭에서 캠퍼스 길을 찾아보세요.</Text></View>}
+    <View style={styles.tabs} accessibilityRole="tablist">{TABS.map((name, index) => <Pressable key={name} accessibilityRole="tab" accessibilityState={{ selected: tab === name }} onPress={() => setTab(name)} style={styles.tab}><Text style={[styles.icon, tab === name && styles.selected]}>{['⌖', '文', '☆', '▦', '○'][index]}</Text><Text style={[styles.label, tab === name && styles.selected]}>{name}</Text></Pressable>)}</View>
+  </SafeAreaView></SafeAreaProvider>;
 }
-
 const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24, backgroundColor: '#FFFFFF' },
-  title: { fontSize: 32, fontWeight: '700', color: '#1A1A1A' },
-  status: { fontSize: 15, color: '#3C3C3C', textAlign: 'center' },
-  issue: { fontSize: 13, color: '#B45309' },
-  hint: { fontSize: 13, color: '#8A8A8A', textAlign: 'center' },
+  screen: { flex: 1, backgroundColor: '#FFFFFF' }, content: { flex: 1 }, hidden: { display: 'none' }, placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 }, title: { fontSize: 24, fontWeight: '700', color: '#152C47' }, hint: { color: '#53647A', textAlign: 'center' },
+  tabs: { flexDirection: 'row', borderTopWidth: 1, borderColor: '#E7EDF5', backgroundColor: '#FFFFFF' }, tab: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 62, gap: 5 }, icon: { color: '#79899C', fontSize: 22 }, label: { color: '#65758B', fontSize: 10 }, selected: { color: '#1465E8', fontWeight: '700' },
 });

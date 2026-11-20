@@ -38,7 +38,9 @@ async function scenario(name, run, viewport = { width: 390, height: 844 }, sourc
       if (table === 'campus_photos') assert.equal(endpoint.searchParams.get('campus_id'), 'eq.hanyang-seoul');
       if (source === 'offline') { await route.abort('failed'); return; }
       if (source === 'photo-error' && table === 'campus_photos') { await route.fulfill({ status: 503, body: '{}' }); return; }
-      await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(source === 'empty' ? [] : LIVE_ROWS[table]) });
+      const rows = source === 'empty' ? [] : source === 'bad-node' && table === 'essay_sessions'
+        ? LIVE_ROWS[table].map((row) => ({ ...row, destination_node_id: 'missing-campus-node' })) : LIVE_ROWS[table];
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(rows) });
     });
     await page.goto(source ? `${url}?source=${source}` : url);
     await text(page, '어디로 가시나요?').waitFor();
@@ -174,6 +176,33 @@ try {
     await text(p, '사진 서버에 연결하지 못했습니다').waitFor(); await tab(p, '논술').click(); await text(p, '검사 서버 논술').waitFor();
     await text(p, '서버 공개 데이터를 표시합니다').waitFor();
   }, undefined, 'photo-error');
+  await scenario('cross-tab destination clears a pending map selection', async (p) => {
+    await button(p, '지도에서 출발 선택').click(); await button(p, '지도 선택 취소').waitFor();
+    await tab(p, '논술').click(); await button(p, '고사장 상세 보기').first().click();
+    await handoffSearch(p, '가상 시험관 가상 301호');
+    assert.equal(await button(p, '지도 선택 취소').count(), 0);
+    await button(p, '출발: 검색해서 선택해 주세요').waitFor();
+    await button(p, '도착: 검색해서 선택해 주세요').waitFor();
+    assert.equal(await button(p, '길찾기').isDisabled(), true);
+  });
+  await scenario('nonexistent server destination never becomes an engine endpoint', async (p) => {
+    await tab(p, '논술').click(); await button(p, '고사장 상세 보기').click();
+    await handoffSearch(p, '검사 고사관 101호');
+    await text(p, '연결된 지도 지점이 아직 없습니다').waitFor();
+    await button(p, '도착: 검색해서 선택해 주세요').waitFor();
+    assert.equal(await button(p, '길찾기').isDisabled(), true);
+  }, undefined, 'bad-node');
+  await scenario('out-of-campus route failure shows guidance without a stale route', async (p) => {
+    await button(p, '야외 가상 경로 시험').click();
+    await button(p, '도착: 검색해서 선택해 주세요').click();
+    await p.getByRole('dialog').getByRole('textbox').fill('결과없는장소');
+    await text(p, '검색 결과가 없습니다').waitFor();
+    await p.getByRole('dialog').getByRole('textbox').fill('가상 시험 지점 3');
+    await p.getByRole('dialog').getByRole('button', { name: /가상 시험 지점 3/ }).click();
+    await button(p, '지도에서 출발 선택').click(); await button(p, '검사: 캠퍼스 밖 선택').click();
+    await button(p, '길찾기').click(); await text(p, '걷는 길이 없는 위치입니다').waitFor();
+    assert.equal(await text(p, '검사 경로 좌표').count(), 0);
+  });
   for (const size of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 1024, height: 1366 }, { width: 320, height: 568, fontScale: 1.6 }]) {
     await scenario(`layout ${size.width}x${size.height} font ${size.fontScale ?? 1}`, async (p) => {
       if (size.fontScale) await p.evaluate((scale) => { window.__campoFontScale = scale; window.dispatchEvent(new Event('resize')); }, size.fontScale);

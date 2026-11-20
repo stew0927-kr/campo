@@ -82,7 +82,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (!intent) return;
     // An event's real destination must never resolve against the developer fixture.
     if (demo !== 'none') { switchData('none'); return; }
-    clearGps(); setTracking(false); setRequest(null); setBuildingId(null); setLevel(null); setFlow(null);
+    clearGps(); setTracking(false); setRequest(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null);
     const target = intent.destination;
     const { destination: resolved, start, missingFlow } = planIntent(data.runtime, target);
     if (resolved.kind === 'selected' && !missingFlow) {

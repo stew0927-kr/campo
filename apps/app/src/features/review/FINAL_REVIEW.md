@@ -1,5 +1,9 @@
 # A조원 최종 점검 — 구현과 검증 범위
 
+> 이 문서는 Supabase 연결 전의 점검 기록입니다. 현재 Push·PR 전 검사 결과는
+> [PRE_PR_QUALITY.md](./PRE_PR_QUALITY.md), 이후 추가된 공개 연결은
+> [CONNECTION.md](../content/CONNECTION.md)를 기준으로 확인해 주세요.
+
 기준 커밋 `1a3df76` 이후 최종 보완입니다. A-5 PC 편집기, 길찾기 엔진, 실제 캠퍼스 데이터, Supabase 서버, 계약/Hook 및 공용 설정은 변경하지 않습니다. 모든 작업은 기존 `feat/app-map`에서 로컬 커밋으로만 저장합니다.
 
 ## ① 완료 — 데이터 없이 구현하고 자동 검증한 업무

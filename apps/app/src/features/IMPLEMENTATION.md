@@ -81,3 +81,7 @@ apps/app/test/appNavigation.test.ts
 apps/app/test/appScreens.test.ts
 apps/app/test/appSensor.test.ts
 ```
+
+## 최종 재점검 보완
+
+2026-11-20 추가 점검: 반응형·큰 글씨·화면 순서·상세 유지·뒤로가기·교환/초기화·선택 취소·학교행사 기간/공지/원문·모의 HTTP 읽기 준비를 보완했습니다. 최신 완료/미검증/외부 대기 구분은 `review/FINAL_REVIEW.md`, 전체 와이어프레임과 버튼 흐름은 `review/SCREEN_FLOW.md`를 보세요. 기존의 정적 렌더링 검사 외에 테스트 전용 DOM 어댑터에서 실제 화면 버튼·검색·필터를 누르는 검수를 추가했으며 Android 검증은 아닙니다.

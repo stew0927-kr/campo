@@ -10,7 +10,7 @@ const PROFILES: { mode: DefaultMode; title: string; description: string }[] = [
   { mode: 'step_free', title: '계단 회피', description: '계단을 되도록 피합니다. 피할 길이 없으면 기존 엔진의 대체 안내를 보여 줍니다.' },
   { mode: 'wheelchair', title: '휠체어 보행', description: '계단을 지나지 않는 길만 안내합니다. 통행 가능한 경로가 없을 수 있으며 현장 확인이 필요합니다.' },
 ];
-export function MeScreen() {
+export function MeScreen({ active = true }: { active?: boolean }) {
   const { state, dispatch } = useAppState();
   const [permission, setPermission] = useState('확인 중');
   const [message, setMessage] = useState<string | null>(null);
@@ -20,7 +20,7 @@ export function MeScreen() {
   }, () => { if (alive) setPermission('이 환경에서는 확인할 수 없습니다'); }); return () => { alive = false; }; }, []);
   const kindLabel = (kind: string) => kind === 'place' ? '장소' : kind === 'stall' ? '부스' : kind === 'event' ? '행사' : '기타';
   const favorites = state.favorites.filter((item) => category === '전체' || kindLabel(item.kind) === category);
-  return <Page title="내정보" subtitle="로그인 없이 보행 방식과 즐겨찾기를 관리합니다.">
+  return <Page resetKey={String(active)} title="내정보" subtitle="로그인 없이 보행 방식과 즐겨찾기를 관리합니다.">
     <Notice>설정·즐겨찾기는 앱을 실행한 동안만 기억합니다. 앱을 완전히 종료하면 초기화됩니다.</Notice>
     <Card><Heading>기본 이동 방식</Heading><Body>변경하면 지도 탭의 이동 방식에 바로 반영됩니다. 지도에서 다른 방식을 선택할 수도 있습니다.</Body>
       {PROFILES.map((profile) => <Card key={profile.mode}><Heading>{state.defaultMode === profile.mode ? '✓ ' : ''}{profile.title}</Heading><Body>{profile.description}</Body><Button secondary disabled={state.defaultMode === profile.mode} title={state.defaultMode === profile.mode ? '현재 기본값입니다' : `${profile.title}을 기본으로 설정`} onPress={() => dispatch({ type: 'mode', mode: profile.mode })} /></Card>)}

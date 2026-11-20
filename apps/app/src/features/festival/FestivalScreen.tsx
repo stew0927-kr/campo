@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { selectStalls } from '../content/selectors.ts';
+import { useScreenBack } from '../../ui/useScreenBack.ts';
+import { useCallback, useState } from 'react';
 import { TextInput } from 'react-native';
 import type { ContentData, StallCategory } from '../content/types.ts';
 import { CONTENT_NOTICE } from '../content/mock.ts';
@@ -9,7 +11,7 @@ import { Body, Button, Card, Chips, Empty, Heading, Notice, Page, s } from '../.
 import { BoothMap } from './BoothMap.tsx';
 import { flowDestination, hasFlowNodes, type StallFlow } from './flow.ts';
 const FLOW_LABEL: Record<StallFlow, string> = { enter: '입장 동선', queue: '대기 동선', exit: '퇴장 동선' };
-export function FestivalScreen({ data }: { data: ContentData }) {
+export function FestivalScreen({ data, active = true }: { data: ContentData; active?: boolean }) {
   const { dispatch } = useAppState();
   const festival = data.festivals[0];
   const days = data.days.filter((d) => d.festivalId === festival?.id).sort((a, b) => a.dayDate.localeCompare(b.dayDate));
@@ -19,11 +21,12 @@ export function FestivalScreen({ data }: { data: ContentData }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [performanceId, setPerformanceId] = useState<string | null>(null);
   const currentDay = days.find((d) => d.id === dayId) ?? days[0];
-  const stalls = data.stalls.filter((row) => row.dayId === currentDay?.id && (category === '전체' || category === row.category) && row.name.includes(query.trim())).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'ko'));
+  const stalls = selectStalls(data, currentDay?.id, category, query);
+  useScreenBack(active && (selectedId !== null || performanceId !== null), useCallback(() => { setSelectedId(null); setPerformanceId(null); }, []));
   const performances = data.performances.filter((row) => row.dayId === currentDay?.id).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
   const selected = data.stalls.find((row) => row.id === selectedId);
   const selectedPerformance = performances.find((row) => row.id === performanceId);
-  return <Page title="축제" subtitle={festival?.name ?? '공개된 축제가 없습니다.'}>
+  return <Page resetKey={`${active}:${selectedId ?? performanceId}`} title="축제" subtitle={festival?.name ?? '공개된 축제가 없습니다.'}>
     <Notice>{CONTENT_NOTICE} 지도 핀·입장·대기·퇴장 경로는 실제 지점이 연결된 경우에만 표시합니다.</Notice>
     {festival ? <>
       <Card><Heading>{festival.name}</Heading><Body>{festival.startsOn}–{festival.endsOn}</Body><Body>{festival.summary}</Body></Card>

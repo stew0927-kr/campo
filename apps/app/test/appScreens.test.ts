@@ -14,6 +14,7 @@ vi.mock('react-native', async () => {
     TextInput: ({ placeholder }: { placeholder?: string }) => createElement('input', { placeholder }),
     Modal: ({ visible, children }: { visible: boolean; children: ReactNode }) => visible ? children : null,
     FlatList: ({ data, renderItem, ListEmptyComponent }: { data: unknown[]; renderItem: (arg: { item: unknown }) => ReactNode; ListEmptyComponent: ReactNode }) => createElement('div', null, data.length ? data.map((item, i) => createElement('div', { key: i }, renderItem({ item }))) : ListEmptyComponent),
+    useWindowDimensions: () => ({ width: 390, height: 844, fontScale: 1, scale: 1 }),
     ActivityIndicator: box, StyleSheet: { create: (value: unknown) => value }, Platform: { OS: 'android' },
     AppState: { addEventListener: () => ({ remove() {} }) }, Linking: { openURL: vi.fn(), openSettings: vi.fn() },
   };

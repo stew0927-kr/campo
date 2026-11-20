@@ -1,14 +1,17 @@
 import { getBuildingOutlineForLevel } from '@campo/core';
 import { Camera, GeoJSONSource, Layer, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type { FeatureCollection, Point } from 'geojson';
 import { OSM_ATTRIBUTION, OSM_RASTER_STYLE } from '../../map/style.ts';
+import { screenLayout } from '../../ui/layout.ts';
 import { routeBounds, routeLine } from './model.ts';
 import { floorLines } from './indoor.ts';
 import { RoutePhotoMarkers } from '../../photos/RoutePhotoMarkers.tsx';
 import type { MapProps } from './mapTypes.ts';
 export function CampusMap({ center, label, route, from, to, places, graph, buildingId, level, position, flow, onPoint, onPlace, stepPhotos = [], onOpenPhoto }: MapProps) {
+  const window = useWindowDimensions();
+  const layout = screenLayout(window.width, window.height, window.fontScale);
   const camera = useRef<CameraRef>(null);
   const [loaded, setLoaded] = useState(false);
   const [zoom, setZoom] = useState(16);
@@ -29,7 +32,7 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
   const outline = building ? { type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: getBuildingOutlineForLevel(building, level) } } : null;
   const color = flow === 'queue' ? '#BA6700' : flow === 'exit' ? '#596579' : '#1465E8';
   const visible = (place: MapProps['from']) => place && (buildingId === null || place.buildingId === buildingId && place.level === level);
-  return <View style={styles.frame}>
+  return <View style={[styles.frame, { height: layout.mapHeight }]}>
     <Map style={styles.map} mapStyle={OSM_RASTER_STYLE}
       onRegionDidChange={(event) => setZoom(event.nativeEvent.zoom)}
       onPress={(event) => { const [lng, lat] = event.nativeEvent.lngLat; onPoint({ lng, lat }); }}

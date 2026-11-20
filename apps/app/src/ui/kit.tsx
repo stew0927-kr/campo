@@ -1,8 +1,18 @@
-import { useState, type ReactNode } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { screenLayout } from './layout.ts';
 import { theme as t } from './theme.ts';
-export function Page({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
-  return <ScrollView style={s.page} contentContainerStyle={s.pageContent} keyboardShouldPersistTaps="handled"><Text accessibilityRole="header" style={s.title}>{title}</Text>{subtitle && <Text style={s.body}>{subtitle}</Text>}{children}</ScrollView>;
+export function Page({ title, subtitle, children, resetKey }: { title: string; subtitle?: string; children: ReactNode; resetKey?: string | number | null }) {
+  const window = useWindowDimensions();
+  const layout = screenLayout(window.width, window.height, window.fontScale);
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  useEffect(() => { scroll.current?.scrollTo({ y: 0, animated: false }); }, [resetKey]);
+  return <ScrollView ref={scroll} style={s.page} contentContainerStyle={[s.pageContent, { padding: layout.padding, maxWidth: layout.maxContentWidth, width: '100%', alignSelf: 'center' }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustKeyboardInsets nestedScrollEnabled><Text accessibilityRole="header" style={s.title}>{title}</Text>{subtitle && <Text style={s.body}>{subtitle}</Text>}{children}</ScrollView>;
+}
+export function ActionRow({ children }: { children: ReactNode }) {
+  const window = useWindowDimensions();
+  const layout = screenLayout(window.width, window.height, window.fontScale);
+  return <View style={{ flexDirection: layout.stackActions ? 'column' : 'row', gap: 8, alignItems: 'stretch' }}>{children}</View>;
 }
 export function Card({ children }: { children: ReactNode }) { return <View style={s.card}>{children}</View>; }
 export function Heading({ children }: { children: ReactNode }) { return <Text accessibilityRole="header" style={s.heading}>{children}</Text>; }
@@ -27,7 +37,7 @@ export const s = StyleSheet.create({
   page: { flex: 1, backgroundColor: t.color.bg }, pageContent: { padding: t.space.md, gap: 14, paddingBottom: 32 }, title: { fontSize: 26, fontWeight: '800', color: t.color.text }, heading: { fontSize: 18, fontWeight: '700', color: t.color.text },
   body: { fontSize: 14, lineHeight: 22, color: t.color.muted, flexShrink: 1 }, card: { borderRadius: t.radius, backgroundColor: t.color.surface, padding: 16, gap: 12, borderWidth: 1, borderColor: t.color.border },
   notice: { padding: 12, borderRadius: 10, backgroundColor: t.color.warningBg }, warning: { fontSize: 13, lineHeight: 21, color: t.color.warning },
-  button: { minHeight: 46, padding: 12, borderRadius: 10, backgroundColor: t.color.primary, alignItems: 'center', justifyContent: 'center' }, secondary: { backgroundColor: t.color.soft }, buttonText: { color: 'white', fontSize: 14, fontWeight: '700', textAlign: 'center' }, link: { color: t.color.primary, fontSize: 13, fontWeight: '700' },
+  button: { minHeight: 46, padding: 12, borderRadius: 10, backgroundColor: t.color.primary, alignItems: 'center', justifyContent: 'center', minWidth: 0 }, secondary: { backgroundColor: t.color.soft }, buttonText: { color: 'white', fontSize: 14, fontWeight: '700', textAlign: 'center', flexShrink: 1, lineHeight: 22 }, link: { color: t.color.primary, fontSize: 13, fontWeight: '700' },
   chips: { gap: 8, paddingVertical: 4 }, chip: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderRadius: 22, borderWidth: 1, borderColor: t.color.border, backgroundColor: 'white' }, selected: { backgroundColor: t.color.soft, borderColor: t.color.primary },
-  input: { minHeight: 48, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: t.color.border, backgroundColor: 'white', fontSize: 15, color: t.color.text }, check: { paddingVertical: 10, minHeight: 44 },
+  input: { minHeight: 48, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: t.color.border, backgroundColor: 'white', fontSize: 15, color: t.color.text, minWidth: 0 }, check: { paddingVertical: 10, minHeight: 44 },
 });

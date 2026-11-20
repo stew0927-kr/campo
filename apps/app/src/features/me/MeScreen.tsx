@@ -10,7 +10,7 @@ const PROFILES: { mode: DefaultMode; title: string; description: string }[] = [
   { mode: 'step_free', title: '계단 회피', description: '계단을 되도록 피합니다. 피할 길이 없으면 기존 엔진의 대체 안내를 보여 줍니다.' },
   { mode: 'wheelchair', title: '휠체어 보행', description: '계단을 지나지 않는 길만 안내합니다. 통행 가능한 경로가 없을 수 있으며 현장 확인이 필요합니다.' },
 ];
-export function MeScreen({ active = true }: { active?: boolean }) {
+export function MeScreen({ active = true, contentMode = 'demo' }: { active?: boolean; contentMode?: 'demo' | 'live' }) {
   const { state, dispatch } = useAppState();
   const [permission, setPermission] = useState('확인 중');
   const [message, setMessage] = useState<string | null>(null);
@@ -29,6 +29,6 @@ export function MeScreen({ active = true }: { active?: boolean }) {
     {favorites.length === 0 && <Empty message="아직 담은 항목이 없습니다. 지도 장소나 부스·행사 상세에서 즐겨찾기를 추가해 주세요." />}
     {favorites.map((item) => <Card key={item.key}><Heading>{item.name}</Heading><Body>{kindLabel(item.kind)}{item.demo ? ' · 시연용 정보' : ''}</Body><Button title="여기까지 길찾기" onPress={() => dispatch({ type: 'navigate', destination: item })} /><Button secondary title="즐겨찾기에서 삭제" onPress={() => dispatch({ type: 'favorite', destination: item })} /></Card>)}
     <Card><Heading>위치·센서 권한</Heading><Body>위치 권한: {permission}</Body><Body>GPS가 없어도 수동 출발·목적지 선택은 가능합니다. 지도에서 안내를 시작할 때만 위치를 요청하며, 기압계가 없는 기기에서는 층 추정이 제한됩니다. 앱이 백그라운드로 가면 추적을 멈춥니다.</Body><Button secondary title="기기 앱 설정 열기" onPress={() => { void Linking.openSettings().catch(() => setMessage('기기 설정을 열지 못했습니다. 휴대전화의 설정 앱에서 권한을 확인해 주세요.')); }} />{message && <Notice>{message}</Notice>}</Card>
-    <AppInfoScreen />
+    <AppInfoScreen contentMode={contentMode} />
   </Page>;
 }

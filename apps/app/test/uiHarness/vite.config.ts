@@ -6,6 +6,7 @@ const rootModule = (name: string) => fileURLToPath(new URL(`../../../../node_mod
 export default defineConfig({
   root: local('./'), plugins: [react()], define: { __DEV__: true },
   resolve: { alias: [
+    { find: /.*\/configured\.ts$/, replacement: local('./connection.ts') },
     { find: /^react$/, replacement: rootModule('react/index.js') },
     { find: /^react\/jsx-runtime$/, replacement: rootModule('react/jsx-runtime.js') },
     { find: /^react-native$/, replacement: local('./native.tsx') },

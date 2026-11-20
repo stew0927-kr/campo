@@ -24,7 +24,7 @@ import { useSensorFixes } from './useSensorFixes.ts';
 
 type Field = 'from' | 'to';
 const GPS_MODE_LABEL = { OUTDOOR: '실외', APPROACHING: '입구 근처', PORTAL: '출입구 전환', INDOOR: '실내', OFF_NETWORK_SUSPECT: '경로 밖 의심' } as const;
-export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG }: { active?: boolean; photoCatalog?: PhotoCatalog }) {
+export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, photoNotice = '현장 사진은 공급 데이터 연결 대기 중입니다.' }: { active?: boolean; photoCatalog?: PhotoCatalog; photoNotice?: string }) {
   const window = useWindowDimensions();
   const layout = screenLayout(window.width, window.height, window.fontScale);
   const { state, dispatch } = useAppState();
@@ -49,8 +49,9 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG }:
   const result = useCampusRoute(data.runtime, request);
   const route = result.route;
   const [photoIndex, setPhotoIndex] = useState<number | null>(null);
-  const stepPhotos = useRoutePhotos(route, photoCatalog);
-  const photoPages = useMemo(() => photoViewerPages(route, stepPhotos, photoCatalog), [route, stepPhotos, photoCatalog]);
+  const effectiveCatalog = demo === 'none' ? photoCatalog : EMPTY_PHOTO_CATALOG;
+  const stepPhotos = useRoutePhotos(route, effectiveCatalog);
+  const photoPages = useMemo(() => photoViewerPages(route, stepPhotos, effectiveCatalog), [route, stepPhotos, effectiveCatalog]);
   useEffect(() => setPhotoIndex(null), [route]);
   const gps = useGpsMatcher(data.network, { routeNodeIds: route?.nodeIds ?? null });
   const stopTracking = useCallback(() => setTracking(false), []);
@@ -133,6 +134,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG }:
       {data.status === 'error' && <Card><Notice>{data.error}</Notice><Button title="데이터 다시 읽기" onPress={data.reload} /></Card>}
       {data.status === 'ready' && data.counts.edges === 0 && <Notice>실제 캠퍼스 길 데이터가 아직 없습니다. C조원 데이터 연결 후 실제 길찾기를 이용할 수 있습니다.</Notice>}
       {data.issues.length > 0 && <Notice>{data.issues.join('\n')}</Notice>}
+      {demo === 'none' && <Body>{photoNotice}</Body>}
       <MapCanvas center={data.campus?.center ?? { lat: 37.5572, lng: 127.045 }} label={demo !== 'none' ? '가상 시험 캠퍼스' : building?.name ?? '한양대학교 서울캠퍼스'} route={route} from={from} to={to} places={scopePlaces} graph={data.graph} buildingId={buildingId} level={level} position={sensors.running ? gps.position : null} flow={flow} stepPhotos={stepPhotos} onOpenPhoto={setPhotoIndex}
         onPoint={(point) => { if (!mapPick) return; if (buildingId) { setMessage('실내에서는 등록된 지점을 선택해 주세요.'); return; } choose(pointPlace(point, '지도에서 선택한 위치'), mapPick); }}
         onPlace={(place) => choose(place, mapPick ?? 'to')} />
@@ -173,7 +175,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG }:
           {route.floorChanges.map((item, i) => <Body key={i}>{item.label}</Body>)}
           {route.steps.map((step, i) => <Body key={i}>{i + 1}. {step.text}</Body>)}
           {route.distanceM === 0 && <Body>출발지와 목적지가 같습니다.</Body>}
-          {stepPhotos.some((step) => step.photo !== null) ? <Button secondary title="사진으로 이동 안내 보기" onPress={() => setPhotoIndex(0)} /> : <Body>현장 사진은 공급 데이터 연결 대기 중입니다. 현재는 문구와 지도로 안내합니다.</Body>}
+          {stepPhotos.some((step) => step.photo !== null) ? <Button secondary title="사진으로 이동 안내 보기" onPress={() => setPhotoIndex(0)} /> : <Body>{demo === 'none' ? photoNotice : '가상 경로 시험에서는 서버 사진을 사용하지 않습니다.'} 현재는 문구와 지도로 안내합니다.</Body>}
         </> : result.status === 'idle' && <Body>출발지와 목적지를 선택하고 길찾기를 눌러 주세요.</Body>}
       </Card>
       {demo === 'none' && <Card><Heading>현재 위치 안내</Heading><Body>위치는 안내를 시작한 동안만 사용하며 앱에서 저장하지 않습니다. 실내 층 추정은 기기·데이터 상태에 따라 부정확할 수 있습니다. 실내 재탐색은 정확한 지점을 수동 선택해 주세요.</Body>

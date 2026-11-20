@@ -2,7 +2,7 @@ import { contentFromRows, type ContentRows } from './rows.ts';
 import { publishedContent } from './published.ts';
 import { DEMO_SOURCE } from './mock.ts';
 import type { ContentSource } from './types.ts';
-interface ReadConfig { url: string; publicKey: string; timeoutMs?: number }
+export interface ReadConfig { url: string; publicKey: string; timeoutMs?: number }
 const TABLES = ['essay_sessions', 'festivals', 'festival_days', 'festival_stalls', 'festival_performances', 'school_events'] as const;
 type Table = (typeof TABLES)[number];
 const TEXT: Record<Table, string[]> = {
@@ -39,24 +39,40 @@ function checkedRows(table: Table, value: unknown): unknown[] {
   }
   return value;
 }
-/** Optional, GET-only adapter. The app stays on DEMO_SOURCE until D supplies and verifies the public endpoint. */
-export function createReadOnlySource(config: ReadConfig, fetcher: typeof fetch = fetch): ContentSource {
+export type PublicTable = Table | 'campus_photos';
+/** GET-only, bounded-time, paged reader. Publishable keys are sent as apikey, not as fake JWTs. */
+export function createPublicReader(config: ReadConfig, fetcher: typeof fetch = fetch) {
   const base = new URL(config.url);
   if (base.protocol !== 'https:' || base.username || base.password || !acceptsPublicKey(config.publicKey)) throw new Error('HTTPS 주소와 공개 읽기 키가 필요합니다. 관리자 키는 앱에서 사용할 수 없습니다.');
   const timeout = config.timeoutMs ?? 5000;
   if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('응답 제한 시간을 확인해 주세요.');
-  return { mode: 'live', async load() {
-    const pairs = await Promise.all(TABLES.map(async (table) => {
+  return async (table: PublicTable, query: Record<string, string> = {}): Promise<unknown[]> => {
+    const rows: unknown[] = [];
+    for (let offset = 0; ; offset += 500) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
       try {
         const url = new URL(`/rest/v1/${table}`, base);
-        url.searchParams.set('select', '*');
-        if (table !== 'festival_days') url.searchParams.set('is_published', 'eq.true');
-        const response = await fetcher(url.toString(), { method: 'GET', headers: { apikey: config.publicKey, Authorization: `Bearer ${config.publicKey}` }, signal: controller.signal });
+        const params = { select: '*', order: 'id.asc', ...query, limit: '500', offset: String(offset) };
+        for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+        const headers: Record<string, string> = { apikey: config.publicKey };
+        if (!config.publicKey.startsWith('sb_publishable_')) headers['Authorization'] = `Bearer ${config.publicKey}`;
+        const response = await fetcher(url.toString(), { method: 'GET', headers, signal: controller.signal });
         if (!response.ok) throw new Error('공개 콘텐츠를 불러오지 못했습니다.');
-        return [table, checkedRows(table, await response.json())] as const;
+        const page: unknown = await response.json();
+        if (!Array.isArray(page)) throw new Error('공개 콘텐츠 응답이 목록 형식이 아닙니다.');
+        rows.push(...page);
+        if (page.length < 500) return rows;
       } finally { clearTimeout(timer); }
+    }
+  };
+}
+export function createReadOnlySource(config: ReadConfig, fetcher: typeof fetch = fetch): ContentSource {
+  const read = createPublicReader(config, fetcher);
+  return { mode: 'live', async load() {
+    const pairs = await Promise.all(TABLES.map(async (table) => {
+      const query = table === 'festival_days' ? {} : { is_published: 'eq.true' };
+      return [table, checkedRows(table, await read(table, query))] as const;
     }));
     return publishedContent(contentFromRows(Object.fromEntries(pairs) as unknown as ContentRows));
   } };

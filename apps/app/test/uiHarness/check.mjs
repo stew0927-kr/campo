@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { LIVE_ROWS } from './liveRows.mjs';
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const output = process.env.CAMPO_UI_RESULTS ?? join(tmpdir(), 'campo-a-ui');
 const url = process.env.CAMPO_UI_URL ?? 'http://127.0.0.1:5209/';
@@ -20,13 +21,26 @@ const text = (page, value) => page.getByText(value).filter({ visible: true }).fi
 const button = (page, name) => page.getByRole('button', { name, exact: typeof name === 'string' });
 const tab = (page, name) => page.getByRole('tab', { name, exact: true });
 async function selected(page, name) { assert.equal(await tab(page, name).getAttribute('aria-selected'), 'true'); }
-async function scenario(name, run, viewport = { width: 390, height: 844 }) {
+async function scenario(name, run, viewport = { width: 390, height: 844 }, source = null) {
   const page = await browser.newPage({ viewport });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.setDefaultTimeout(7000);
   try {
-    await page.goto(url);
+    if (source) await page.route('https://example.test/rest/v1/**', async (route) => {
+      const request = route.request();
+      if (request.method() === 'OPTIONS') { await route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'apikey,authorization', 'Access-Control-Allow-Methods': 'GET' } }); return; }
+      assert.equal(request.method(), 'GET');
+      const endpoint = new URL(request.url());
+      const table = endpoint.pathname.split('/').at(-1);
+      assert.ok(Object.hasOwn(LIVE_ROWS, table));
+      if (table !== 'festival_days' && table !== 'campus_photos') assert.equal(endpoint.searchParams.get('is_published'), 'eq.true');
+      if (table === 'campus_photos') assert.equal(endpoint.searchParams.get('campus_id'), 'eq.hanyang-seoul');
+      if (source === 'offline') { await route.abort('failed'); return; }
+      if (source === 'photo-error' && table === 'campus_photos') { await route.fulfill({ status: 503, body: '{}' }); return; }
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(source === 'empty' ? [] : LIVE_ROWS[table]) });
+    });
+    await page.goto(source ? `${url}?source=${source}` : url);
     await text(page, '어디로 가시나요?').waitFor();
     await run(page);
     assert.deepEqual(errors, []);
@@ -133,6 +147,33 @@ try {
     await tab(p, '논술').click(); await button(p, '고사장 상세 보기').first().click(); await handoffSearch(p, '가상 시험관 가상 301호');
     await text(p, '실제 캠퍼스 길 데이터가 아직 없습니다').waitFor();
   });
+  await scenario('intercepted public server rows appear in existing tabs and photos reach the map', async (p) => {
+    await text(p, '서버 공개 사진 1장을 읽었습니다').waitFor();
+    await tab(p, '논술').click(); await text(p, '검사 서버 논술').waitFor(); await text(p, '서버 공개 데이터를 표시합니다').waitFor();
+    assert.equal(await text(p, '차기 시즌 프로토타입').count(), 0);
+    await button(p, '고사장 상세 보기').click(); await handoffSearch(p, '검사 고사관 101호');
+    await tab(p, '축제').click(); await text(p, '검사 서버 출연진').waitFor(); await text(p, '검사 서버 부스').waitFor();
+    await button(p, '부스 상세 보기').click(); await handoffSearch(p, '검사 축제관');
+    await tab(p, '학교행사').click(); await text(p, '검사 서버 행사').waitFor(); await button(p, '행사 상세 보기').click(); await handoffSearch(p, '검사 행사관');
+    await tab(p, '내정보').click(); await text(p, '콘텐츠는 서버 공개 데이터입니다').waitFor();
+  }, undefined, 'live');
+  await scenario('empty public server stays empty rather than silently substituting demo rows', async (p) => {
+    await text(p, '서버에 공개된 한양대 사진이 없습니다').waitFor();
+    await tab(p, '논술').click(); await text(p, '서버에 공개된 논술 일정이 없습니다').waitFor();
+    await tab(p, '축제').click(); await text(p, '공개된 축제 정보가 없습니다').waitFor();
+    await tab(p, '학교행사').click(); await text(p, '서버에 공개된 학교행사가 없습니다').waitFor();
+    assert.equal(await text(p, '가상 입학설명회').count(), 0);
+  }, undefined, 'empty');
+  await scenario('failed public reads show explicit demo fallback and remain retryable', async (p) => {
+    await text(p, '사진 서버에 연결하지 못했습니다').waitFor(); await tab(p, '논술').click();
+    await text(p, '서버에 연결하지 못해 시연용 데이터를 표시합니다').waitFor(); await text(p, '가상 인문계열 오전').waitFor();
+    await button(p, '서버 다시 조회').click(); await text(p, '서버에 연결하지 못해 시연용 데이터를 표시합니다').waitFor();
+    assert.equal(await text(p, '서버 공개 데이터를 표시합니다').count(), 0);
+  }, undefined, 'offline');
+  await scenario('photo outage does not replace successful public content with demo data', async (p) => {
+    await text(p, '사진 서버에 연결하지 못했습니다').waitFor(); await tab(p, '논술').click(); await text(p, '검사 서버 논술').waitFor();
+    await text(p, '서버 공개 데이터를 표시합니다').waitFor();
+  }, undefined, 'photo-error');
   for (const size of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 1024, height: 1366 }, { width: 320, height: 568, fontScale: 1.6 }]) {
     await scenario(`layout ${size.width}x${size.height} font ${size.fontScale ?? 1}`, async (p) => {
       if (size.fontScale) await p.evaluate((scale) => { window.__campoFontScale = scale; window.dispatchEvent(new Event('resize')); }, size.fontScale);

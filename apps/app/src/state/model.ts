@@ -30,13 +30,15 @@ export type Action =
   | { type: 'consumed'; sequence: number }
   | { type: 'mode'; mode: DefaultMode }
   | { type: 'favorite'; destination: Destination }
+  | { type: 'clearEstimate' }
   | { type: 'estimate'; nodeId: string; timeSec: number };
 export function appReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'tab': return { ...state, tab: action.tab };
     case 'navigate': return { ...state, tab: TABS[0], sequence: state.sequence + 1, intent: { sequence: state.sequence + 1, destination: action.destination } };
     case 'consumed': return state.intent?.sequence === action.sequence ? { ...state, intent: null } : state;
-    case 'mode': return { ...state, defaultMode: action.mode };
+    case 'mode': return { ...state, defaultMode: action.mode, lastEstimate: null };
+    case 'clearEstimate': return state.lastEstimate === null ? state : { ...state, lastEstimate: null };
     case 'favorite': return { ...state, favorites: state.favorites.some((item) => item.key === action.destination.key)
       ? state.favorites.filter((item) => item.key !== action.destination.key) : [...state.favorites, action.destination] };
     case 'estimate': return Number.isFinite(action.timeSec) && action.timeSec >= 0 ? { ...state, lastEstimate: { nodeId: action.nodeId, timeSec: action.timeSec } } : state;
@@ -58,4 +60,16 @@ export function resolveDestination(runtime: CampusRuntime | null, target: Destin
 }
 export function placeDestination(place: CampusPlace): Destination {
   return { key: `place:${place.id}`, name: place.name, searchTerm: place.name, nodeId: place.id, kind: 'place', demo: false };
+}
+
+export interface IntentPlan {
+  destination: DestinationResolution;
+  start: CampusPlace | null;
+  missingFlow: boolean;
+}
+export function planIntent(runtime: CampusRuntime | null, target: Destination): IntentPlan {
+  const destination = resolveDestination(runtime, target);
+  const start = target.fromNodeId ? resolveDestination(runtime, { ...target, nodeId: target.fromNodeId }) : null;
+  return { destination, start: start?.kind === 'selected' ? start.place : null,
+    missingFlow: Boolean(target.flow && target.flow !== 'queue' && (!target.fromNodeId || start?.kind !== 'selected')) };
 }

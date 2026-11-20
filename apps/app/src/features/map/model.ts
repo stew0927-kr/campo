@@ -4,6 +4,7 @@ import type { CampusBuilding, CampusPlace, CampusRouteRequest, RoutePoint, Trave
 export const TRAVEL_MODES: { value: TravelMode; label: string }[] = [
   { value: 'shortest', label: '가장 빠른 길' },
   { value: 'step_free', label: '계단 없는 길' },
+  { value: 'fewest_steps', label: '계단 최소' },
   { value: 'wheelchair', label: '휠체어' },
   { value: 'elevator_first', label: '엘리베이터 우선' },
 ];
@@ -31,5 +32,16 @@ export function routeBounds(points: readonly RoutePoint[]): [number, number, num
 }
 export function requestFor(from: CampusPlace | null, to: CampusPlace | null, mode: TravelMode): CampusRouteRequest | null {
   if (!from || !to) return null;
-  return { from: { kind: 'node', nodeId: from.id }, to: { kind: 'node', nodeId: to.id }, mode };
+  return { from: endpointFor(from), to: endpointFor(to), mode };
+}
+
+export function endpointFor(place: CampusPlace): import('../../contracts.ts').RouteEndpoint {
+  return place.nodeType === 'gps' || place.nodeType === 'point'
+    ? { kind: 'point', lat: place.lat, lng: place.lng } : { kind: 'node', nodeId: place.id };
+}
+export function pointPlace(point: RoutePoint, name: string): CampusPlace {
+  return { id: `point:${point.lng}:${point.lat}`, name, nodeType: 'point', buildingId: null, level: null, ...point };
+}
+export function placesInScope(places: readonly CampusPlace[], buildingId: string | null, level: number | null): CampusPlace[] {
+  return places.filter((p) => buildingId === null ? p.buildingId === null : p.buildingId === buildingId && p.level === level);
 }

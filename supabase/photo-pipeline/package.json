@@ -17,9 +17,11 @@
   "dependencies": {
     "@supabase/supabase-js": "2.119.2",
     "dotenv": "18.0.10",
+    "heic-convert": "2.1.0",
     "sharp": "0.35.5"
   },
   "devDependencies": {
+    "@types/heic-convert": "2.1.1",
     "@types/node": "22.20.5",
     "tsx": "4.23.15",
     "typescript": "7.0.2",

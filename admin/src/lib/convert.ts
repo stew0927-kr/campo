@@ -2,7 +2,15 @@
 // Form inputs are always strings or booleans; the database wants null for "empty", arrays for jsonb lists,
 // and timestamps with an explicit Korean time zone.
 
-export type FieldType = 'text' | 'textarea' | 'date' | 'time' | 'datetime' | 'number' | 'boolean' | 'select' | 'lines';
+export type FieldType = 'text' | 'textarea' | 'date' | 'time' | 'datetime' | 'number' | 'boolean' | 'select' | 'lines' | 'publish' | 'option';
+
+/** Choices for an 'option' field, read from another table that the admin can edit (e.g. essay_tracks.label). */
+export interface OptionSource {
+  table: string;
+  column: string;
+  /** Typing a new value is allowed; it is added to the option table when the row is saved. */
+  allowCustom: boolean;
+}
 
 export interface FieldDef {
   key: string;
@@ -13,6 +21,8 @@ export interface FieldDef {
   hint?: string;
   /** Value for a new row. */
   initial?: string | boolean;
+  /** For type 'option'. */
+  optionsFrom?: OptionSource;
 }
 
 export type FormValue = string | boolean;
@@ -49,11 +59,12 @@ export function rowToForm(fields: readonly FieldDef[], row: Row | null): FormSta
   for (const f of fields) {
     const v = row ? row[f.key] : undefined;
     if (v === undefined || v === null) {
-      form[f.key] = row === null && f.initial !== undefined ? f.initial : f.type === 'boolean' ? false : '';
+      form[f.key] = row === null && f.initial !== undefined ? f.initial : f.type === 'boolean' || f.type === 'publish' ? false : '';
       continue;
     }
     switch (f.type) {
-      case 'boolean': form[f.key] = v === true; break;
+      case 'boolean':
+      case 'publish': form[f.key] = v === true; break;
       case 'time': form[f.key] = String(v).slice(0, 5); break;
       case 'datetime': form[f.key] = isoToKstInput(String(v)); break;
       case 'lines': form[f.key] = Array.isArray(v) ? v.map(String).join('\n') : ''; break;
@@ -75,7 +86,7 @@ export function formToRow(fields: readonly FieldDef[], form: FormState): Convert
   const errors: string[] = [];
   for (const f of fields) {
     const raw = form[f.key];
-    if (f.type === 'boolean') {
+    if (f.type === 'boolean' || f.type === 'publish') {
       values[f.key] = raw === true;
       continue;
     }
@@ -110,6 +121,7 @@ export function cellText(field: FieldDef, value: unknown): string {
   if (field.type === 'time') return String(value).slice(0, 5);
   if (field.type === 'datetime') return isoToKstInput(String(value)).replace('T', ' ');
   if (field.type === 'boolean') return value === true ? '예' : '아니요';
+  if (field.type === 'publish') return value === true ? '공개 중' : '숨김';
   if (field.type === 'lines') return Array.isArray(value) ? `${value.length}개` : '—';
   return String(value);
 }
@@ -126,7 +138,9 @@ export function koreanError(e: DbError | null | undefined): string {
   const msg = e.message ?? '';
   if (e.code === '42501' || /row-level security|permission denied/i.test(msg)) return '권한이 없습니다. 관리자 계정으로 로그인했는지 확인해 주세요.';
   if (e.code === '23514') return `입력값이 규칙에 맞지 않습니다(예: 끝나는 시각이 시작보다 빠름). ${msg}`;
-  if (e.code === '23505') return '이미 같은 값이 있습니다(예: 같은 축제에 같은 날짜).';
+  if (e.code === '23505') return '이미 같은 값이 있습니다(예: 같은 축제에 같은 날짜, 같은 이름의 계열).';
+  if (e.code === '23001' || (e.code === '23503' && /still referenced|RESTRICT/i.test(msg))) return '이 값을 쓰고 있는 항목이 있어 지울 수 없습니다. 그 항목들을 먼저 다른 값으로 바꿔 주세요.';
+  if (e.code === '23503') return '목록에 없는 값입니다. 목록에서 고르거나, 목록에 먼저 추가해 주세요.';
   if (e.code === '23502') return `꼭 필요한 칸이 비어 있습니다. ${msg}`;
   if (e.code === '22007' || e.code === '22008' || e.code === '22P02') return '날짜·시간·숫자 형식이 올바르지 않습니다.';
   if (/Invalid login credentials/i.test(msg)) return '이메일 또는 비밀번호가 틀렸습니다.';

@@ -24,7 +24,11 @@ export const essaySessions: TableConfig = {
   noun: '논술 일정',
   fields: [
     { key: 'season_label', label: '학년도', type: 'text', required: true, initial: '2027학년도' },
-    { key: 'track_label', label: '계열', type: 'text', required: true, hint: '예: 상경계열, 인문계열(오후1)' },
+    {
+      key: 'track_label', label: '계열', type: 'option', required: true,
+      optionsFrom: { table: 'essay_tracks', column: 'label', allowCustom: true },
+      hint: '목록에서 고르거나 "직접 입력"으로 새 계열을 적으세요. 새 계열은 저장할 때 아래 계열 목록에 자동으로 추가됩니다.',
+    },
     { key: 'exam_date', label: '시험 날짜', type: 'date', required: true },
     { key: 'starts_at', label: '시작', type: 'time', required: true },
     { key: 'ends_at', label: '끝', type: 'time', required: true },
@@ -36,10 +40,23 @@ export const essaySessions: TableConfig = {
     { key: 'items', label: '준비물', type: 'lines', hint: '한 줄에 하나씩' },
     { key: 'notices', label: '유의사항', type: 'lines', hint: '한 줄에 하나씩' },
     { key: 'sort_order', label: '정렬 순서', type: 'number', initial: '0' },
-    { key: 'is_published', label: '앱에 공개', type: 'boolean' },
+    { key: 'is_published', label: '앱에 공개', type: 'publish' },
   ],
   columns: ['exam_date', 'starts_at', 'ends_at', 'track_label', 'room_label'],
   order: [{ column: 'exam_date', ascending: true }, { column: 'sort_order', ascending: true }, { column: 'starts_at', ascending: true }],
+};
+
+export const essayTracks: TableConfig = {
+  table: 'essay_tracks',
+  title: '논술 계열 목록',
+  noun: '계열',
+  fields: [
+    { key: 'label', label: '계열 이름', type: 'text', required: true, hint: '이름을 바꾸면 이 계열을 쓰던 논술 일정도 함께 바뀝니다.' },
+    { key: 'sort_order', label: '정렬 순서', type: 'number', initial: '0', hint: '작은 숫자가 드롭다운 위쪽에 나옵니다.' },
+  ],
+  columns: ['label', 'sort_order'],
+  order: [{ column: 'sort_order', ascending: true }, { column: 'label', ascending: true }],
+  deleteNote: '이 계열을 쓰는 논술 일정이 있으면 지울 수 없습니다.',
 };
 
 export const festivals: TableConfig = {
@@ -51,7 +68,7 @@ export const festivals: TableConfig = {
     { key: 'starts_on', label: '시작 날짜', type: 'date', required: true },
     { key: 'ends_on', label: '끝 날짜', type: 'date', required: true },
     { key: 'summary', label: '소개', type: 'textarea' },
-    { key: 'is_published', label: '앱에 공개', type: 'boolean' },
+    { key: 'is_published', label: '앱에 공개', type: 'publish' },
   ],
   columns: ['name', 'starts_on', 'ends_on'],
   order: [{ column: 'starts_on', ascending: false }],
@@ -91,7 +108,7 @@ export const festivalStalls: TableConfig = {
     { key: 'exit_node_id', label: '퇴장 지점 id', type: 'text', hint: NODE_HINT },
     { key: 'description', label: '설명', type: 'textarea' },
     { key: 'sort_order', label: '정렬 순서', type: 'number', initial: '0' },
-    { key: 'is_published', label: '앱에 공개', type: 'boolean' },
+    { key: 'is_published', label: '앱에 공개', type: 'publish' },
   ],
   columns: ['name', 'category', 'opens_at', 'closes_at'],
   order: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
@@ -110,7 +127,7 @@ export const festivalPerformances: TableConfig = {
     { key: 'node_id', label: '무대 지점 id', type: 'text', hint: NODE_HINT },
     { key: 'description', label: '설명', type: 'textarea' },
     { key: 'sort_order', label: '정렬 순서', type: 'number', initial: '0' },
-    { key: 'is_published', label: '앱에 공개', type: 'boolean' },
+    { key: 'is_published', label: '앱에 공개', type: 'publish' },
   ],
   columns: ['starts_at', 'ends_at', 'artist', 'stage_label'],
   order: [{ column: 'starts_at', ascending: true }],
@@ -133,7 +150,7 @@ export const schoolEvents: TableConfig = {
     { key: 'summary', label: '소개', type: 'textarea' },
     { key: 'link_url', label: '링크', type: 'text', hint: 'https://로 시작하는 주소' },
     { key: 'pinned', label: '목록 맨 위에 고정', type: 'boolean' },
-    { key: 'is_published', label: '앱에 공개', type: 'boolean' },
+    { key: 'is_published', label: '앱에 공개', type: 'publish' },
   ],
   columns: ['starts_at', 'title', 'category', 'place_label', 'pinned'],
   order: [{ column: 'pinned', ascending: false }, { column: 'starts_at', ascending: true }],

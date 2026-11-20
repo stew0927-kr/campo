@@ -34,8 +34,11 @@ th { color: var(--muted); font-weight: 600; }
 tr.selected td { background: #eef6f4; }
 .row-actions { white-space: nowrap; text-align: right; }
 .row-actions button { margin-left: 4px; padding: 4px 10px; }
-.pill { border-radius: 999px; padding: 3px 12px; font-size: 13px; color: var(--muted); }
-.pill.on { background: var(--teal); border-color: var(--teal); color: #fff; }
+.segmented { display: inline-flex; gap: 6px; }
+.seg { border-radius: 999px; padding: 4px 14px; font-size: 13px; background: #eef0f3; border-color: #d4d8de; color: #8a9099; }
+.seg.chosen { background: #1f9d55; border-color: #1f9d55; color: #fff; font-weight: 600; cursor: default; }
+.segmented.compact .seg { padding: 3px 10px; font-size: 12px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .status { padding: 8px 10px; border-radius: 6px; font-size: 14px; }
 .status.ok { background: #e7f5ef; color: #0f5132; }
 .status.error { background: #fdecea; color: var(--danger); }
@@ -44,6 +47,7 @@ tr.selected td { background: #eef6f4; }
 .editor h3 { margin: 0 0 10px; font-size: 15px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px 16px; }
 .grid label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.grid label select + input { margin-top: 4px; }
 .grid label.wide { grid-column: 1 / -1; }
 .grid label.check { flex-direction: row; align-items: center; gap: 8px; }
 .grid label.check input { width: auto; }

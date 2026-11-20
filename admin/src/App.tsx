@@ -1,12 +1,13 @@
 // Sign-in gate + three tabs. Only users whose profiles.role is 'admin' get past the gate;
 // the database checks the same thing again on every write (RLS), so hiding the screens is not the security.
 import type { Session } from '@supabase/supabase-js';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FestivalPage } from './components/FestivalPage.tsx';
 import { ResourcePanel } from './components/ResourcePanel.tsx';
 import { koreanError } from './lib/convert.ts';
+import { EditingContext, type EditingTracker } from './lib/editing.ts';
 import { configProblem, supabase } from './lib/supabase.ts';
-import { essaySessions, schoolEvents } from './tables.ts';
+import { essaySessions, essayTracks, schoolEvents } from './tables.ts';
 
 type Tab = 'essay' | 'festival' | 'events';
 type Role = 'checking' | 'admin' | 'not-admin';
@@ -16,6 +17,22 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [role, setRole] = useState<Role>('checking');
   const [tab, setTab] = useState<Tab>('essay');
+  /** Changing this number rebuilds the tab from scratch (closes forms, clears festival/day selection). */
+  const [resetCount, setResetCount] = useState(0);
+  const openForms = useRef(new Set<string>());
+  const tracker = useMemo<EditingTracker>(
+    () => ({ report: (id, open) => (open ? openForms.current.add(id) : openForms.current.delete(id)) }),
+    [],
+  );
+
+  /** Pressing a tab, even the one already shown, goes to that tab's first screen. */
+  const goToTab = (next: Tab) => {
+    if (openForms.current.size > 0 && !window.confirm('저장하지 않은 입력 내용이 사라집니다. 처음 화면으로 갈까요?')) return;
+    openForms.current.clear();
+    setTab(next);
+    setResetCount((n) => n + 1);
+    window.scrollTo({ top: 0 });
+  };
 
   useEffect(() => {
     if (configProblem) return;
@@ -57,7 +74,7 @@ export default function App() {
         <h1>캠포 관리자</h1>
         <nav>
           {([['essay', '논술'], ['festival', '축제'], ['events', '학교행사']] as const).map(([k, label]) => (
-            <button key={k} className={tab === k ? 'tab active' : 'tab'} onClick={() => setTab(k)}>
+            <button key={k} className={tab === k ? 'tab active' : 'tab'} onClick={() => goToTab(k)}>
               {label}
             </button>
           ))}
@@ -67,12 +84,20 @@ export default function App() {
           <button onClick={() => void supabase.auth.signOut()}>로그아웃</button>
         </div>
       </header>
-      <main>
-        <p className="hint">“앱에 공개”를 켠 항목만 앱에 보입니다. 숨김 상태로 저장해 두고, 준비가 되면 공개로 바꾸세요.</p>
-        {tab === 'essay' && <ResourcePanel config={essaySessions} />}
-        {tab === 'festival' && <FestivalPage />}
-        {tab === 'events' && <ResourcePanel config={schoolEvents} />}
-      </main>
+      <EditingContext.Provider value={tracker}>
+        <main key={`${tab}-${resetCount}`}>
+          <p className="hint">“공개 중”으로 둔 항목만 앱에 보입니다. 숨김으로 저장해 두고, 준비가 되면 공개 중으로 바꾸세요.</p>
+          {tab === 'essay' && (
+            <>
+              <ResourcePanel config={essaySessions} />
+              <p className="hint">아래 목록이 논술 일정의 “계열” 드롭다운에 나오는 선택지입니다.</p>
+              <ResourcePanel config={essayTracks} />
+            </>
+          )}
+          {tab === 'festival' && <FestivalPage />}
+          {tab === 'events' && <ResourcePanel config={schoolEvents} />}
+        </main>
+      </EditingContext.Provider>
     </div>
   );
 }

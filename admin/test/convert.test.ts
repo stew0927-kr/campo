@@ -79,6 +79,20 @@ describe('display and errors', () => {
     expect(cellText({ key: 'x', label: 'x', type: 'text' }, null)).toBe('—');
   });
 
+  it('publish cells and the 계열 field type', () => {
+    expect(cellText({ key: 'p', label: 'p', type: 'publish' }, true)).toBe('공개 중');
+    expect(cellText({ key: 'p', label: 'p', type: 'publish' }, false)).toBe('숨김');
+    const track = essaySessions.fields.find((f) => f.key === 'track_label');
+    expect(track?.type).toBe('option');
+    expect(track?.optionsFrom).toEqual({ table: 'essay_tracks', column: 'label', allowCustom: true });
+  });
+
+  it('foreign key errors: in use vs not in the list', () => {
+    expect(koreanError({ code: '23001', message: 'update or delete on table "essay_tracks" violates RESTRICT setting' })).toContain('지울 수 없습니다');
+    expect(koreanError({ code: '23503', message: 'Key is still referenced from table "essay_sessions".' })).toContain('지울 수 없습니다');
+    expect(koreanError({ code: '23503', message: 'Key (track_label)=(x) is not present in table "essay_tracks".' })).toContain('목록에 없는 값');
+  });
+
   it('turns database errors into Korean', () => {
     expect(koreanError({ code: '42501', message: 'permission denied for table school_events' })).toContain('권한이 없습니다');
     expect(koreanError({ code: '23514', message: 'violates check constraint "event_time_order"' })).toContain('규칙에 맞지 않습니다');

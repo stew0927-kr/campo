@@ -2,14 +2,17 @@
 // its EXIF says about the lens and the size (survey/photoMeta.ts exifPhotoInfo). EXIF is only read, never written.
 // iOS: a 0.5x / 1x button when the phone has an ultra-wide lens. Where there is none to use (Android, or an iPhone
 // without one) a 갤러리에서 선택 button takes a picture the phone's own camera app made (at 0.5x, say) through the same path.
+// Stored photos must be JPEG: shooting writes JPEG, a gallery pick may be HEIC and is re-encoded (reencodeJpeg.ts).
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PHOTO_JPEG_QUALITY } from '../survey/photoFormat.ts';
 import { exifPhotoInfo, type ExifPhotoInfo } from '../survey/photoMeta.ts';
 import { BigButton } from './controls.tsx';
 import { lensChoices, selectedLensFor, showGalleryButton, showLensToggle, type LensChoices } from './lenses.ts';
+import { reencodeAsJpeg } from './reencodeJpeg.ts';
 import { TOUCH, color, font, space } from './theme.ts';
 
 interface Props {
@@ -52,13 +55,26 @@ export function CameraCapture({ onCapture, onClose, onError }: Props) {
         setBusy(false);
         return;
       }
-      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.6, exif: true, allowsMultipleSelection: false });
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: PHOTO_JPEG_QUALITY, exif: true, allowsMultipleSelection: false });
       const asset = result.canceled ? undefined : result.assets[0];
       if (!asset) {
         setBusy(false);
         return;
       }
-      onCapture(asset.uri, exifPhotoInfo(asset.exif, asset));
+      // Read the EXIF of the original first: focal length, 35 mm equivalent and pixel size are taken from it, and the
+      // re-encoded file below has none (its orientation is baked into the pixels). That is intended.
+      const info = exifPhotoInfo(asset.exif, asset);
+      // Shooting writes a JPEG already; a gallery pick may be the original HEIC, and the store copies bytes as they are
+      // into "photos/<id>-<n>.jpg". So re-encode it, at the same pixel size, and never store the pick as it came.
+      let jpegUri: string;
+      try {
+        jpegUri = await reencodeAsJpeg(asset.uri);
+      } catch {
+        onError('사진을 JPG로 변환하지 못했습니다. 다시 선택해 주세요.');
+        setBusy(false);
+        return;
+      }
+      onCapture(jpegUri, info);
     } catch (err) {
       onError(`사진을 불러오지 못했습니다. ${(err as Error).message}`);
       setBusy(false);
@@ -70,7 +86,7 @@ export function CameraCapture({ onCapture, onClose, onError }: Props) {
     setBusy(true);
     try {
       // Moderate quality: the picture shows which door it is, and a walk takes dozens of them.
-      const picture = await camera.current.takePictureAsync({ quality: 0.6, exif: true });
+      const picture = await camera.current.takePictureAsync({ quality: PHOTO_JPEG_QUALITY, exif: true });
       onCapture(picture.uri, exifPhotoInfo(picture.exif, picture));
     } catch (err) {
       onError(`사진을 찍지 못했습니다. ${(err as Error).message}`);

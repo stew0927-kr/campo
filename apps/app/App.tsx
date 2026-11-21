@@ -1,38 +1,34 @@
-// 캠포 사용자 앱의 유일한 화면. 5탭 UI와 네비게이션은 프론트 담당이 붙인다(그래서 여기는 비워 두었다).
-// 지금은 캠퍼스 데이터가 정상적으로 읽히는지만 보여 주고, 새 화면을 만들 때 이 파일을 출발점으로 쓰면 된다.
-// 사용법과 훅 계약: docs/FRONTEND_HANDOFF.md
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { useCampusData } from './src/hooks/useCampusData.ts';
-
-export default function App() {
-  const campus = useCampusData();
-
-  const status =
-    campus.status === 'error'
-      ? (campus.error ?? '캠퍼스 데이터를 읽지 못했습니다.')
-      : campus.campus === null
-        ? '캠퍼스 데이터를 읽는 중입니다.'
-        : `${campus.campus.name} · 지점 ${campus.counts.nodes} · 구간 ${campus.counts.edges} · 건물 ${campus.counts.buildings}`;
-
-  return (
-    <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <View style={styles.screen}>
-        <Text style={styles.title}>캠포</Text>
-        <Text style={styles.status}>{status}</Text>
-        {campus.issues.length > 0 && <Text style={styles.issue}>읽지 못한 항목 {campus.issues.length}개</Text>}
-        <Text style={styles.hint}>다섯 탭 화면은 여기에 붙입니다. docs/FRONTEND_HANDOFF.md를 보세요.</Text>
-      </View>
-    </SafeAreaProvider>
-  );
+import { useEffect } from 'react';
+import { BackHandler, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { MapScreen } from './src/features/map/MapScreen.tsx';
+import { AppStateProvider, useAppState } from './src/state/AppState.tsx';
+import { TabBar } from './src/ui/TabBar.tsx';
+import { ScreenBoundary } from './src/ui/ScreenBoundary.tsx';
+import { EventsScreen } from './src/features/events/EventsScreen.tsx';
+import { MeScreen } from './src/features/me/MeScreen.tsx';
+import { FestivalScreen } from './src/features/festival/FestivalScreen.tsx';
+import { EssayScreen } from './src/features/essay/EssayScreen.tsx';
+import { useAppContent } from './src/features/content/useAppContent.ts';
+import { Loading } from './src/ui/kit.tsx';
+function AppContent() {
+  const { state, dispatch, handleBack } = useAppState();
+  const content = useAppContent();
+  const sourceProps = { sourceMode: content.mode, sourceNotice: content.notice, onReload: content.reload };
+  useEffect(() => {
+    const back = BackHandler.addEventListener('hardwareBackPress', handleBack);
+    return () => back.remove();
+  }, [handleBack]);
+  return <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+    <View style={{ flex: 1, display: state.tab === '지도·길찾기' ? 'flex' : 'none' }}><ScreenBoundary><MapScreen active={state.tab === '지도·길찾기'} photoCatalog={content.catalog} photoNotice={content.photoNotice} /></ScreenBoundary></View>
+    <View style={{ flex: 1, display: state.tab === '논술' ? 'flex' : 'none' }}><ScreenBoundary>{content.data ? <EssayScreen data={content.data} active={state.tab === '논술'} {...sourceProps} /> : <Loading />}</ScreenBoundary></View>
+    <View style={{ flex: 1, display: state.tab === '축제' ? 'flex' : 'none' }}><ScreenBoundary>{content.data ? <FestivalScreen data={content.data} active={state.tab === '축제'} {...sourceProps} /> : <Loading />}</ScreenBoundary></View>
+    <View style={{ flex: 1, display: state.tab === '학교행사' ? 'flex' : 'none' }}><ScreenBoundary>{content.data ? <EventsScreen data={content.data} active={state.tab === '학교행사'} {...sourceProps} /> : <Loading />}</ScreenBoundary></View>
+    <View style={{ flex: 1, display: state.tab === '내정보' ? 'flex' : 'none' }}><ScreenBoundary><MeScreen active={state.tab === '내정보'} contentMode={content.mode} /></ScreenBoundary></View>
+    <TabBar tab={state.tab} onChange={(tab) => dispatch({ type: 'tab', tab })} />
+  </SafeAreaView>;
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24, backgroundColor: '#FFFFFF' },
-  title: { fontSize: 32, fontWeight: '700', color: '#1A1A1A' },
-  status: { fontSize: 15, color: '#3C3C3C', textAlign: 'center' },
-  issue: { fontSize: 13, color: '#B45309' },
-  hint: { fontSize: 13, color: '#8A8A8A', textAlign: 'center' },
-});
+export default function App() {
+  return <SafeAreaProvider><AppStateProvider><StatusBar style="dark" /><AppContent /></AppStateProvider></SafeAreaProvider>;
+}

@@ -1,0 +1,73 @@
+import { createElement, type ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+// Use the existing root renderer and React together. This installs nothing and avoids native modules in Node.
+vi.mock('react', async () => {
+  const { createRequire } = await import('node:module');
+  return createRequire(new URL('../../../package.json', import.meta.url))('react');
+});
+vi.mock('react-native', async () => {
+  const { createElement } = await import('react');
+  const box = ({ children, accessibilityLabel }: { children?: ReactNode; accessibilityLabel?: string }) => createElement('div', { 'data-label': accessibilityLabel }, children);
+  return {
+    View: box, Text: box, ScrollView: box, Pressable: box, KeyboardAvoidingView: box,
+    TextInput: ({ placeholder }: { placeholder?: string }) => createElement('input', { placeholder }),
+    Modal: ({ visible, children }: { visible: boolean; children: ReactNode }) => visible ? children : null,
+    FlatList: ({ data, renderItem, ListEmptyComponent }: { data: unknown[]; renderItem: (arg: { item: unknown }) => ReactNode; ListEmptyComponent: ReactNode }) => createElement('div', null, data.length ? data.map((item, i) => createElement('div', { key: i }, renderItem({ item }))) : ListEmptyComponent),
+    useWindowDimensions: () => ({ width: 390, height: 844, fontScale: 1, scale: 1 }),
+    ActivityIndicator: box, StyleSheet: { create: (value: unknown) => value }, Platform: { OS: 'android' },
+    AppState: { addEventListener: () => ({ remove() {} }) }, Linking: { openURL: vi.fn(), openSettings: vi.fn() },
+  };
+});
+vi.mock('react-native-safe-area-context', async () => {
+  const { createElement } = await import('react');
+  return { SafeAreaView: ({ children }: { children: ReactNode }) => createElement('div', null, children) };
+});
+vi.mock('expo-location', () => ({ getForegroundPermissionsAsync: vi.fn(), requestForegroundPermissionsAsync: vi.fn() }));
+vi.mock('expo-sensors', () => ({ Barometer: {} }));
+vi.mock('expo-constants', () => ({ default: { expoConfig: { version: '0.1.0' } } }));
+vi.mock('../src/features/map/MapCanvas.tsx', () => ({ MapCanvas: () => createElement('div', null, '지도 렌더링은 실기기 검증 대상입니다') }));
+vi.mock('../src/photos/PhotoViewerModal.tsx', () => ({ PhotoViewerModal: () => null }));
+import { AppStateProvider } from '../src/state/AppState.tsx';
+import { INITIAL_STATE } from '../src/state/model.ts';
+import { DEMO_CONTENT } from '../src/features/content/mock.ts';
+import { EssayScreen } from '../src/features/essay/EssayScreen.tsx';
+import { FestivalScreen } from '../src/features/festival/FestivalScreen.tsx';
+import { EventsScreen } from '../src/features/events/EventsScreen.tsx';
+import { MeScreen } from '../src/features/me/MeScreen.tsx';
+import { MapScreen } from '../src/features/map/MapScreen.tsx';
+import { ContentGate } from '../src/features/content/ContentGate.tsx';
+function render(child: ReactNode) { return renderToStaticMarkup(createElement(AppStateProvider, { initialState: INITIAL_STATE, children: child })); }
+describe('A screen rendering with mocked native views (not device tests)', () => {
+  it('shows the empty real map honestly and supports manual endpoints', () => {
+    vi.stubGlobal('__DEV__', true);
+    const html = render(createElement(MapScreen));
+    expect(html).toContain('실제 캠퍼스 길 데이터가 아직 없습니다');
+    expect(html).toContain('출발:'); expect(html).toContain('도착:'); expect(html).toContain('계단 최소');
+  });
+  it('always shows the essay prototype notice and both date filters', () => {
+    const html = render(createElement(EssayScreen, { data: DEMO_CONTENT }));
+    expect(html).toContain('차기 시즌 프로토타입'); expect(html).toContain('2026-11-28'); expect(html).toContain('2026-11-29');
+    expect(html).toContain('실제 일정'); expect(html).toContain('고사장 상세 보기');
+  });
+  it('renders the festival timetable without inventing booth pins', () => {
+    const html = render(createElement(FestivalScreen, { data: DEMO_CONTENT }));
+    expect(html).toContain('가상 밴드'); expect(html).toContain('지도 지점 ID가 없어');
+    for (const category of ['주점', '부스', '공연', '편의']) expect(html).toContain(category);
+  });
+  it('renders event categories and an empty content state', () => {
+    expect(render(createElement(EventsScreen, { data: DEMO_CONTENT }))).toContain('가상 입학설명회');
+    expect(render(createElement(EventsScreen, { data: { ...DEMO_CONTENT, events: [] } }))).toContain('조건에 맞는 행사가 없습니다');
+  });
+  it('renders profiles, session-only favorites, privacy placeholders and open-source notices', () => {
+    const html = render(createElement(MeScreen));
+    for (const label of ['일반 보행', '계단 회피', '휠체어 보행', '위치·센서 권한', 'OpenStreetMap', '개인정보 처리방침', '앱을 완전히 종료하면 초기화']) expect(html).toContain(label);
+  });
+  it('renders content loading and retryable failures rather than fake success', () => {
+    const children = () => createElement('div', null, 'success');
+    const loading = render(createElement(ContentGate, { content: { status: 'loading', data: null, error: null, reload: vi.fn() }, children }));
+    expect(loading).toContain('불러오고 있습니다'); expect(loading).not.toContain('success');
+    const error = render(createElement(ContentGate, { content: { status: 'error', data: null, error: '연결 오류입니다', reload: vi.fn() }, children }));
+    expect(error).toContain('연결 오류입니다'); expect(error).toContain('다시 불러오기');
+  });
+});

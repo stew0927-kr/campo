@@ -2,6 +2,7 @@ import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 // Use the existing root renderer and React together. This installs nothing and avoids native modules in Node.
+const pressHandlers = vi.hoisted(() => new Map<string, () => void>());
 vi.mock('react', async () => {
   const { createRequire } = await import('node:module');
   return createRequire(new URL('../../../package.json', import.meta.url))('react');
@@ -10,7 +11,12 @@ vi.mock('react-native', async () => {
   const { createElement } = await import('react');
   const box = ({ children, accessibilityLabel }: { children?: ReactNode; accessibilityLabel?: string }) => createElement('div', { 'data-label': accessibilityLabel }, children);
   return {
-    View: box, Text: box, ScrollView: box, Pressable: box, KeyboardAvoidingView: box,
+    View: box, Text: box, ScrollView: box, KeyboardAvoidingView: box,
+    Pressable: ({ children, accessibilityLabel, onPress }: { children?: ReactNode; accessibilityLabel?: string; onPress?: () => void }) => {
+      const title = (children as { props?: { children?: unknown } } | undefined)?.props?.children;
+      if (typeof title === 'string' && onPress) pressHandlers.set(title, onPress);
+      return createElement('div', { 'data-label': accessibilityLabel }, children);
+    },
     TextInput: ({ placeholder }: { placeholder?: string }) => createElement('input', { placeholder }),
     Modal: ({ visible, children }: { visible: boolean; children: ReactNode }) => visible ? children : null,
     FlatList: ({ data, renderItem, ListEmptyComponent }: { data: unknown[]; renderItem: (arg: { item: unknown }) => ReactNode; ListEmptyComponent: ReactNode }) => createElement('div', null, data.length ? data.map((item, i) => createElement('div', { key: i }, renderItem({ item }))) : ListEmptyComponent),
@@ -35,6 +41,8 @@ import { EssayScreen } from '../src/features/essay/EssayScreen.tsx';
 import { FestivalScreen } from '../src/features/festival/FestivalScreen.tsx';
 import { EventsScreen } from '../src/features/events/EventsScreen.tsx';
 import { MeScreen } from '../src/features/me/MeScreen.tsx';
+import { AppInfoScreen, CONTACT_EMAIL, PRIVACY_URL, TERMS_URL } from '../src/features/me/AppInfoScreen.tsx';
+import { Linking } from 'react-native';
 import { MapScreen } from '../src/features/map/MapScreen.tsx';
 import { ContentGate } from '../src/features/content/ContentGate.tsx';
 function render(child: ReactNode) { return renderToStaticMarkup(createElement(AppStateProvider, { initialState: INITIAL_STATE, children: child })); }
@@ -59,9 +67,23 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
     expect(render(createElement(EventsScreen, { data: DEMO_CONTENT }))).toContain('가상 입학설명회');
     expect(render(createElement(EventsScreen, { data: { ...DEMO_CONTENT, events: [] } }))).toContain('조건에 맞는 행사가 없습니다');
   });
-  it('renders profiles, session-only favorites, privacy placeholders and open-source notices', () => {
+  it('renders profiles, session-only favorites, privacy links and open-source notices', () => {
     const html = render(createElement(MeScreen));
     for (const label of ['일반 보행', '계단 회피', '휠체어 보행', '위치·센서 권한', 'OpenStreetMap', '개인정보 처리방침', '앱을 완전히 종료하면 초기화']) expect(html).toContain(label);
+  });
+  it('links the legal pages and the team contact without placeholder copy', () => {
+    const html = render(createElement(AppInfoScreen));
+    for (const label of ['개인정보 처리방침', '이용약관', '문의처', 'campo@gmail.com']) expect(html).toContain(label);
+    for (const placeholder of ['D조원', '준비 중']) expect(html).not.toContain(placeholder);
+    expect(PRIVACY_URL).toBe('https://stew0927-kr.github.io/campo-legal/privacy.html');
+    expect(TERMS_URL).toBe('https://stew0927-kr.github.io/campo-legal/terms.html');
+    expect(CONTACT_EMAIL).toBe('campo@gmail.com');
+    const open = vi.mocked(Linking.openURL);
+    for (const [title, url] of [['개인정보 처리방침', PRIVACY_URL], ['이용약관', TERMS_URL], ['문의처', 'mailto:campo@gmail.com']] as const) {
+      open.mockClear();
+      pressHandlers.get(title)?.();
+      expect(open).toHaveBeenCalledWith(url);
+    }
   });
   it('renders content loading and retryable failures rather than fake success', () => {
     const children = () => createElement('div', null, 'success');

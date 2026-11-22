@@ -3,6 +3,9 @@ import Constants from 'expo-constants';
 import { Linking } from 'react-native';
 import { Body, Button, Card, Heading, Notice } from '../../ui/kit.tsx';
 import licenses from './licenses.json';
+export const PRIVACY_URL = 'https://stew0927-kr.github.io/campo-legal/privacy.html';
+export const TERMS_URL = 'https://stew0927-kr.github.io/campo-legal/terms.html';
+export const CONTACT_EMAIL = 'campo@gmail.com';
 const LINKS = [
   { name: 'Expo · MIT', url: 'https://github.com/expo/expo' },
   { name: 'React · MIT', url: 'https://github.com/facebook/react' },
@@ -18,7 +21,10 @@ export function AppInfoScreen({ contentMode = 'demo' }: { contentMode?: 'demo' |
     <Card><Heading>CAMPO 앱 정보</Heading><Body>버전 {Constants.expoConfig?.version ?? '확인 대기 중'}</Body><Body>한양대학교 서울캠퍼스 보행 길안내 시제품입니다. 실제 경로 데이터와 현장 검증은 연결 대기 중입니다.</Body>
       <Body>지도 배경 © OpenStreetMap 기여자 · 캠퍼스 데이터 담당: CAMPO 팀 현장 조사(C조원). 현재 빈 데이터 또는 명시된 개발용 가상 데이터를 사용합니다.</Body>
       <Body>{contentMode === 'live' ? '논술·축제·학교행사 콘텐츠는 서버 공개 데이터입니다. 실제 일정·장소와 시연 여부는 제공 기관 공지로 확인해 주세요.' : '논술·축제·학교행사 콘텐츠는 시연용입니다. 실제 공지나 운영 정보로 사용하지 마세요.'}</Body>
-      <Button secondary disabled title="개인정보 처리방침 · D조원 URL 준비 중" onPress={() => undefined} /><Body>팀 공용 문의처: D조원 제공 대기 중입니다. 개인 연락처를 사용하지 않습니다.</Body>
+      <Button secondary title="개인정보 처리방침" onPress={() => void open(PRIVACY_URL)} />
+      <Button secondary title="이용약관" onPress={() => void open(TERMS_URL)} />
+      <Body>팀 공용 문의처: {CONTACT_EMAIL}</Body>
+      <Button secondary title="문의처" onPress={() => void open(`mailto:${CONTACT_EMAIL}`)} />
     </Card>
     <Card><Heading>오픈소스·지도 출처</Heading>{LINKS.map((link) => <Button key={link.url} secondary title={`${link.name} · 외부 링크 열기`} onPress={() => void open(link.url)} />)}
       <Button secondary title={showLicenses ? '라이선스 전문 접기' : '주요 사용 패키지 라이선스 전문 보기'} onPress={() => setShowLicenses((old) => !old)} />

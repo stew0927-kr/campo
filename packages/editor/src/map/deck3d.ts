@@ -140,7 +140,9 @@ export function deckLayers({
     const surface = exact ? terrainSurface(grid, tiles, k, [...plazaFootprints(flats), ...footprintsOfRoads(pieces)], cut) : null;
     const cells = surface ? surface.cells : terrainMesh(grid, 1, k, cut, flats);
     const wireSkip = surface ? new Set([...(cut ?? []), ...surface.skippedCells, ...surface.carvedCells]) : cut;
-    const top = Math.max(1, ...cells.map((c) => c.z));
+    // A loop, not Math.max(...): spreading hundreds of thousands of cells into a call overflows the stack (1 m / 2 m tiles).
+    let top = 1;
+    for (const c of cells) if (c.z > top) top = c.z;
     layers.push(new SolidPolygonLayer({
       id: 'terrain-mesh', data: cells, _full3d: true, filled: true, extruded: false, opacity: 0.93,
       getPolygon: (c: (typeof cells)[number]) => c.polygon, getFillColor: (c: (typeof cells)[number]) => reliefColor(c.z / top),

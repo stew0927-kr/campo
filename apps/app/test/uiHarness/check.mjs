@@ -19,6 +19,8 @@ const results = [];
 let browser;
 const text = (page, value) => page.getByText(value).filter({ visible: true }).first();
 const button = (page, name) => page.getByRole('button', { name, exact: typeof name === 'string' });
+// Half-screen place search sheet (replaces the old full-screen search dialog).
+const searchSheet = (page) => page.locator('[aria-label="장소 검색 시트"]');
 const tab = (page, name) => page.getByRole('tab', { name, exact: true });
 async function selected(page, name) { assert.equal(await tab(page, name).getAttribute('aria-selected'), 'true'); }
 async function scenario(name, run, viewport = { width: 390, height: 844 }, source = null) {
@@ -55,9 +57,9 @@ async function scenario(name, run, viewport = { width: 390, height: 844 }, sourc
 async function handoffSearch(page, expected) {
   await button(page, '여기까지 길찾기').click();
   await selected(page, '지도·길찾기');
-  const dialog = page.getByRole('dialog'); await dialog.waitFor();
+  const dialog = searchSheet(page); await dialog.waitFor();
   assert.equal(await dialog.getByRole('textbox', { name: '장소 검색어' }).inputValue(), expected);
-  await button(page, '닫기').click();
+  await button(page, '검색 닫기').click();
 }
 try {
   for (let i = 0; i < 80; i++) {
@@ -96,7 +98,7 @@ try {
     await text(p, '실제 대기 시간은 제공하지 않습니다').waitFor(); await button(p, '즐겨찾기 추가').click();
     for (const name of ['입장 동선 · 지도 연결 대기', '대기 동선 · 지도 연결 대기', '퇴장 동선 · 지도 연결 대기']) {
       await tab(p, '축제').click(); await button(p, name).click(); await selected(p, '지도·길찾기');
-      await p.getByRole('dialog').waitFor(); assert.equal(await p.getByRole('textbox', { name: '장소 검색어' }).inputValue(), '가상 축제 광장'); await button(p, '닫기').click();
+      await searchSheet(p).waitFor(); assert.equal(await p.getByRole('textbox', { name: '장소 검색어' }).inputValue(), '가상 축제 광장'); await button(p, '검색 닫기').click();
       await button(p, '출발: 검색해서 선택해 주세요').waitFor();
     }
     await tab(p, '내정보').click(); await button(p, '부스').click(); await text(p, '가상 만들기 부스').waitFor();
@@ -127,9 +129,9 @@ try {
     await button(p, '내 위치로 이동').click(); await text(p, '위치 권한이 없어도 출발지와 목적지를 직접 선택').waitFor();
     await button(p, '길찾기').click(); await button(p, '출발: 검색해서 선택해 주세요').click();
     await button(p, '현재 위치를 출발지로').click(); await text(p, '위치 권한이 없어도 출발지와 목적지를 직접 선택').waitFor();
-    assert.equal(await p.getByRole('dialog').count(), 0);
+    assert.equal(await searchSheet(p).count(), 0);
     await button(p, '길찾기 닫기').click();
-    await button(p, '실내').click(); await text(p, '등록된 실내 건물·층 데이터가 없습니다').waitFor();
+    await p.getByRole('switch', { name: '건물에서 층 고르기' }).click(); await text(p, '등록된 실내 건물·층 데이터가 없습니다').waitFor();
   });
   await scenario('granted GPS centres the map and can become the start', async (p) => {
     await p.evaluate(() => { window.__campoGps = { lat: 37.5572, lng: 127.045 }; });
@@ -141,11 +143,11 @@ try {
   await scenario('home search focuses a place, sets endpoints and routes with bottom travel modes', async (p) => {
     await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
     await button(p, '장소 검색 열기').click();
-    let dialog = p.getByRole('dialog'); await dialog.getByRole('textbox', { name: '장소 검색어' }).fill('가상 시험 지점 1');
+    let dialog = searchSheet(p); await dialog.getByRole('textbox', { name: '장소 검색어' }).fill('가상 시험 지점 1');
     await dialog.getByRole('button', { name: /가상 시험 지점 1/ }).click();
     await text(p, '검사 선택 장소: 가상 시험 지점 1').waitFor(); await text(p, '검사 카메라 이동 1회').waitFor();
     await button(p, '출발지로').click(); await button(p, '출발: 가상 시험 지점 1').waitFor();
-    await button(p, '도착: 검색해서 선택해 주세요').click(); dialog = p.getByRole('dialog');
+    await button(p, '도착: 검색해서 선택해 주세요').click(); dialog = searchSheet(p);
     await dialog.getByRole('textbox').fill('가상 시험 지점 3'); await dialog.getByRole('button', { name: /가상 시험 지점 3/ }).click();
     await text(p, '검사 경로 좌표').waitFor(); await text(p, '단계별 안내').waitFor();
     await button(p, '계단 없는 길').click(); assert.equal(await button(p, '계단 없는 길').getAttribute('aria-selected'), 'true');
@@ -157,11 +159,47 @@ try {
     await p.evaluate(() => window.__campoBack()); await text(p, '가장 가까운 화장실').waitFor();
     await button(p, '길찾기').click(); await button(p, '출발: 검색해서 선택해 주세요').waitFor();
   });
+  await scenario('selection back, half-screen search, building switch and floor picker', async (p) => {
+    await button(p, '개발 데이터').click(); await button(p, '실내·계단·엘리베이터 시험').click();
+    // 1. A place picked from a search with words: ← drops it and reopens that search; ← again (hardware) → plain map.
+    await button(p, '장소 검색 열기').click();
+    await searchSheet(p).getByRole('textbox', { name: '장소 검색어' }).fill('408');
+    await searchSheet(p).getByRole('button', { name: /408/ }).first().click();
+    await button(p, '선택 취소').waitFor(); assert.equal(await button(p, '장소 검색 열기').count(), 0);
+    await button(p, '선택 취소').click();
+    assert.equal(await searchSheet(p).getByRole('textbox', { name: '장소 검색어' }).inputValue(), '408');
+    await p.evaluate(() => window.__campoBack()); assert.equal(await searchSheet(p).count(), 0);
+    await button(p, '장소 검색 열기').waitFor(); assert.equal(await button(p, '선택 취소').count(), 0);
+    // The search selection entered A동 4층; go back outdoors for the rest.
+    await button(p, '실외 지도로 나가기').click(); await text(p, '실외 지도').waitFor();
+    // A place tapped on the map: ← goes straight back to the map, no search.
+    await button(p, /^검사 지점:/).first().click(); await button(p, '선택 취소').click();
+    assert.equal(await searchSheet(p).count(), 0); await button(p, '장소 검색 열기').waitFor();
+    // 4. Opening a building in the search list moves the camera and keeps the sheet open on its floors.
+    await button(p, '장소 검색 열기').click(); await searchSheet(p).getByRole('button', { name: /^A동,/ }).click();
+    await text(p, '검사 카메라 이동 2회').waitFor(); await text(p, '검사 검색 건물: bldg_A').waitFor();
+    assert.equal(await searchSheet(p).count(), 1); await searchSheet(p).getByRole('button', { name: /A동 4층/ }).click();
+    await button(p, '검색 접기').click(); assert.equal(await searchSheet(p).count(), 0);
+    // Closed: the camera stays at the building (no reset), nothing is selected and the building keeps its mark.
+    await text(p, '검사 카메라 이동 2회').waitFor(); assert.equal(await button(p, '선택 취소').count(), 0);
+    await text(p, '검사 검색 건물: bldg_A').waitFor();
+    // 3. The building switch highlights mapped buildings; a tap opens the floor card, a floor enters it.
+    const toggle = p.getByRole('switch', { name: '건물에서 층 고르기' });
+    await toggle.click(); assert.equal(await toggle.getAttribute('aria-checked'), 'true'); await text(p, '검사 건물 강조').waitFor();
+    await button(p, '검사 건물 누르기: bldg_B').click(); await button(p, '층 선택 닫기').waitFor();
+    await p.evaluate(() => window.__campoBack()); assert.equal(await button(p, '층 선택 닫기').count(), 0);
+    await button(p, '검사 건물 누르기: bldg_B').click(); await button(p, 'B동 2층').click();
+    await text(p, 'B동 · 2층').waitFor(); await text(p, '검사 실내: bldg_B 2층').waitFor();
+    // Another highlighted building can be picked from inside; a one-floor building opens at once.
+    await button(p, '검사 건물 누르기: bldg_C').click(); await text(p, '검사 실내: bldg_C 5층').waitFor();
+    await toggle.click(); assert.equal(await toggle.getAttribute('aria-checked'), 'false'); await text(p, '실외 지도').waitFor();
+    assert.equal(await text(p, '검사 건물 강조').count(), 0);
+  });
   await scenario('manual demo route, map selection cancel and map point start', async (p) => {
     await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
     await button(p, '길찾기').click();
     for (const [field, name] of [['출발', '가상 시험 지점 1'], ['도착', '가상 시험 지점 3']]) {
-      await button(p, new RegExp(`^${field}:`)).click(); const dialog = p.getByRole('dialog');
+      await button(p, new RegExp(`^${field}:`)).click(); const dialog = searchSheet(p);
       await dialog.getByRole('textbox').fill(name); await dialog.getByRole('button', { name: new RegExp(name) }).click();
     }
     await text(p, '검사 경로 좌표').waitFor();
@@ -177,8 +215,11 @@ try {
     await button(p, '개발 데이터').click(); await button(p, '정문 → 가상 408호 선택').click();
     await button(p, '엘리베이터 우선').click(); await button(p, '길찾기').click();
     await text(p, '검사 경로 좌표').waitFor(); await text(p, '층 (엘리베이터)').waitFor();
-    await button(p, '실외').click(); assert.equal(await button(p, '실외').getAttribute('aria-selected'), 'true');
-    await button(p, '실내').click(); assert.equal(await button(p, '실내').getAttribute('aria-selected'), 'true');
+    await button(p, '실외 지도로 나가기').click(); await text(p, '실외 지도').waitFor();
+    assert.equal(await p.getByRole('switch', { name: '건물에서 층 고르기' }).getAttribute('aria-checked'), 'false');
+    await button(p, '건물 목록').click(); await button(p, /^A동, 4개 층/).click();
+    await button(p, 'A동 4층').click(); await text(p, 'A동 · 4층').waitFor(); await text(p, '검사 실내: bldg_A 4층').waitFor();
+    assert.equal(await p.getByRole('switch', { name: '건물에서 층 고르기' }).getAttribute('aria-checked'), 'true');
     await button(p, '휠체어').click(); assert.equal(await button(p, '휠체어').getAttribute('aria-selected'), 'true'); await text(p, '검사 경로 좌표').waitFor();
     await tab(p, '논술').click(); await button(p, '고사장 상세 보기').first().click(); await handoffSearch(p, '가상 시험관 가상 301호');
     await text(p, '실제 캠퍼스 길 데이터가 아직 없습니다').waitFor();
@@ -229,10 +270,10 @@ try {
   await scenario('out-of-campus route failure shows guidance without a stale route', async (p) => {
     await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
     await button(p, '길찾기').click(); await button(p, '도착: 검색해서 선택해 주세요').click();
-    await p.getByRole('dialog').getByRole('textbox').fill('결과없는장소');
+    await searchSheet(p).getByRole('textbox').fill('결과없는장소');
     await text(p, '검색 결과가 없습니다').waitFor();
-    await p.getByRole('dialog').getByRole('textbox').fill('가상 시험 지점 3');
-    await p.getByRole('dialog').getByRole('button', { name: /가상 시험 지점 3/ }).click();
+    await searchSheet(p).getByRole('textbox').fill('가상 시험 지점 3');
+    await searchSheet(p).getByRole('button', { name: /가상 시험 지점 3/ }).click();
     await button(p, /^출발:/).click(); await button(p, '지도에서 출발 선택').click(); await button(p, '검사: 캠퍼스 밖 선택').click();
     await text(p, '걷는 길이 없는 위치입니다').waitFor();
     assert.equal(await text(p, '검사 경로 좌표').count(), 0);

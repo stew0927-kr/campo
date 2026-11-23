@@ -23,6 +23,9 @@ vi.mock('react-native', async () => {
     useWindowDimensions: () => ({ width: 390, height: 844, fontScale: 1, scale: 1 }),
     ActivityIndicator: box, StyleSheet: { create: (value: unknown) => value }, Platform: { OS: 'android' },
     AppState: { addEventListener: () => ({ remove() {} }) }, Linking: { openURL: vi.fn(), openSettings: vi.fn() },
+    // The draggable sheet: no gestures in Node, only the rendered content.
+    Animated: { View: box, Value: class { constructor(public v: number) {} setValue(v: number) { this.v = v; } }, spring: () => ({ start: () => undefined }) },
+    PanResponder: { create: () => ({ panHandlers: {} }) },
   };
 });
 vi.mock('react-native-safe-area-context', async () => {
@@ -34,6 +37,7 @@ vi.mock('expo-sensors', () => ({ Barometer: {} }));
 vi.mock('expo-constants', () => ({ default: { expoConfig: { version: '0.1.0' } } }));
 vi.mock('../src/features/map/MapCanvas.tsx', () => ({ MapCanvas: () => createElement('div', null, '지도 렌더링은 실기기 검증 대상입니다') }));
 vi.mock('../src/photos/PhotoViewerModal.tsx', () => ({ PhotoViewerModal: () => null }));
+vi.mock('../src/features/map/RoadviewScreen.tsx', () => ({ RoadviewScreen: () => null }));
 import { AppStateProvider } from '../src/state/AppState.tsx';
 import { INITIAL_STATE } from '../src/state/model.ts';
 import { DEMO_CONTENT } from '../src/features/content/mock.ts';
@@ -53,7 +57,27 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
     expect(html).toContain('실제 캠퍼스 길 데이터가 아직 없습니다');
     // Home is a full-screen map: floating place search, the route button and the locate button.
     expect(html).toContain('건물 이름, 동 번호, 강의실 검색'); expect(html).toContain('길찾기'); expect(html).toContain('내 위치로 이동');
-    expect(html).toContain('어디로 가시나요?');
+    // The first sheet is left clean: no "어디로 가시나요?" heading or guide caption. The restroom quick button floats on the map.
+    expect(html).not.toContain('어디로 가시나요?'); expect(html).not.toContain('위치 권한 없이도 길을 찾을 수 있습니다');
+    expect(html).toContain('가장 가까운 화장실'); expect(html).toContain('시트 접기');
+  });
+  it('browses the search list by building, then floor, then facility', async () => {
+    const { PlaceSearch, PlaceTree } = await import('../src/features/map/MapChrome.tsx');
+    const { loadBundledCampus } = await import('../src/campus/loadBundledCampus.ts');
+    const { ROADVIEW_DEMO_CAMPUS } = await import('../src/features/map/roadviewDemo.ts');
+    const rt = loadBundledCampus(ROADVIEW_DEMO_CAMPUS);
+    const common = { places: rt.places, buildings: rt.buildings, detail: () => '', onChoose: () => undefined };
+    const search = (query: string, target: 'place' | 'restroom' = 'place') => render(createElement(PlaceSearch, { ...common, target, query, onQuery: () => undefined, results: rt.places.filter((p) => p.name.includes(query)),
+      emptyMessage: '없음', demoNotice: false, maxWidth: 600, padding: 16, busy: false, onClose: () => undefined, onCurrent: () => undefined, onMapPick: () => undefined }));
+    const root = search('');
+    expect(root).toContain('건물을 골라 주세요'); expect(root).toContain('가상 공학관'); expect(root).toContain('야외 장소'); expect(root).not.toContain('가상 201호 강의실');
+    const restroom = search('', 'restroom');
+    expect(restroom).toContain('화장실 찾기 · 출발 위치'); expect(restroom).toContain('현재 위치'); expect(restroom).toContain('지도에서 선택');
+    expect(search('201')).toContain('가상 201호 강의실');
+    const floors = render(createElement(PlaceTree, { ...common, path: { building: 'bldg_rv_eng', level: null }, onPath: () => undefined }));
+    expect(floors).toContain('1층'); expect(floors).toContain('2층');
+    const facilities = render(createElement(PlaceTree, { ...common, path: { building: 'bldg_rv_eng', level: 2 }, onPath: () => undefined }));
+    for (const label of ['화장실', '강의실', '가상 201호 강의실', '가상 공학관 2층 화장실']) expect(facilities).toContain(label);
   });
   it('always shows the essay prototype notice and both date filters', () => {
     const html = render(createElement(EssayScreen, { data: DEMO_CONTENT }));

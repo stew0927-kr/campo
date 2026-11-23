@@ -54,3 +54,12 @@ export function useWindowDimensions() {
   return { width: value[0]!, height: value[1]!, fontScale: value[2]!, scale: 1 };
 }
 export type Node = ReactNode;
+// Draggable sheet stand-ins: values are read once, gestures are not simulated.
+class AnimatedValue { constructor(public v: number) {} setValue(v: number) { this.v = v; } }
+const plain = (style: any): any => Array.isArray(style) ? style.map(plain) : style && typeof style === 'object' ? Object.fromEntries(Object.entries(style).map(([k, v]) => [k, v instanceof AnimatedValue ? v.v : v])) : style;
+export const Animated = {
+  View: (p: Props) => View({ ...p, style: plain(p.style) }),
+  Value: AnimatedValue,
+  spring: (value: AnimatedValue, config: { toValue: number }) => ({ start: (done?: (r: { finished: boolean }) => void) => { value.setValue(config.toValue); done?.({ finished: true }); } }),
+};
+export const PanResponder = { create: () => ({ panHandlers: {} }) };

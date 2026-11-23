@@ -1,12 +1,14 @@
 /* Presentational pieces of the full-screen map: floating controls over the map, the bottom sheet,
  * the start/end card and the place search sheet. No routing or GPS logic lives here. */
-import type { ReactNode } from 'react';
-import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ActivityIndicator, Animated, FlatList, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import type { CampusPlace, TravelMode } from '../../contracts.ts';
+import type { CampusBuilding, CampusPlace, TravelMode } from '../../contracts.ts';
 import { floating, theme as t } from '../../ui/theme.ts';
 import { Empty, Notice } from '../../ui/kit.tsx';
 import { TRAVEL_MODES } from './model.ts';
+import { OUTDOOR_GROUP, TREE_ROOT, buildingGroups, facilityGroups, floorText, levelGroups, treeUp, type TreePath } from './placeTree.ts';
+import { SHEET_COLLAPSED_HEIGHT, SHEET_TAP_SLOP, dragHeight, releaseSnap, tapSnap, toggleLabel, type SheetHeights, type SheetSnap } from './sheetModel.ts';
 
 export const SEARCH_PLACEHOLDER = '건물 이름, 동 번호, 강의실 검색';
 
@@ -96,13 +98,86 @@ export function RoutePill({ from, to, onBack }: { from: CampusPlace | null; to: 
 }
 
 /* ---------- Bottom sheet ---------- */
-export function Sheet({ children, maxHeight, footer }: { children: ReactNode; maxHeight: number; footer?: ReactNode }) {
-  return <View style={[c.sheet, { maxHeight }]}>
-    <View style={c.handle} />
-    <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={c.sheetContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled>{children}</ScrollView>
-    {footer && <View style={c.sheetFooter}>{footer}</View>}
-  </View>;
+/**
+ * Draggable bottom sheet with three states: expanded / default / collapsed (only the handle and a mini bar stay, so the
+ * map fills the screen). Drag the handle row up or down, tap it, or use the chevron button to switch.
+ */
+export function Sheet({ children, maxHeight, defaultHeight, footer, peek, initialSnap = 'default' }: {
+  children: ReactNode; maxHeight: number; defaultHeight?: number; footer?: ReactNode;
+  /** Mini bar shown while collapsed (e.g. "12분 · 340m"). */
+  peek?: ReactNode; initialSnap?: SheetSnap;
+}) {
+  const heights: SheetHeights = useMemo(() => ({
+    expanded: maxHeight,
+    default: Math.min(maxHeight, defaultHeight ?? Math.round(maxHeight * 0.6)),
+    collapsed: SHEET_COLLAPSED_HEIGHT,
+  }), [maxHeight, defaultHeight]);
+  const [snap, setSnap] = useState<SheetSnap>(initialSnap);
+  const [showBody, setShowBody] = useState(initialSnap !== 'collapsed');
+  const limit = useRef(new Animated.Value(heights[initialSnap])).current;
+  const state = useRef({ snap, heights });
+  state.current = { snap, heights };
+
+  const go = (next: SheetSnap) => {
+    if (next !== 'collapsed') setShowBody(true);
+    setSnap(next);
+    Animated.spring(limit, { toValue: state.current.heights[next], useNativeDriver: false, bounciness: 0, speed: 18 })
+      .start(({ finished }) => { if (finished && next === 'collapsed') setShowBody(false); });
+  };
+  // Heights change with the window or the screen: keep the current state at its new height.
+  useEffect(() => { limit.setValue(heights[state.current.snap]); }, [heights, limit]);
+
+  const pan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 4,
+    onPanResponderGrant: () => setShowBody(true),
+    onPanResponderMove: (_e, g) => limit.setValue(dragHeight(state.current.snap, g.dy, state.current.heights)),
+    onPanResponderRelease: (_e, g) => {
+      const tap = Math.abs(g.dy) < SHEET_TAP_SLOP && Math.abs(g.dx) < SHEET_TAP_SLOP;
+      go(tap ? tapSnap(state.current.snap) : releaseSnap(state.current.snap, g.dy, g.vy, state.current.heights));
+    },
+    onPanResponderTerminate: () => go(state.current.snap),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
+
+  const collapsed = snap === 'collapsed';
+  return <Animated.View style={[c.sheet, { maxHeight: limit }]}>
+    <View style={c.handleRow} {...pan.panHandlers}>
+      <View accessible accessibilityRole="adjustable" accessibilityLabel={`하단 시트 ${collapsed ? '접힘' : snap === 'expanded' ? '펼침' : '기본'}`} style={c.handleHit}><View style={c.handle} /></View>
+      <View style={c.sheetTools}>
+        {!collapsed && snap !== 'expanded' && <Pressable accessibilityRole="button" accessibilityLabel="시트 크게 펼치기" hitSlop={6} onPress={() => go('expanded')} style={c.sheetTool}><Chevron up /></Pressable>}
+        <Pressable accessibilityRole="button" accessibilityLabel={toggleLabel(snap)} hitSlop={6} onPress={() => go(tapSnap(snap))} style={c.sheetTool}><Chevron up={collapsed} /></Pressable>
+      </View>
+    </View>
+    {collapsed && !showBody ? (peek ? <View style={c.peek}>{peek}</View> : null) : <>
+      <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={c.sheetContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled>{children}</ScrollView>
+      {footer && <View style={c.sheetFooter}>{footer}</View>}
+    </>}
+  </Animated.View>;
 }
+function Chevron({ up }: { up: boolean }) {
+  return <View style={{ width: 12, height: 12, marginTop: up ? 5 : -5, borderLeftWidth: 2.4, borderTopWidth: 2.4, borderColor: t.color.muted, transform: [{ rotate: up ? '45deg' : '225deg' }] }} />;
+}
+
+/* ---------- Restroom quick button and the wheelchair switch ---------- */
+export function RestroomChip({ onPress }: { onPress: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel="가장 가까운 화장실 찾기" onPress={onPress} style={({ pressed }) => [c.quickChip, pressed && { backgroundColor: t.color.sunken }]}>
+    <View style={c.wcBadge}><Text style={c.wcText}>WC</Text></View>
+    <Text style={c.quickChipText}>가장 가까운 화장실</Text>
+  </Pressable>;
+}
+/** "휠체어 가능" switch: on → wheelchair travel mode (and wheelchair restrooms only), re-searched at once. */
+export function WheelchairToggle(props: { value: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
+  return <SwitchRow label="휠체어 가능" {...props} />;
+}
+export function SwitchRow({ label, value, onChange, disabled = false }: { label: string; value: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
+  return <Pressable accessibilityRole="switch" accessibilityLabel={label} accessibilityState={{ checked: value, disabled }} disabled={disabled} onPress={() => onChange(!value)}
+    style={[c.toggleRow, disabled && { opacity: 0.5 }]}>
+    <Text style={c.toggleText}>{label}</Text>
+    <View style={[c.track, value && c.trackOn]}><View style={[c.knob, value && c.knobOn]} /></View>
+  </Pressable>;
+}
+
 export function ModeChips({ value, onChange }: { value: TravelMode; onChange: (mode: TravelMode) => void }) {
   return <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
     {TRAVEL_MODES.map((item) => {
@@ -130,18 +205,27 @@ export function Stat({ value, label }: { value: string; label: string }) {
 }
 
 /* ---------- Place search ---------- */
-export type SearchTarget = 'from' | 'to' | 'place';
-export function PlaceSearch({ target, query, onQuery, results, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy }: {
+export type SearchTarget = 'from' | 'to' | 'place' | 'restroom';
+const SEARCH_TITLE: Record<SearchTarget, string> = { place: '장소 검색', from: '출발지 검색', to: '목적지 검색', restroom: '화장실 찾기 · 출발 위치' };
+/**
+ * Search sheet. With a query: a flat filtered list. Without one: a drill-down list
+ * (building → floor → facilities such as restrooms, classrooms and entrances).
+ */
+export function PlaceSearch({ target, query, onQuery, results, places, buildings, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy }: {
   target: SearchTarget | null; query: string; onQuery: (value: string) => void; results: readonly CampusPlace[]; detail: (place: CampusPlace) => string;
+  places: readonly CampusPlace[]; buildings: readonly CampusBuilding[];
   emptyMessage: string; demoNotice: boolean; maxWidth: number; padding: number; busy: boolean;
   onClose: () => void; onChoose: (place: CampusPlace) => void; onCurrent: (() => void) | null; onMapPick: () => void;
 }) {
-  const word = target === 'from' ? '출발' : '도착';
+  const word = target === 'to' ? '도착' : '출발';
+  const [path, setPath] = useState<TreePath>(TREE_ROOT);
+  useEffect(() => setPath(TREE_ROOT), [target]);
+  const browsing = query.trim() === '';
   return <Modal visible={target !== null} animationType="slide" onRequestClose={onClose}><SafeAreaView style={{ flex: 1, backgroundColor: t.color.surface }}>
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, width: '100%', maxWidth, alignSelf: 'center', paddingHorizontal: padding, paddingTop: 8, gap: 12 }}>
       <View style={c.searchHeader}>
         <Pressable accessibilityRole="button" accessibilityLabel="닫기" onPress={onClose} style={c.iconButton}><BackIcon /></Pressable>
-        <Text accessibilityRole="header" style={c.searchTitle}>{target === 'place' ? '장소 검색' : target === 'from' ? '출발지 검색' : '목적지 검색'}</Text>
+        <Text accessibilityRole="header" style={c.searchTitle}>{target ? SEARCH_TITLE[target] : ''}</Text>
       </View>
       <View style={c.searchField}>
         <SearchIcon color={t.color.faint} />
@@ -157,13 +241,47 @@ export function PlaceSearch({ target, query, onQuery, results, detail, emptyMess
         </Pressable>
       </View>}
       {demoNotice && <Notice>가상 시험 데이터입니다. 실제 장소가 아닙니다.</Notice>}
-      <FlatList data={results} keyboardShouldPersistTaps="handled" keyExtractor={(item) => item.id} ListEmptyComponent={<Empty message={emptyMessage} />}
-        renderItem={({ item }) => <Pressable accessibilityRole="button" onPress={() => onChoose(item)} style={({ pressed }) => [c.result, pressed && { backgroundColor: t.color.sunken }]}>
-          <View style={c.resultPin}><View style={c.resultPinDot} /></View>
-          <View style={{ flex: 1, gap: 2 }}><Text style={c.resultName}>{item.name}</Text><Text style={c.resultDetail}>{detail(item)}</Text></View>
-        </Pressable>} />
+      {browsing && places.length > 0
+        ? <PlaceTree places={places} buildings={buildings} path={path} onPath={setPath} onChoose={onChoose} detail={detail} />
+        : <FlatList data={results} keyboardShouldPersistTaps="handled" keyExtractor={(item) => item.id} ListEmptyComponent={<Empty message={emptyMessage} />}
+          renderItem={({ item }) => <PlaceRow place={item} detail={detail(item)} onPress={() => onChoose(item)} />} />}
     </KeyboardAvoidingView>
   </SafeAreaView></Modal>;
+}
+function PlaceRow({ place, detail, onPress }: { place: CampusPlace; detail: string; onPress: () => void }) {
+  return <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [c.result, pressed && { backgroundColor: t.color.sunken }]}>
+    <View style={c.resultPin}><View style={c.resultPinDot} /></View>
+    <View style={{ flex: 1, gap: 2 }}><Text style={c.resultName}>{place.name}</Text><Text style={c.resultDetail}>{detail}</Text></View>
+  </Pressable>;
+}
+function TreeRow({ title, detail, onPress, label }: { title: string; detail: string; onPress: () => void; label?: string }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label ?? `${title}, ${detail}`} onPress={onPress} style={({ pressed }) => [c.result, pressed && { backgroundColor: t.color.sunken }]}>
+    <View style={{ flex: 1, gap: 2 }}><Text style={c.resultName}>{title}</Text><Text style={c.resultDetail}>{detail}</Text></View>
+    <Text style={c.treeArrow}>›</Text>
+  </Pressable>;
+}
+/** Building → floor → facilities drill-down. */
+export function PlaceTree({ places, buildings, path, onPath, onChoose, detail }: {
+  places: readonly CampusPlace[]; buildings: readonly CampusBuilding[]; path: TreePath; onPath: (path: TreePath) => void;
+  onChoose: (place: CampusPlace) => void; detail: (place: CampusPlace) => string;
+}) {
+  const building = path.building === OUTDOOR_GROUP ? { name: '야외 장소' } : buildings.find((b) => b.id === path.building);
+  const atFacilities = path.building !== null && (path.building === OUTDOOR_GROUP || path.level !== null);
+  const crumb = path.building === null ? '건물을 골라 주세요' : atFacilities && path.level !== null ? `${building?.name ?? ''} · ${floorText(path.level)}` : building?.name ?? '';
+  return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
+    <View style={c.treeHeader}>
+      {path.building !== null && <Pressable accessibilityRole="button" accessibilityLabel="위 단계로" onPress={() => onPath(treeUp(path))} style={c.iconButton}><BackIcon color={t.color.muted} /></Pressable>}
+      <Text accessibilityRole="header" style={c.treeTitle}>{crumb}</Text>
+    </View>
+    {path.building === null && buildingGroups(places, buildings).map((g) => <TreeRow key={g.id} title={g.name} detail={g.id === OUTDOOR_GROUP ? `장소 ${g.count}곳` : `${g.levelCount}개 층 · 장소 ${g.count}곳`}
+      onPress={() => onPath({ building: g.id, level: null })} />)}
+    {path.building !== null && !atFacilities && levelGroups(places, path.building).map((l) => <TreeRow key={l.level} title={l.label} detail={`시설 ${l.count}곳`}
+      label={`${building?.name ?? ''} ${l.label}, 시설 ${l.count}곳`} onPress={() => onPath({ building: path.building, level: l.level })} />)}
+    {atFacilities && facilityGroups(places, path.building!, path.level).map((group) => <View key={group.kind}>
+      <Text style={c.treeSection}>{group.label} {group.places.length}</Text>
+      {group.places.map((place) => <PlaceRow key={place.id} place={place} detail={detail(place)} onPress={() => onChoose(place)} />)}
+    </View>)}
+  </ScrollView>;
 }
 
 const c = StyleSheet.create({
@@ -183,8 +301,27 @@ const c = StyleSheet.create({
   endpointDivider: { borderBottomWidth: 1, borderColor: t.color.divider },
   endpointText: { flex: 1, fontSize: 16, fontWeight: '700', color: t.color.text },
   endpointPlaceholder: { color: t.color.faint, fontWeight: '500' },
-  sheet: { flexShrink: 0, marginTop: -18, borderTopLeftRadius: t.radii.sheet, borderTopRightRadius: t.radii.sheet, backgroundColor: t.color.surface, ...floating, shadowOffset: { width: 0, height: -3 } },
-  handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#D5DCE5', marginTop: 8, marginBottom: 4 },
+  sheet: { flexShrink: 0, marginTop: -18, overflow: 'hidden', borderTopLeftRadius: t.radii.sheet, borderTopRightRadius: t.radii.sheet, backgroundColor: t.color.surface, ...floating, shadowOffset: { width: 0, height: -3 } },
+  handleRow: { minHeight: 28, justifyContent: 'center' },
+  handleHit: { alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 40 },
+  handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#D5DCE5' },
+  sheetTools: { position: 'absolute', right: 10, top: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 2 },
+  sheetTool: { width: 36, height: 32, alignItems: 'center', justifyContent: 'center' },
+  peek: { paddingHorizontal: 20, paddingBottom: 10, minHeight: 32, justifyContent: 'center' },
+  quickChip: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, paddingLeft: 6, paddingRight: 14, borderRadius: 20, backgroundColor: t.color.surface, ...floating },
+  quickChipText: { fontSize: 14, fontWeight: '800', color: t.color.text },
+  wcBadge: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#2F6FD6', alignItems: 'center', justifyContent: 'center' },
+  wcText: { color: 'white', fontSize: 10, fontWeight: '900', letterSpacing: -0.3 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, minHeight: 44 },
+  toggleText: { fontSize: 15, fontWeight: '800', color: t.color.text },
+  track: { width: 48, height: 28, borderRadius: 14, backgroundColor: '#C9D1DC', padding: 3, justifyContent: 'center' },
+  trackOn: { backgroundColor: t.color.primary },
+  knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: 'white' },
+  knobOn: { alignSelf: 'flex-end' },
+  treeHeader: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 44 },
+  treeTitle: { fontSize: 15, fontWeight: '800', color: t.color.muted, flexShrink: 1 },
+  treeArrow: { fontSize: 22, color: t.color.faint, fontWeight: '600' },
+  treeSection: { marginTop: 14, marginBottom: 2, fontSize: 13, fontWeight: '800', color: t.color.primary },
   sheetContent: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16, gap: 14 },
   sheetFooter: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 12, borderTopWidth: 1, borderColor: t.color.divider, gap: 8 },
   mode: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 20, backgroundColor: t.color.sunken, borderWidth: 1, borderColor: t.color.border },

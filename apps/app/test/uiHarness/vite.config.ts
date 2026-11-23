@@ -17,6 +17,7 @@ export default defineConfig({
     { find: /^expo-status-bar$/, replacement: local('./statusBar.tsx') },
     { find: /.*\/MapCanvas(?:\.web)?\.tsx$/, replacement: local('./map.tsx') },
     { find: /.*\/PhotoViewerModal\.tsx$/, replacement: local('./photos.tsx') },
+    { find: /.*\/RoadviewScreen\.tsx$/, replacement: local('./roadview.tsx') },
   ] },
   server: { host: '127.0.0.1', port: 5199, strictPort: true, fs: { allow: [fileURLToPath(new URL('../../../../', import.meta.url))] } },
 });

@@ -166,6 +166,7 @@ export function FloorplanSheet({ buildingName, buildingId, level, polygon, endpo
           <Text style={styles.result}>지점 {result.summary.nodeCount}개 · 복도 {result.summary.edgeCount}개를 찾았습니다.</Text>
           {warnings.slice(0, 3).map((w, i) => <Text key={i} style={[styles.note, styles.warn]}>· {w}</Text>)}
           {warnings.length > 3 && <Text style={styles.note}>그 밖의 알림 {warnings.length - 3}개</Text>}
+          <Text style={styles.note}>다른 층에 이미 매핑된 계단·엘리베이터가 있으면 자동으로 수직 연결합니다(확인 필요로 표시).</Text>
           <View style={styles.row}>
             <BigButton label="지도에 반영" onPress={() => {
               if (onApply(result, rotation)) onClose();

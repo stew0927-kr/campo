@@ -70,7 +70,7 @@ const added = (before: EditState, after: EditState, kind: 'nodes' | 'edges') => 
 describe('applyFloorplanDraft', () => {
   it('turns a small draft into one runnable action with the expected points and lines', () => {
     const r = applied(smallDraft());
-    expect(r.counts).toEqual({ nodes: 5, edges: 3, reused: 0, skippedEdges: 0 });
+    expect(r.counts).toEqual({ nodes: 5, edges: 3, reused: 0, skippedEdges: 0, vertical: { stairs: 0, elevators: 0 } });
     const after = run(start, r);
     const nodes = added(start, after, 'nodes').map((id) => after.nodes[id]!);
     const edges = added(start, after, 'edges').map((id) => after.edges[id]!);

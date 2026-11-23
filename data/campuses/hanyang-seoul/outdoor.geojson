@@ -1,1 +1,10 @@
-{"type":"FeatureCollection","features":[]}
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"e_out_1gdrc6","geometry":{"type":"LineString","coordinates":[[127.046429725,37.555801814],[127.04647904399002,37.55579453024892]]},"properties":{"kind":"edge","highway":"footway","step_free":null,"edge_type":"outdoor","from":"n_out_4frlza","to":"n_out_hl8nej","bidirectional":true,"source":"estimate","rev":1}},
+{"type":"Feature","id":"e_out_ui291f","geometry":{"type":"LineString","coordinates":[[127.046349957,37.555360063],[127.04647904399002,37.55579453024892]]},"properties":{"kind":"edge","highway":"ramp","step_free":null,"edge_type":"outdoor","from":"n_out_iza0d6","to":"n_out_hl8nej","bidirectional":true,"source":"estimate","rev":1}},
+{"type":"Feature","id":"n_out_3kjpeg","geometry":{"type":"Point","coordinates":[127.04608265561447,37.55578393586257]},"properties":{"kind":"node","node_type":"outdoor","building_id":null,"level":null,"source":"estimate","rev":1}},
+{"type":"Feature","id":"n_out_4frlza","geometry":{"type":"Point","coordinates":[127.046429725,37.555801814]},"properties":{"kind":"node","node_type":"outdoor","building_id":null,"level":null,"source":"estimate","rev":1}},
+{"type":"Feature","id":"n_out_b3b1od","geometry":{"type":"Point","coordinates":[127.0461395512003,37.555645834740716]},"properties":{"kind":"node","node_type":"outdoor","building_id":null,"level":null,"source":"estimate","rev":1}},
+{"type":"Feature","id":"n_out_hl8nej","geometry":{"type":"Point","coordinates":[127.04647904399002,37.55579453024892]},"properties":{"kind":"node","node_type":"outdoor","building_id":null,"level":null,"source":"estimate","rev":1}},
+{"type":"Feature","id":"n_out_iza0d6","geometry":{"type":"Point","coordinates":[127.046349957,37.555360063]},"properties":{"kind":"node","node_type":"outdoor","building_id":null,"level":null,"source":"estimate","rev":1}},
+{"type":"Feature","id":"plaza_x6kryy","geometry":{"type":"Polygon","coordinates":[[[127.045921744,37.555812553],[127.045843044,37.555756401],[127.045903053,37.555558311],[127.046095868,37.555516978],[127.046180471,37.55576654],[127.045921744,37.555812553]]]},"properties":{"kind":"plaza","source":"editor","rev":1}}
+]}

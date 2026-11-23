@@ -1,0 +1,6 @@
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"n_OSMw187181264_6_elevator_stop_x5nu2q","geometry":{"type":"Point","coordinates":[127.04632032991242,37.555849350291965]},"properties":{"kind":"node","node_type":"elevator_stop","building_id":"bldg_OSMw187181264","level":6,"elevator_id":"OSMw187181264_elevA","source":"estimate","rev":1}},
+{"type":"Feature","id":"n_OSMw187181264_6_restroom_wve7v8","geometry":{"type":"Point","coordinates":[127.04634822094204,37.555817792664584]},"properties":{"kind":"node","node_type":"restroom","restroom_gender":"unisex","wheelchair":"unknown","changing_table":null,"building_id":"bldg_OSMw187181264","level":6,"source":"estimate","sync_group":"sg_scr8i5","rev":1}},
+{"type":"Feature","id":"n_OSMw187181264_6_stair_landing_h0rwg9","geometry":{"type":"Point","coordinates":[127.04624828137202,37.55550576049744]},"properties":{"kind":"node","node_type":"stair_landing","building_id":"bldg_OSMw187181264","level":6,"source":"estimate","rev":1}},
+{"type":"Feature","id":"n_OSMw187181264_6_stair_landing_xupmkk","geometry":{"type":"Point","coordinates":[127.04629346211959,37.555837691698414]},"properties":{"kind":"node","node_type":"stair_landing","building_id":"bldg_OSMw187181264","level":6,"source":"estimate","rev":1}}
+]}

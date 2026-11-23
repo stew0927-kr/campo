@@ -133,14 +133,53 @@ describe('outputs', () => {
     expect(convertOverpass(sample, { bbox: BBOX }).collection).toEqual(collection);
     expect(stats.kept).toEqual({ building: 5, road: 2, footway: 1, steps: 1, green: 2, water: 1 });
   });
-  it('builds a MapLibre style whose layers all point at the sketch source', () => {
+  it('builds a flat 2D base style whose layers all point at the sketch source', () => {
     const style = buildSketchStyle({ center: [127.045, 37.557] });
     expect(style.version).toBe(8);
     const ids = style.layers.map((l) => l.id);
-    expect(ids).toEqual(expect.arrayContaining(['road', 'footway', 'steps', 'green', 'water', 'building-3d']));
+    expect(ids).toEqual(['background', 'water', 'green', 'road-casing', 'road', 'building-flat', 'building-outline']);
     for (const l of style.layers) if (l.type !== 'background') expect(Object.keys(style.sources)).toContain(l.source);
-    expect(JSON.stringify(style)).toContain('height_m');
     expect(style.sources['campo-sketch'].attribution).toContain('OpenStreetMap');
+  });
+  it('draws no 3D extrusion and no OSM footway/steps layers', () => {
+    const style = buildSketchStyle();
+    expect(style.layers.map((l) => l.type)).not.toContain('fill-extrusion');
+    expect(style.layers.map((l) => l.id)).not.toEqual(expect.arrayContaining(['footway']));
+    expect(style.layers.map((l) => l.id)).not.toEqual(expect.arrayContaining(['steps']));
+    const json = JSON.stringify(style);
+    expect(json).not.toContain('"footway"');
+    expect(json).not.toContain('"steps"');
+    expect(json).not.toContain('height_m');
+  });
+  it('shows flat buildings at every zoom level', () => {
+    const style = buildSketchStyle();
+    const flat = style.layers.find((l) => l.id === 'building-flat') as Record<string, unknown>;
+    expect(flat.type).toBe('fill');
+    expect(flat).not.toHaveProperty('minzoom');
+    expect(flat).not.toHaveProperty('maxzoom');
+    const outline = style.layers.find((l) => l.id === 'building-outline') as Record<string, unknown>;
+    expect(outline).not.toHaveProperty('minzoom');
+    expect(outline).not.toHaveProperty('maxzoom');
+  });
+  it('keeps the agreed flat-base palette', () => {
+    const style = buildSketchStyle();
+    const color = (id: string) => {
+      const paint = (style.layers.find((l) => l.id === id) as { paint: Record<string, unknown> }).paint;
+      return paint['background-color'] ?? paint['fill-color'] ?? paint['line-color'];
+    };
+    expect(color('background')).toBe('#f4f1ea');
+    expect(color('water')).toBe('#cfe3f2');
+    expect(color('green')).toBe('#e1edd4');
+    expect(color('road-casing')).toBe('#e0dbd0');
+    expect(color('road')).toBe('#ffffff');
+    expect(color('building-flat')).toBe('#e7e2d8');
+    expect(color('building-outline')).toBe('#d2ccc0');
+  });
+  it('still keeps footway/steps/height data in the GeoJSON for optional use', () => {
+    const kinds = new Set(collection.features.map((f) => f.properties.kind));
+    expect(kinds).toContain('footway');
+    expect(kinds).toContain('steps');
+    expect(collection.features.some((f) => f.properties.height_m != null)).toBe(true);
   });
   it('builds an Overpass query in south,west,north,east order', () => {
     expect(buildOverpassQuery(BBOX)).toContain('(37.553,127.0395,37.5615,127.0505)');

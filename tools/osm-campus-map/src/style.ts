@@ -1,4 +1,7 @@
-// MapLibre style preset (light, Naver-like sketch tone) for campus-sketch.geojson.
+// MapLibre style preset for campus-sketch.geojson: flat 2D base map (B안).
+// Only background, water, green, roads (casing + fill) and flat buildings are drawn, so the team's own
+// surveyed paths and flat-ground layers can be stacked on top. No 3D extrusion, and OSM footway/steps
+// are NOT drawn (they stay in the GeoJSON for optional use: add a layer filtered on kindIs('footway'|'steps')).
 export const SKETCH_SOURCE_ID = 'campo-sketch';
 export const OSM_ATTRIBUTION = '© OpenStreetMap 기여자';
 
@@ -26,16 +29,16 @@ export function buildSketchStyle(opts: StyleOptions = {}) {
       { id: 'background', type: 'background', paint: { 'background-color': '#f4f1ea' } },
       {
         id: 'water', type: 'fill', source: src, filter: kindIs('water'),
-        paint: { 'fill-color': '#c9dff0' },
+        paint: { 'fill-color': '#cfe3f2' },
       },
       {
         id: 'green', type: 'fill', source: src, filter: kindIs('green'),
-        paint: { 'fill-color': '#dbe9cc' },
+        paint: { 'fill-color': '#e1edd4' },
       },
       {
         id: 'road-casing', type: 'line', source: src, filter: kindIs('road'),
         layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#d8d2c4', 'line-width': widths(3, 8, 28) },
+        paint: { 'line-color': '#e0dbd0', 'line-width': widths(3, 8, 28) },
       },
       {
         id: 'road', type: 'line', source: src, filter: kindIs('road'),
@@ -43,41 +46,12 @@ export function buildSketchStyle(opts: StyleOptions = {}) {
         paint: { 'line-color': '#ffffff', 'line-width': widths(2, 6, 24) },
       },
       {
-        id: 'footway', type: 'line', source: src, filter: kindIs('footway'),
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': '#e3c9a0',
-          'line-width': widths(1, 2, 7),
-          'line-dasharray': [2, 1.5],
-        },
-      },
-      {
-        id: 'steps', type: 'line', source: src, filter: kindIs('steps'),
-        layout: { 'line-join': 'round' },
-        paint: {
-          'line-color': '#c98f5a',
-          'line-width': widths(1.5, 3, 8),
-          'line-dasharray': [0.5, 0.7],
-        },
+        id: 'building-flat', type: 'fill', source: src, filter: kindIs('building'),
+        paint: { 'fill-color': '#e7e2d8' },
       },
       {
         id: 'building-outline', type: 'line', source: src, filter: kindIs('building'),
-        paint: { 'line-color': '#c9c1b2', 'line-width': widths(0.6, 1, 1.5) },
-      },
-      {
-        id: 'building-flat', type: 'fill', source: src, filter: kindIs('building'),
-        maxzoom: 16,
-        paint: { 'fill-color': '#e6e0d4' },
-      },
-      {
-        id: 'building-3d', type: 'fill-extrusion', source: src, filter: kindIs('building'),
-        minzoom: 16,
-        paint: {
-          'fill-extrusion-color': '#e9e3d7',
-          'fill-extrusion-height': ['coalesce', ['get', 'height_m'], 6],
-          'fill-extrusion-base': 0,
-          'fill-extrusion-opacity': 0.92,
-        },
+        paint: { 'line-color': '#d2ccc0', 'line-width': widths(0.6, 1, 1.5) },
       },
     ],
   };

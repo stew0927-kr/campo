@@ -60,6 +60,22 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
     // The first sheet is left clean: no "어디로 가시나요?" heading or guide caption. The restroom quick button floats on the map.
     expect(html).not.toContain('어디로 가시나요?'); expect(html).not.toContain('위치 권한 없이도 길을 찾을 수 있습니다');
     expect(html).toContain('가장 가까운 화장실'); expect(html).toContain('시트 접기');
+    // The building switch floats on the map; the sheet keeps a building list entry instead of the 실외|실내 segment.
+    expect(html).toContain('data-label="건물에서 층 고르기"'); expect(html).toContain('건물 목록'); expect(html).toContain('실외 지도');
+    // No search sheet until the search is opened.
+    expect(html).not.toContain('data-label="검색 닫기"');
+  });
+  it('renders the half-screen search sheet, the selection bar and the floor picker', async () => {
+    const { PlaceSearch, SelectionBar, FloorPicker } = await import('../src/features/map/MapChrome.tsx');
+    const base = { query: '', onQuery: () => undefined, results: [], places: [], buildings: [], detail: () => '', emptyMessage: '없음', demoNotice: false, maxWidth: 600, padding: 16, busy: false,
+      onClose: () => undefined, onChoose: () => undefined, onCurrent: null, onMapPick: () => undefined };
+    expect(render(createElement(PlaceSearch, { ...base, target: null }))).toBe('');
+    const sheet = render(createElement(PlaceSearch, { ...base, target: 'to', areaHeight: 700 }));
+    for (const label of ['목적지 검색', 'data-label="검색 닫기"', 'data-label="검색 접기"', 'data-label="검색 크게 펼치기"', '지도에서 선택']) expect(sheet).toContain(label);
+    const bar = render(createElement(SelectionBar, { name: '303호 강의실', detail: '공업센터 · 3층', onBack: () => undefined, onSearch: () => undefined }));
+    expect(bar).toContain('data-label="선택 취소"'); expect(bar).toContain('303호 강의실');
+    const floors = render(createElement(FloorPicker, { name: '공업센터', detail: '8개 층', levels: [-1, 1, 3], current: 3, onLevel: () => undefined, onClose: () => undefined }));
+    for (const label of ['B1', '1F', '3F', '3층, 지금 보는 층', 'data-label="층 선택 닫기"', '지도에서 계속 보기']) expect(floors).toContain(label);
   });
   it('browses the search list by building, then floor, then facility', async () => {
     const { PlaceSearch, PlaceTree } = await import('../src/features/map/MapChrome.tsx');

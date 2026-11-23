@@ -28,7 +28,7 @@ export interface MapProps {
   onPoint: (point: RoutePoint) => void;
   onPlace: (place: CampusPlace) => void;
   /** Move the camera to this point whenever `key` changes (search result, my location). */
-  focus?: { lat: number; lng: number; key: number } | null;
+  focus?: { lat: number; lng: number; key: number; zoom?: number } | null;
   /** A place picked from search or the map, shown before it becomes a start or end. */
   selected?: CampusPlace | null;
   /** Screen space covered by floating overlays, so fitted routes stay visible. */
@@ -43,4 +43,12 @@ export interface MapProps {
   preview?: RoadviewPreview | null;
   /** entry: index into the route's roadview frames, or null for a stand-alone photo point. */
   onOpenPreview?: (entry: number | null) => void;
+  /** '건물에서 층 고르기' 토글이 켜졌을 때 실내 매핑 건물을 강조하고 누를 수 있게 한다. */
+  highlightBuildings?: boolean;
+  /** 실내 매핑 데이터가 있어 들어갈 수 있는 건물 id(장소가 1곳 이상). */
+  mappedBuildingIds?: readonly string[];
+  /** 강조된 건물을 눌렀을 때(장소 점·경로 탭과 겹치지 않게 전파를 멈춘다). */
+  onBuildingPress?: (buildingId: string) => void;
+  /** 검색에서 골라 카메라를 옮긴 건물: 은은한 점선 테두리로 문맥을 남긴다. */
+  markedBuildingId?: string | null;
 }

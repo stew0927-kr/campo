@@ -13,6 +13,13 @@ export const theme = {
     warning: '#8A5200', warningBg: '#FFF5DF',
     scrim: 'rgba(20, 42, 68, 0.32)',
   },
+  /**
+   * Facility glyph colors on the map (icon ring, glyph and the label's leading dot). Muted and distinct per group,
+   * each at least 4.5:1 on white (WCAG AA). Start/end/primary stay reserved for endpoints and the current selection.
+   */
+  facility: {
+    door: '#5E6E82', elevator: '#0E7490', stairs: '#9A5B00', restroom: '#2F6FD6', entrance: '#18744D', place: '#5E6E82',
+  },
   space: { xs: 4, sm: 8, md: 16, lg: 24 },
   /** Radius follows hierarchy: floating pills > sheets > cards > buttons. */
   radius: 16,

@@ -1,8 +1,10 @@
-import { useId, type KeyboardEvent } from 'react';
+import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import type { PointRouteResult } from '@campo/core';
 import { plazaLines } from '../model/plazaRoute.ts';
 import { GRADE_LIMITS, slopeSummary } from '../model/elevation.ts';
 import type { Place } from '../model/places.ts';
+import { nearestLabel, nearestTitle, type RestroomWanted } from '../model/nearestRestroom.ts';
+import { RoutePlaceTree } from './RoutePlaceTree.tsx';
 import type { RouteKind } from './ui-state.ts';
 
 export const PROFILE_INFO: Record<RouteKind, { title: string; className: string }> = {
@@ -13,10 +15,13 @@ export const PROFILE_INFO: Record<RouteKind, { title: string; className: string 
 
 /** What the 출발 / 도착 boxes offer besides the places. */
 const DIRECT = '직접 선택 (지도에서 누르기)';
-const NEAREST: Record<'any' | 'wheelchair', string> = {
-  any: '가장 가까운 화장실',
-  wheelchair: '휠체어로 갈 수 있는 가장 가까운 화장실',
-};
+/** 가장 가까운 화장실 / 휠체어로 갈 수 있는 가장 가까운 화장실, with the chosen gender ('가장 가까운 여자 화장실'). */
+const nearestText = (kind: 'any' | 'wheelchair', gender: RestroomWanted) => nearestLabel(gender, kind === 'wheelchair');
+const GENDERS: { id: RestroomWanted; label: string }[] = [
+  { id: 'any', label: '전체' },
+  { id: 'male', label: '남자' },
+  { id: 'female', label: '여자' },
+];
 
 type End = 'from' | 'to';
 
@@ -33,7 +38,9 @@ interface Props {
   /** Routes drawn on the map. */
   shown: RouteKind[];
   /** 가장 가까운 화장실, when asked for (it replaces the destination). */
-  nearest: { kind: 'any' | 'wheelchair'; result: PointRouteResult } | null;
+  nearest: { kind: 'any' | 'wheelchair'; gender?: RestroomWanted; result: PointRouteResult } | null;
+  /** 전체 / 남자 / 여자 for 가장 가까운 화장실. */
+  nearestGender?: RestroomWanted;
   /** buildGraph's graph.warnings: edges the route search had to leave out. Shown when there is no route. */
   warnings: string[];
   /** Notes about the picked ends (a point in a plaza's hole). */
@@ -43,6 +50,7 @@ interface Props {
   onPick: (end: End, id: string | null) => void;
   onDirect: (end: End) => void;
   onNearest: (kind: 'any' | 'wheelchair') => void;
+  onNearestGender?: (gender: RestroomWanted) => void;
   onToggle: (kind: RouteKind) => void;
 }
 
@@ -54,12 +62,20 @@ export function RoutePanel(p: Props) {
   const toList = useId();
   const hasFrom = fromId !== null || fromPoint;
   const hasTo = toId !== null || toPoint;
+  const gender = p.nearestGender ?? 'any';
+  /** The end whose 찾아보기 is open (one at a time). */
+  const [browsing, setBrowsing] = useState<End | null>(null);
+  const browseButtons = { from: useRef<HTMLButtonElement>(null), to: useRef<HTMLButtonElement>(null) };
+  const closeBrowse = (end: End) => {
+    setBrowsing(null);
+    browseButtons[end].current?.focus();
+  };
 
   const field = (end: End, label: string, value: string | null, point: boolean) => {
     const listId = end === 'from' ? fromList : toList;
     const current = picking === end ? DIRECT
       : point ? '지도에서 고른 위치'
-      : end === 'to' && nearest ? NEAREST[nearest.kind]
+      : end === 'to' && nearest ? nearestText(nearest.kind, nearest.gender ?? gender)
       : places.find((x) => x.id === value)?.label ?? '';
     return (
       <div className="route-end">
@@ -72,16 +88,16 @@ export function RoutePanel(p: Props) {
             onChange={(e) => {
               const v = e.target.value;
               if (v === DIRECT) return p.onDirect(end);
-              if (end === 'to' && v === NEAREST.any) return p.onNearest('any');
-              if (end === 'to' && v === NEAREST.wheelchair) return p.onNearest('wheelchair');
+              if (end === 'to' && v === nearestText('any', gender)) return p.onNearest('any');
+              if (end === 'to' && v === nearestText('wheelchair', gender)) return p.onNearest('wheelchair');
               p.onPick(end, places.find((x) => x.label === v)?.id ?? null);
             }}
           />
         </label>
         <datalist id={listId}>
           <option value={DIRECT} />
-          {end === 'to' && <option value={NEAREST.any} />}
-          {end === 'to' && <option value={NEAREST.wheelchair} />}
+          {end === 'to' && <option value={nearestText('any', gender)} />}
+          {end === 'to' && <option value={nearestText('wheelchair', gender)} />}
           {places.map((x) => <option key={x.id} value={x.label} />)}
         </datalist>
         <button
@@ -93,6 +109,33 @@ export function RoutePanel(p: Props) {
         >
           직접 선택
         </button>
+        {places.length > 0 && (
+          <button
+            type="button"
+            ref={browseButtons[end]}
+            className="route-browse"
+            aria-expanded={browsing === end}
+            aria-controls={`${listId}-tree`}
+            title={`${label} 장소를 건물 → 층 → 호실 순으로 찾아봅니다.`}
+            onClick={() => setBrowsing(browsing === end ? null : end)}
+          >
+            찾아보기
+          </button>
+        )}
+        {browsing === end && (
+          <div id={`${listId}-tree`} className="route-tree-wrap">
+            <RoutePlaceTree
+              endLabel={label}
+              places={places}
+              selectedId={value}
+              onPick={(id) => {
+                p.onPick(end, id);
+                closeBrowse(end);
+              }}
+              onClose={() => closeBrowse(end)}
+            />
+          </div>
+        )}
         {picking === end && <p className="route-hint" role="status">지도에서 {label} 위치를 눌러 주세요. 가장 가까운 길에 수선을 내려 잇습니다.</p>}
       </div>
     );
@@ -108,12 +151,26 @@ export function RoutePanel(p: Props) {
       {field('to', '도착', toId, toPoint)}
       {notices.map((n) => <p key={n} className="route-note route-notice" role="status">{n}</p>)}
       <div className="nearest" role="group" aria-label="가장 가까운 화장실">
-        <button type="button" className="nearest-any" disabled={!hasFrom} title={hasFrom ? undefined : '출발 지점을 먼저 고르세요'} onClick={() => p.onNearest('any')}>{NEAREST.any}</button>
-        <button type="button" className="nearest-wheelchair" disabled={!hasFrom} title={hasFrom ? undefined : '출발 지점을 먼저 고르세요'} onClick={() => p.onNearest('wheelchair')}>{NEAREST.wheelchair}</button>
+        <div className="nearest-gender" role="radiogroup" aria-label="화장실 성별">
+          {GENDERS.map((g) => (
+            <button
+              key={g.id}
+              type="button"
+              role="radio"
+              aria-checked={gender === g.id}
+              className={gender === g.id ? 'on' : undefined}
+              onClick={() => p.onNearestGender?.(g.id)}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="nearest-any" disabled={!hasFrom} title={hasFrom ? undefined : '출발 지점을 먼저 고르세요'} onClick={() => p.onNearest('any')}>{nearestText('any', gender)}</button>
+        <button type="button" className="nearest-wheelchair" disabled={!hasFrom} title={hasFrom ? undefined : '출발 지점을 먼저 고르세요'} onClick={() => p.onNearest('wheelchair')}>{nearestText('wheelchair', gender)}</button>
       </div>
       {hasFrom && nearest && (
         <RouteCard
-          title={nearest.kind === 'wheelchair' ? '가장 가까운 휠체어 화장실 (휠체어 경로)' : '가장 가까운 화장실'}
+          title={nearestTitle(nearest.gender ?? gender, nearest.kind === 'wheelchair')}
           className={nearest.kind === 'wheelchair' ? 'route-wheelchair' : 'route-shortest'}
           result={nearest.result}
           nameOf={nameOf}

@@ -2,11 +2,12 @@
 // Everything is core's own functions run on exactly what would be saved; nothing here changes the data.
 import { useDeferredValue, useMemo } from 'react';
 import {
-  buildGraph, findNearestRestroomFrom, findRouteBetween, validateCampus,
+  buildGraph, findRouteBetween, validateCampus,
   type EditState, type PointRouteResult, type RouteEnd, type RouteSnap,
 } from '@campo/core';
 import { HOLE_NOTICE, plazaWalks, pointEnd, routeStops } from '../model/plazaRoute.ts';
 import type { RouteLine } from '../map/layers.ts';
+import { findNearestRestroomFor, type RestroomWanted } from '../model/nearestRestroom.ts';
 import { measureSummary, measureTargetOf, type MeasureSummary } from '../model/measure.ts';
 import { routePlaces } from '../model/places.ts';
 import { routeFocusOf, type RouteFocus } from '../model/routeFocus.ts';
@@ -30,7 +31,7 @@ const OUTDOOR_REF: RouteRef = { scope: OUTDOOR };
 export function useInspection(
   session: Session,
   state: EditState,
-  ui: Pick<UiState, 'panelTab' | 'routeFrom' | 'routeTo' | 'routeFromPoint' | 'routeToPoint' | 'routeShown' | 'nearest' | 'selection' | 'scope'>,
+  ui: Pick<UiState, 'panelTab' | 'routeFrom' | 'routeTo' | 'routeFromPoint' | 'routeToPoint' | 'routeShown' | 'nearest' | 'nearestGender' | 'selection' | 'scope'>,
   /** Changes when the session's measurements do (they live outside the edit history). */
   obsRev: number,
 ) {
@@ -58,11 +59,19 @@ export function useInspection(
       : []),
     [graph, ends, ui.nearest],
   );
-  /** 가장 가까운 화장실 (core findNearestRestroomFrom): any restroom by the shortest route; wheelchair restrooms by the wheelchair profile. */
-  const nearest = useMemo<{ kind: 'any' | 'wheelchair'; result: PointRouteResult } | null>(() => {
+  /**
+   * 가장 가까운 화장실 (model/nearestRestroom.ts): any restroom by the shortest route; wheelchair restrooms by the wheelchair
+   * profile; 남자 / 여자 keep every restroom with no gender limit too. 전체 is core's findNearestRestroomFrom as before.
+   */
+  const nearestGender: RestroomWanted = ui.nearestGender;
+  const nearest = useMemo<{ kind: 'any' | 'wheelchair'; gender: RestroomWanted; result: PointRouteResult } | null>(() => {
     if (!graph || !ends.from || !ui.nearest) return null;
-    return { kind: ui.nearest, result: findNearestRestroomFrom(graph, ends.from.end, ui.nearest) };
-  }, [graph, ends, ui.nearest]);
+    return {
+      kind: ui.nearest,
+      gender: nearestGender,
+      result: findNearestRestroomFor(graph, ends.from.end, { gender: nearestGender, wheelchair: ui.nearest === 'wheelchair' }),
+    };
+  }, [graph, ends, ui.nearest, nearestGender]);
   const shown = useMemo<RouteKind[]>(() => {
     if (routeShown) return routeShown;
     const fastest = fastestOf(routeResults);

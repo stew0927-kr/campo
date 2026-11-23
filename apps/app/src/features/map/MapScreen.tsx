@@ -21,10 +21,11 @@ import { DEMO_CAMPUS } from './demoCampus.ts';
 import indoorFixture from './indoorFixture.json';
 import { endpointFor, placeDetail, placesInScope, pointPlace, requestFor, searchPlaces } from './model.ts';
 import { useSensorFixes } from './useSensorFixes.ts';
-import { EndpointCard, EndpointDot, FloatChip, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, Segmented, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
+import { EndpointCard, EndpointDot, FloatChip, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, Segmented, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
 import { RoadviewScreen } from './RoadviewScreen.tsx';
 import { ROADVIEW_DEMO_CAMPUS, ROADVIEW_DEMO_CATALOG, RV } from './roadviewDemo.ts';
 import { nearestRestroom } from './restroom.ts';
+import { nearestRestroomTitle, type RestroomWanted } from './restroomGender.ts';
 import type { RoadviewPreview } from './mapTypes.ts';
 
 type Field = 'from' | 'to';
@@ -60,8 +61,10 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const [focus, setFocus] = useState<{ lat: number; lng: number; key: number } | null>(null);
   const [myLocation, setMyLocation] = useState<RoutePoint | null>(null);
   const [mapPick, setMapPick] = useState<PickTarget | null>(null);
-  /** Nearest-restroom flow: the chosen start and whether only wheelchair restrooms count. */
-  const [restroom, setRestroom] = useState<{ start: CampusPlace; wheelchair: boolean } | null>(null);
+  /** Nearest-restroom flow: the chosen start, whether only wheelchair restrooms count, and 전체/남자/여자. */
+  const [restroom, setRestroom] = useState<{ start: CampusPlace; wheelchair: boolean; gender: RestroomWanted } | null>(null);
+  /** 전체/남자/여자 picked in the restroom search sheet before a start is chosen (전체 by default). */
+  const [restroomGender, setRestroomGender] = useState<RestroomWanted>('any');
   const [roundTrip, setRoundTrip] = useState(false);
   const [preview, setPreview] = useState<RoadviewPreview | null>(null);
   const [roadview, setRoadview] = useState<{ frames: RoadviewFrame[]; index: number; route: boolean } | null>(null);
@@ -167,7 +170,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     findRoute(start, end);
   }
   function openPlan() { setSelected(null); setDevOpen(false); setView('plan'); }
-  function closePlan() { clearGps(); setTracking(false); setFrom(null); setTo(null); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null); setRoundTrip(false); setView('home'); }
+  function closePlan() { clearGps(); setTracking(false); setFrom(null); setTo(null); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null); setRestroomGender('any'); setRoundTrip(false); setView('home'); }
   function swap() {
     clearGps(); setTracking(false); setFrom(to); setTo(from); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null);
     findRoute(to, from);
@@ -176,15 +179,20 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     setMode(next);
     if (request) setRequest(requestFor(from, to, next));
   }
-  function openSearch(target: SearchTarget) { setQuery(''); setSearch(target); setPreview(null); }
+  function openSearch(target: SearchTarget) {
+    setQuery(''); setSearch(target); setPreview(null);
+    // The restroom sheet opens on the gender of the restroom shown now, else 전체.
+    if (target === 'restroom') setRestroomGender(restroom?.gender ?? 'any');
+  }
   /**
    * Nearest restroom from `start` (core findNearestRestroom), then the normal route request to it.
    * `wheelchair`: only restrooms checked as wheelchair-usable, by the wheelchair travel mode.
+   * `gender`: 전체 / 남자 / 여자 (restrooms with no gender limit count for both).
    */
-  function findRestroom(start: CampusPlace, wheelchair: boolean) {
+  function findRestroom(start: CampusPlace, wheelchair: boolean, gender: RestroomWanted) {
     clearGps(); setTracking(false); setSearch(null); setMapPick(null); setFlow(null); setSelected(null); setView('plan');
-    setFrom(start); setRestroom({ start, wheelchair });
-    const found = nearestRestroom(data.runtime, endpointFor(start), wheelchair, mode);
+    setFrom(start); setRestroom({ start, wheelchair, gender }); setRestroomGender(gender);
+    const found = nearestRestroom(data.runtime, endpointFor(start), wheelchair, mode, gender);
     if (!found.found) { setTo(null); setRequest(null); setMessage(found.message); return; }
     const target = data.places.find((p) => p.id === found.nodeId) ?? null;
     setTo(target ?? { id: found.nodeId, name: '화장실', nodeType: 'restroom', buildingId: null, level: null, lat: start.lat, lng: start.lng });
@@ -192,11 +200,16 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     setRequest(found.request);
   }
   function setWheelchair(on: boolean) {
-    if (restroom) findRestroom(restroom.start, on);
+    if (restroom) findRestroom(restroom.start, on, restroom.gender);
     else changeMode(on ? 'wheelchair' : walkingMode(state.defaultMode));
   }
+  /** 전체/남자/여자 in the result sheet: the nearest restroom is found again at once. */
+  function changeRestroomGender(gender: RestroomWanted) {
+    if (restroom) findRestroom(restroom.start, restroom.wheelchair, gender);
+    else setRestroomGender(gender);
+  }
   function pickFor(target: PickTarget, place: CampusPlace) {
-    if (target === 'restroom') findRestroom(place, mode === 'wheelchair');
+    if (target === 'restroom') findRestroom(place, mode === 'wheelchair', restroomGender);
     else choose(place, target);
   }
   function openRoadview(index: number | null) {
@@ -223,7 +236,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   }
   function switchData(next: DemoData) {
     clearGps(); setTracking(false); setDemo(next); setFrom(null); setTo(null); setRequest(null); setQuery(''); setSearch(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null);
-    setRestroom(null); setRoundTrip(false); setPreview(null); setRoadview(null);
+    setRestroom(null); setRestroomGender('any'); setRoundTrip(false); setPreview(null); setRoadview(null);
     setSelected(null); setView('home'); setDevOpen(false); setMyLocation(null); gps.reset();
   }
   /** One permission + position read shared by the locate button and the "current location" endpoint. */
@@ -327,6 +340,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const planSheet = <Sheet key={sheetKey} maxHeight={sheetMax(0.7)} defaultHeight={sheetMax(0.42)} footer={restroom ? undefined : <Button title="길찾기" disabled={!from || !to || data.status !== 'ready'} onPress={() => findRoute(from, to)} />}>
     {messageBlock}
     {restroom && <WheelchairToggle value={restroom.wheelchair} onChange={setWheelchair} />}
+    {restroom && <GenderChips value={restroom.gender} onChange={changeRestroomGender} />}
     {!restroom && <ModeChips value={mode} onChange={changeMode} />}
     {demo !== 'none' && <StatusLine>개발용 가상 경로입니다. 실제 한양대 길이나 건물이 아닙니다.</StatusLine>}
     {data.status === 'ready' && data.counts.edges === 0 && <StatusLine>실제 캠퍼스 길 데이터가 아직 없습니다. C조원 데이터 연결 후 실제 길찾기를 이용할 수 있습니다.</StatusLine>}
@@ -334,10 +348,11 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   </Sheet>;
 
   const hasPhotos = frames.some((frame) => frame.step.photo !== null);
-  const routePeek = route ? <Text style={st.peekText}>{restroom ? '가장 가까운 화장실 · ' : ''}{minutes(shownRoute!.timeSec)}분 · {Math.round(shownRoute!.distanceM)}m{trip ? ' · 왕복' : ''}</Text> : null;
+  const routePeek = route ? <Text style={st.peekText}>{restroom ? `${nearestRestroomTitle(restroom.gender)} · ` : ''}{minutes(shownRoute!.timeSec)}분 · {Math.round(shownRoute!.distanceM)}m{trip ? ' · 왕복' : ''}</Text> : null;
   const routeSheet = <Sheet key={sheetKey} maxHeight={sheetMax(0.8)} defaultHeight={sheetMax(0.46)} peek={routePeek}>
-    {restroom && <Text accessibilityRole="header" style={st.sectionTitle}>가장 가까운 화장실{to ? ` · ${to.name}` : ''}</Text>}
+    {restroom && <Text accessibilityRole="header" style={st.sectionTitle}>{nearestRestroomTitle(restroom.gender)}{to ? ` · ${to.name}` : ''}</Text>}
     <WheelchairToggle value={restroom ? restroom.wheelchair : mode === 'wheelchair'} onChange={setWheelchair} />
+    {restroom && <GenderChips value={restroom.gender} onChange={changeRestroomGender} />}
     {!restroom && <ModeChips value={mode} onChange={changeMode} />}
     {messageBlock}
     {result.message && <Notice>{result.message}</Notice>}
@@ -433,6 +448,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     <PlaceSearch target={search} query={query} onQuery={setQuery} results={matches} places={data.places} buildings={data.buildings} detail={(place) => placeDetail(place, data.buildings)}
       emptyMessage={data.places.length ? '검색 결과가 없습니다. 다른 이름으로 찾아 주세요.' : '아직 등록된 장소가 없습니다. C조원의 데이터 연결을 기다리고 있습니다.'}
       demoNotice={demo !== 'none'} maxWidth={layout.modalMaxWidth} padding={layout.padding} busy={gpsBusy}
+      restroomGender={restroomGender} onRestroomGender={setRestroomGender}
       onClose={() => setSearch(null)} onChoose={(place) => search === 'place' ? showPlace(place) : pickFor(search ?? 'to', place)}
       onCurrent={demo === 'none' ? () => { if (search && search !== 'place') void pickCurrentAs(search); } : null}
       onMapPick={() => { if (search && search !== 'place') { const target = search; setSearch(null); setView('plan'); setMapPick(target); } }} />

@@ -1066,6 +1066,7 @@ export function Workspace({ session }: { session: Session }) {
         results={routeResults}
         shown={routeShown}
         nearest={nearest}
+        nearestGender={ui.nearestGender}
         warnings={graph?.warnings ?? []}
         notices={routeNotices}
         plazaName={(id) => state.plazas[id]?.props.name ?? id}
@@ -1077,6 +1078,7 @@ export function Workspace({ session }: { session: Session }) {
           info(`지도에서 ${end === 'from' ? '출발' : '도착'} 위치를 눌러 주세요.`);
         }}
         onNearest={(kind) => patchUi({ nearest: kind, routeTo: null, routeToPoint: null, routePick: ui.routePick === 'to' ? null : ui.routePick })}
+        onNearestGender={(gender) => patchUi({ nearestGender: gender })}
         onToggle={(kind) => patchUi({ routeShown: routeShown.includes(kind) ? routeShown.filter((k) => k !== kind) : [...routeShown, kind] })}
       />
     ),

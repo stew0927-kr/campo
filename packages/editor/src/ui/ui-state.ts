@@ -54,6 +54,8 @@ export interface UiState {
   routeShown: RouteKind[] | null;
   /** 가장 가까운 화장실 asked for in the 경로 테스트 tab: any, or wheelchair-usable only. */
   nearest: 'any' | 'wheelchair' | null;
+  /** 가장 가까운 화장실's 전체 / 남자 / 여자 (전체 by default: the restroom found stays what it was before this choice). */
+  nearestGender: 'any' | 'male' | 'female';
   /** 호실 연속 입력: next room number, step, last room. */
   doorRun: DoorRun;
 }
@@ -87,6 +89,7 @@ export const initialUi: UiState = {
   routePick: null,
   routeShown: null,
   nearest: null,
+  nearestGender: 'any',
   doorRun: initialDoorRun,
 };
 

@@ -15,6 +15,10 @@ import type { Campus } from './campus.ts';
 import { ArchiveCancelled, writeArchive } from './export/archive.ts';
 import { isBarometerUsable } from './features/elevation/useBarometerSample.ts';
 import { measuredPressureBuffer, useMeasureFlow, type ElevationRepo } from './features/elevation/useMeasureFlow.ts';
+import type { FloorplanResult } from './floorplan/client.ts';
+import { FLOORPLAN_SOURCE, applyFloorplanDraft } from './floorplan/draft.ts';
+import { FLOORPLAN_ANON_KEY, FLOORPLAN_ENDPOINT } from './floorplan/env.ts';
+import { noopFloorplanStore, type FloorplanDraftStore } from './floorplan/store.ts';
 import { expoTileStore } from './map/expoTileStore.ts';
 import { MapCanvas, type HeadingEdit, type MapHandle, type MapMode } from './map/MapCanvas.tsx';
 import { projection } from './map/project.ts';
@@ -42,6 +46,7 @@ import { multiFloorChoices, planElevatorPoint, planEscalatorPoint, planMultiFloo
 import { isoLocal } from './time.ts';
 import { ActionDock, type DockAction, type DockMode } from './ui/ActionDock.tsx';
 import { CameraCapture } from './ui/CameraCapture.tsx';
+import { FloorplanSheet, type Rotation } from './ui/floorplanSheet.tsx';
 import { bearingDeg, wholeDegrees } from './ui/dial.ts';
 import { DoorRunPanel, HeadingPanel, LinkPanel, StopwatchPanel } from './ui/modePanels.tsx';
 import { BuildingInfoSheet, CopySelectionSheet, EdgePropsSheet, EscalatorSheet, StripSheet, type EscalatorTrip, type StripAnswer } from './ui/selectSheets.tsx';
@@ -66,7 +71,7 @@ interface Props {
 
 type Sheet =
   | 'door' | 'floor' | 'portal' | 'scope' | 'export' | 'info' | 'building' | 'copy' | 'photos' | 'settings'
-  | 'escalator' | 'restroom' | 'edgeProps' | 'copySelection' | 'buildingInfo' | 'strip' | 'pressure' | 'pressurePoint' | null;
+  | 'escalator' | 'restroom' | 'edgeProps' | 'copySelection' | 'buildingInfo' | 'strip' | 'pressure' | 'pressurePoint' | 'floorplan' | null;
 interface Notice {
   text: string;
   tone: 'info' | 'error';
@@ -106,6 +111,8 @@ const SAME_SPOT_M = 3;
 /** The round menu button of ActionDock (the measure button sits on top of it). */
 const DOCK_FAB = 54;
 const tileCache = createTileCache(expoTileStore);
+/** Where applied floorplan drafts are kept on the server: nothing yet, until campus_map_files is open. */
+const floorplanStore: FloorplanDraftStore = noopFloorplanStore();
 
 export function SurveyScreen({ campus, session, store, greeting, onReset }: Props) {
   const insets = useSafeAreaInsets();
@@ -503,6 +510,35 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
     if (scope.kind === 'building') start();
     else notify('건물 안의 층에서 쓰는 도구입니다. 위쪽에서 건물과 층을 먼저 골라 주세요.', 'error');
   };
+  // ---- 안내도 자동 매핑 ----
+  /** Put the server's draft on this floor: one history entry, the surveyor stays on the floor with no tool on. */
+  const applyFloorplan = (result: FloorplanResult, rotationDeg: Rotation): boolean => {
+    if (scope.kind !== 'building') return false;
+    const at = { kind: 'building', buildingId: scope.buildingId, level: scope.level } as const;
+    const r = applyFloorplanDraft({ state, ctx: session.ctx, scope: at, geojson: result.geojson, source: FLOORPLAN_SOURCE });
+    if ('error' in r) {
+      notify(r.error, 'error');
+      return false;
+    }
+    let warnings: string[] = [];
+    if (r.action) {
+      // edit() leaves the surveyor on `at` already; a moveTo() after it would be a second 되돌리기 step.
+      const done = session.edit(r.action, at, null);
+      if ('error' in done) {
+        notify(done.error, 'error');
+        return false;
+      }
+      warnings = done.warnings;
+    } else {
+      session.moveTo(at);
+    }
+    setTool(null);
+    notify([...r.notices, ...warnings].join(' '));
+    floorplanStore
+      .save({ campus: session.campus, buildingId: at.buildingId, level: at.level, rotationDeg, geojson: result.geojson, createdAt: isoLocal(new Date()) })
+      .catch((err: Error) => notify(`안내도 초안을 서버에 저장하지 못했습니다. 지도에는 그대로 반영되어 있습니다. ${err.message}`, 'error'));
+    return true;
+  };
   // ---- 외곽선 수정 ----
 
   const startOutline = (buildingId: string, level: number | null): void => {
@@ -800,6 +836,7 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
   const tools: DockAction[] = [
     { id: 'select', label: '다중선택', hint: '여러 지점·구간을 연속으로 누르거나 끌어서 골라 복사·삭제', onPress: () => setTool({ kind: 'select' }) },
     { id: 'strip', label: '강의실 자동 연결', disabled: !indoor, hint: '복도를 따라 강의실 문을 한 번에 놓기', onPress: needFloor(() => setTool({ kind: 'strip', stage: 'corridor', edges: [], first: null })) },
+    { id: 'floorplan', label: '안내도 자동 매핑', disabled: !indoor, hint: '층별안내도 사진에서 지점·복도·문·계단을 한 번에 놓기', onPress: needFloor(() => setSheet('floorplan')) },
     { id: 'osm', label: '건물 외곽선 가져오기', hint: '십자선 자리 건물의 OSM 외곽선 가져오기', onPress: addOsmBuilding },
     { id: 'draw', label: '외곽선 그리기', hint: '외곽선을 점으로 찍어 새 건물 만들기', onPress: () => setDraft([]) },
     { id: 'outline', label: '외곽선 수정', disabled: !indoor, hint: '지금 층의 건물 외곽선 고치기', onPress: needFloor(() => scope.kind === 'building' && startOutline(scope.buildingId, scope.level)) },
@@ -1270,6 +1307,19 @@ export function SurveyScreen({ campus, session, store, greeting, onReset }: Prop
               setSheet(null);
               notify(`${pointTitle(snapped)}을(를) 옮길 자리에 십자선을 맞춰 주세요.`);
             }}
+            onClose={closeSheet}
+          />
+        )}
+        {sheet === 'floorplan' && scope.kind === 'building' && here && (
+          <FloorplanSheet
+            buildingName={here.props.name}
+            buildingId={scope.buildingId}
+            level={scope.level}
+            polygon={outlineOfLevel(here, scope.level)[0] ?? []}
+            endpoint={FLOORPLAN_ENDPOINT}
+            anonKey={FLOORPLAN_ANON_KEY}
+            onApply={applyFloorplan}
+            onError={(text) => notify(text, 'error')}
             onClose={closeSheet}
           />
         )}

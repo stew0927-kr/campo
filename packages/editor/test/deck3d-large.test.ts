@@ -9,6 +9,12 @@ const OX = 204000;
 const OY = 550900;
 // 320 × 320 grid cells → 2 triangles each = 204,800 mesh cells (well over the ~125k a spread argument list can take).
 const N = 320;
+// The terrain-mesh layer's props as this test uses them (deck.gl's generic `Layer` props type does not declare them).
+type MeshCell = { polygon: [number, number, number][]; z: number };
+type TerrainMeshProps = { data: MeshCell[]; getFillColor: (c: MeshCell) => number[] };
+const isTerrainMeshProps = (p: unknown): p is TerrainMeshProps =>
+  typeof p === 'object' && p !== null && Array.isArray((p as { data?: unknown }).data) && typeof (p as { getFillColor?: unknown }).getFillColor === 'function';
+
 const bigGrid = (): TerrainGrid => ({
   source: 'corrected', crs: 'EPSG:5186', originX: OX, originY: OY, res: 1, width: N, height: N,
   z: Array.from({ length: N * N }, (_, i) => 40 + 0.01 * (i % N) + 0.005 * Math.floor(i / N)),
@@ -31,10 +37,12 @@ describe('deckLayers with hundreds of thousands of terrain cells', () => {
 
   it('colours the relief against the highest cell', () => {
     const mesh = deckLayers(input).find((l) => l.id === 'terrain-mesh')!;
-    const cells = mesh.props.data as { polygon: [number, number, number][]; z: number }[];
+    const props: unknown = mesh.props;
+    if (!isTerrainMeshProps(props)) throw new Error('terrain-mesh layer has unexpected props');
+    const cells = props.data;
     let top = 1;
     for (const c of cells) if (c.z > top) top = c.z;
-    const getFill = mesh.props.getFillColor as (c: (typeof cells)[number]) => number[];
+    const getFill = props.getFillColor;
     const highest = cells.find((c) => c.z === top)!;
     expect(getFill(highest)).toEqual(getFill({ ...highest, z: top }));
     expect(getFill(highest)).not.toEqual(getFill({ ...highest, z: 0 }));

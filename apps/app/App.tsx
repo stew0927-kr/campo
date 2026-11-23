@@ -20,7 +20,7 @@ function AppContent() {
     const back = BackHandler.addEventListener('hardwareBackPress', handleBack);
     return () => back.remove();
   }, [handleBack]);
-  return <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
+  return <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
     <View style={{ flex: 1, display: state.tab === '지도·길찾기' ? 'flex' : 'none' }}><ScreenBoundary><MapScreen active={state.tab === '지도·길찾기'} photoCatalog={content.catalog} photoNotice={content.photoNotice} /></ScreenBoundary></View>
     <View style={{ flex: 1, display: state.tab === '논술' ? 'flex' : 'none' }}><ScreenBoundary>{content.data ? <EssayScreen data={content.data} active={state.tab === '논술'} {...sourceProps} /> : <Loading />}</ScreenBoundary></View>
     <View style={{ flex: 1, display: state.tab === '축제' ? 'flex' : 'none' }}><ScreenBoundary>{content.data ? <FestivalScreen data={content.data} active={state.tab === '축제'} {...sourceProps} /> : <Loading />}</ScreenBoundary></View>

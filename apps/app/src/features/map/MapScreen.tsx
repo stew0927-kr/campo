@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import * as Location from 'expo-location';
 import type { BundledCampus } from '../../campus/types.ts';
-import type { CampusPlace, CampusRouteRequest, TravelMode, PhotoCatalog } from '../../contracts.ts';
+import type { CampusPlace, CampusRouteRequest, TravelMode, PhotoCatalog, RoutePoint } from '../../contracts.ts';
 import { EMPTY_PHOTO_CATALOG } from '../../contracts.ts';
 import { useRoutePhotos } from '../../hooks/useRoutePhotos.ts';
 import { photoViewerPages } from '../../photos/viewerModel.ts';
@@ -15,28 +14,43 @@ import { useAppState } from '../../state/AppState.tsx';
 import { placeDestination, planIntent } from '../../state/model.ts';
 import { useScreenBack } from '../../ui/useScreenBack.ts';
 import { screenLayout } from '../../ui/layout.ts';
-import { ActionRow, Body, Button, Card, Chips, Empty, Heading, Notice, Page, s } from '../../ui/kit.tsx';
+import { floating, theme as t } from '../../ui/theme.ts';
+import { ActionRow, Button, Notice } from '../../ui/kit.tsx';
 import { MapCanvas } from './MapCanvas.tsx';
 import { DEMO_CAMPUS } from './demoCampus.ts';
 import indoorFixture from './indoorFixture.json';
-import { endpointFor, placeDetail, placesInScope, pointPlace, requestFor, searchPlaces, TRAVEL_MODES } from './model.ts';
+import { endpointFor, placeDetail, placesInScope, pointPlace, requestFor, searchPlaces } from './model.ts';
 import { useSensorFixes } from './useSensorFixes.ts';
+import { EndpointCard, EndpointDot, FloatChip, LocateIcon, ModeChips, PlaceSearch, RoundButton, RoutePill, SearchBar, Segmented, Sheet, Stat, StatusLine, TextButton, type SearchTarget } from './MapChrome.tsx';
 
 type Field = 'from' | 'to';
+type DemoData = 'none' | 'outdoor' | 'indoor';
 const GPS_MODE_LABEL = { OUTDOOR: '실외', APPROACHING: '입구 근처', PORTAL: '출입구 전환', INDOOR: '실내', OFF_NETWORK_SUSPECT: '경로 밖 의심' } as const;
+const DEMO_LABEL: Record<DemoData, string> = { none: '실제 데이터', outdoor: '야외 가상', indoor: '실내 시험' };
+const floorLabel = (level: number | null) => level === null ? '층 미확인' : level < 0 ? `지하 ${-level}층` : `${level}층`;
+const minutes = (sec: number) => sec === 0 ? 0 : Math.max(1, Math.ceil(sec / 60));
+
+/**
+ * Full-screen map tab. Three views share one map:
+ * home (search + my location), plan (start/end input) and route (result with travel modes in the bottom sheet).
+ * Picking a point on the map temporarily hides the overlays.
+ */
 export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, photoNotice = '현장 사진은 공급 데이터 연결 대기 중입니다.' }: { active?: boolean; photoCatalog?: PhotoCatalog; photoNotice?: string }) {
   const window = useWindowDimensions();
   const layout = screenLayout(window.width, window.height, window.fontScale);
   const { state, dispatch } = useAppState();
-  const [demo, setDemo] = useState<'none' | 'outdoor' | 'indoor'>('none');
+  const [demo, setDemo] = useState<DemoData>('none');
   const data = useCampusData(demo === 'indoor' ? indoorFixture as BundledCampus : demo === 'outdoor' ? DEMO_CAMPUS : undefined);
+  const [view, setView] = useState<'home' | 'plan'>('home');
   const [from, setFrom] = useState<CampusPlace | null>(null);
   const [to, setTo] = useState<CampusPlace | null>(null);
   const [mode, setMode] = useState<TravelMode>(state.defaultMode);
   const [request, setRequest] = useState<CampusRouteRequest | null>(null);
-  const [field, setField] = useState<Field | null>(null);
+  const [search, setSearch] = useState<SearchTarget | null>(null);
   const [query, setQuery] = useState('');
-  const [mapFocus, setMapFocus] = useState(0);
+  const [selected, setSelected] = useState<CampusPlace | null>(null);
+  const [focus, setFocus] = useState<{ lat: number; lng: number; key: number } | null>(null);
+  const [myLocation, setMyLocation] = useState<RoutePoint | null>(null);
   const [mapPick, setMapPick] = useState<Field | null>(null);
   const [buildingId, setBuildingId] = useState<string | null>(null);
   const [level, setLevel] = useState<number | null>(null);
@@ -44,7 +58,11 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const [message, setMessage] = useState<string | null>(null);
   const [tracking, setTracking] = useState(false);
   const [flow, setFlow] = useState<'enter' | 'queue' | 'exit' | null>(null);
+  const [devOpen, setDevOpen] = useState(false);
+  const [placesOpen, setPlacesOpen] = useState(false);
+  const [placesExpanded, setPlacesExpanded] = useState(false);
   const gpsGeneration = useRef(0);
+  const focusKey = useRef(0);
   const lastReroute = useRef(-1);
   const result = useCampusRoute(data.runtime, request);
   const route = result.route;
@@ -58,10 +76,19 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const sensors = useSensorFixes(tracking && active && demo === 'none', gps.pushFix, stopTracking);
   const matches = useMemo(() => searchPlaces(data.places, data.buildings, query), [data.places, data.buildings, query]);
   const scopePlaces = useMemo(() => placesInScope(data.places, buildingId, level), [data.places, buildingId, level]);
-  const [placesExpanded, setPlacesExpanded] = useState(false);
   const visiblePlaces = placesExpanded ? scopePlaces : scopePlaces.slice(0, 20);
   useEffect(() => setPlacesExpanded(false), [buildingId, level, demo]);
-  useScreenBack(active && (field !== null || mapPick !== null || photoIndex !== null), useCallback(() => { setField(null); setMapPick(null); setPhotoIndex(null); }, []));
+  const screen = mapPick ? 'pick' : request ? 'route' : view;
+  const back = useCallback(() => {
+    if (photoIndex !== null) setPhotoIndex(null);
+    else if (search !== null) setSearch(null);
+    else if (devOpen) setDevOpen(false);
+    else if (mapPick !== null) setMapPick(null);
+    else if (request !== null) { setTracking(false); setRequest(null); }
+    else if (view === 'plan') closePlan();
+    else setSelected(null);
+  }, [photoIndex, search, devOpen, mapPick, request, view]);
+  useScreenBack(active && (photoIndex !== null || search !== null || devOpen || mapPick !== null || request !== null || view === 'plan' || selected !== null), back);
   const building = data.buildings.find((item) => item.id === buildingId);
   useEffect(() => () => { gpsGeneration.current++; }, []);
   useEffect(() => { setMode(state.defaultMode); setRequest(null); }, [state.defaultMode]);
@@ -82,115 +109,279 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (!intent) return;
     // An event's real destination must never resolve against the developer fixture.
     if (demo !== 'none') { switchData('none'); return; }
-    clearGps(); setTracking(false); setRequest(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null);
+    clearGps(); setTracking(false); setRequest(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null); setSelected(null); setDevOpen(false);
+    setView('plan');
     const target = intent.destination;
     const { destination: resolved, start, missingFlow } = planIntent(data.runtime, target);
     if (resolved.kind === 'selected' && !missingFlow) {
       setTo(resolved.place);
       if (start) setFrom(start);
       setBuildingId(resolved.place.buildingId); setLevel(resolved.place.level);
-      setField(null); setFlow(target.flow ?? null);
+      setSearch(null); setFlow(target.flow ?? null);
       setMessage(`${target.demo ? '시연용 정보에서 선택했습니다. ' : ''}목적지가 선택됐습니다. 출발지를 확인하고 길찾기를 눌러 주세요.${target.flow === 'queue' ? ' 대기 경로는 보행길 기준이며 실제 대기열의 모양은 아닙니다.' : ''}`);
     } else {
       setTo(null);
       if (target.flow) setFrom(null);
-      setQuery(target.searchTerm); setField('to');
+      setQuery(target.searchTerm); setSearch('to');
       setMessage(resolved.kind === 'search' ? resolved.message : '입장·퇴장 지점 연결이 아직 없습니다. 실제 출발지와 목적지를 직접 선택해 주세요.');
     }
     dispatch({ type: 'consumed', sequence: intent.sequence });
   }, [state.intent, data.runtime, demo, dispatch]);
+
   function clearGps() { gpsGeneration.current++; setGpsBusy(false); setMessage(null); }
+  function focusOn(point: RoutePoint) { setFocus({ lat: point.lat, lng: point.lng, key: ++focusKey.current }); }
+  /** Compute as soon as both ends exist; the route view replaces the input view. */
+  function findRoute(start: CampusPlace | null, end: CampusPlace | null, travel: TravelMode = mode) {
+    const next = requestFor(start, end, travel);
+    if (next && data.status === 'ready') setRequest(next);
+  }
   function choose(place: CampusPlace, target: Field) {
     clearGps();
-    if (target === 'from') setFrom(place); else setTo(place);
-    setRequest(null); setField(null); setMapPick(null); setFlow(null);
+    const start = target === 'from' ? place : from;
+    const end = target === 'to' ? place : to;
+    setFrom(start); setTo(end);
+    setRequest(null); setSearch(null); setMapPick(null); setFlow(null); setSelected(null); setView('plan');
+    findRoute(start, end);
   }
-  function switchData(next: typeof demo) {
-    clearGps(); setTracking(false); setDemo(next); setFrom(null); setTo(null); setRequest(null); setQuery(''); setField(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null); gps.reset();
+  function openPlan() { setSelected(null); setDevOpen(false); setView('plan'); }
+  function closePlan() { clearGps(); setTracking(false); setFrom(null); setTo(null); setRequest(null); setMapPick(null); setFlow(null); setView('home'); }
+  function swap() {
+    clearGps(); setTracking(false); setFrom(to); setTo(from); setRequest(null); setMapPick(null); setFlow(null);
+    findRoute(to, from);
   }
-  async function locate() {
+  function changeMode(next: TravelMode) {
+    setMode(next);
+    if (request) setRequest(requestFor(from, to, next));
+  }
+  function openSearch(target: SearchTarget) { setQuery(''); setSearch(target); }
+  function switchData(next: DemoData) {
+    clearGps(); setTracking(false); setDemo(next); setFrom(null); setTo(null); setRequest(null); setQuery(''); setSearch(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null);
+    setSelected(null); setView('home'); setDevOpen(false); setMyLocation(null); gps.reset();
+  }
+  /** One permission + position read shared by the locate button and the "current location" endpoint. */
+  async function currentPoint(): Promise<RoutePoint | null> {
     const generation = ++gpsGeneration.current;
     setGpsBusy(true); setMessage(null);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
-      if (generation !== gpsGeneration.current) return;
-      if (permission.status !== 'granted') { setMessage('위치 권한이 없어도 출발지와 목적지를 직접 선택할 수 있습니다.'); return; }
+      if (generation !== gpsGeneration.current) return null;
+      if (permission.status !== 'granted') { setMessage('위치 권한이 없어도 출발지와 목적지를 직접 선택할 수 있습니다.'); return null; }
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      if (generation !== gpsGeneration.current) return;
-      setFrom(pointPlace({ lat: position.coords.latitude, lng: position.coords.longitude }, '현재 위치'));
-      setRequest(null); setMessage('현재 위치를 출발지로 선택했습니다. 캠퍼스 길에서 멀면 경로를 찾지 못할 수 있습니다.');
-    } catch { if (generation === gpsGeneration.current) setMessage('현재 위치를 확인하지 못했습니다. 출발지를 직접 선택해 주세요.'); }
-    finally { if (generation === gpsGeneration.current) setGpsBusy(false); }
+      if (generation !== gpsGeneration.current) return null;
+      return { lat: position.coords.latitude, lng: position.coords.longitude };
+    } catch {
+      if (generation === gpsGeneration.current) setMessage('현재 위치를 확인하지 못했습니다. 출발지를 직접 선택해 주세요.');
+      return null;
+    } finally { if (generation === gpsGeneration.current) setGpsBusy(false); }
+  }
+  async function pickCurrentAs(target: Field) {
+    const point = await currentPoint();
+    if (!point) { setSearch(null); return; }
+    setMyLocation(point);
+    choose(pointPlace(point, '현재 위치'), target);
+    setMessage(`현재 위치를 ${target === 'from' ? '출발지' : '도착지'}로 선택했습니다. 캠퍼스 길에서 멀면 경로를 찾지 못할 수 있습니다.`);
+  }
+  async function locateMe() {
+    const point = await currentPoint();
+    if (!point) return;
+    setMyLocation(point); focusOn(point);
+  }
+  function showPlace(place: CampusPlace) {
+    setSearch(null); setSelected(place); setView('home');
+    if (place.buildingId !== buildingId || (place.buildingId !== null && place.level !== level)) { setBuildingId(place.buildingId); setLevel(place.level); }
+    focusOn(place);
   }
   function selectBuilding(id: string | null) { setBuildingId(id); setLevel(data.buildings.find((item) => item.id === id)?.levels[0] ?? null); }
   function selectIndoorExample() {
     const start = data.places.find((p) => p.id === 'n_out_0001');
     const end = data.places.find((p) => p.id === 'n_A_4_408door');
-    if (start && end) { setFrom(start); setTo(end); setRequest(null); setBuildingId(end.buildingId); setLevel(end.level); }
+    if (start && end) { setFrom(start); setTo(end); setRequest(null); setBuildingId(end.buildingId); setLevel(end.level); setView('plan'); setDevOpen(false); }
   }
-  return <View style={{ flex: 1 }}>
-    <Page resetKey={`${active}:${state.sequence}:${mapPick}:${mapFocus}`} title="어디로 가시나요?" subtitle="한양대학교 서울캠퍼스 · 위치 권한 없이도 길을 찾을 수 있습니다.">
-      {demo !== 'none' && <Notice>개발용 가상 경로입니다. 실제 한양대 길이나 건물이 아닙니다.</Notice>}
-      {data.status === 'error' && <Card><Notice>{data.error}</Notice><Button title="데이터 다시 읽기" onPress={data.reload} /></Card>}
-      {data.status === 'ready' && data.counts.edges === 0 && <Notice>실제 캠퍼스 길 데이터가 아직 없습니다. C조원 데이터 연결 후 실제 길찾기를 이용할 수 있습니다.</Notice>}
-      {data.issues.length > 0 && <Notice>{data.issues.join('\n')}</Notice>}
-      {demo === 'none' && <Body>{photoNotice}</Body>}
-      <MapCanvas center={data.campus?.center ?? { lat: 37.5572, lng: 127.045 }} label={demo !== 'none' ? '가상 시험 캠퍼스' : building?.name ?? '한양대학교 서울캠퍼스'} route={route} from={from} to={to} places={scopePlaces} graph={data.graph} buildingId={buildingId} level={level} position={sensors.running ? gps.position : null} flow={flow} stepPhotos={stepPhotos} onOpenPhoto={setPhotoIndex}
-        onPoint={(point) => { if (!mapPick) return; if (buildingId) { setMessage('실내에서는 등록된 지점을 선택해 주세요.'); return; } choose(pointPlace(point, '지도에서 선택한 위치'), mapPick); }}
-        onPlace={(place) => choose(place, mapPick ?? 'to')} />
-      <Card>
-        {(['from', 'to'] as const).map((key) => <Button key={key} secondary title={`${key === 'from' ? '출발' : '도착'}: ${(key === 'from' ? from : to)?.name ?? '검색해서 선택해 주세요'}`} onPress={() => { setQuery(''); setField(key); }} />)}
-        <ScrollView horizontal contentContainerStyle={{ gap: 8 }}>
-          {TRAVEL_MODES.map((item) => <Pressable key={item.value} accessibilityRole="button" accessibilityState={{ selected: mode === item.value }} onPress={() => { setMode(item.value); setRequest(null); }} style={[s.chip, mode === item.value && s.selected]}><Text style={s.link}>{item.label}</Text></Pressable>)}
-        </ScrollView>
-        <ActionRow><View style={{ flex: 1 }}><Button secondary title="출발·도착 바꾸기" disabled={!from && !to} onPress={() => { clearGps(); setTracking(false); setFrom(to); setTo(from); setRequest(null); setMapPick(null); setFlow(null); }} /></View><View style={{ flex: 1 }}><Button secondary title="선택 초기화" disabled={!from && !to && !request} onPress={() => { clearGps(); setTracking(false); setFrom(null); setTo(null); setRequest(null); setMapPick(null); setFlow(null); }} /></View></ActionRow>
-        <Button title="길찾기" disabled={!from || !to || data.status !== 'ready'} onPress={() => { setRequest(requestFor(from, to, mode)); setMapFocus((value) => value + 1); }} />
-        {demo === 'none' && <Button secondary disabled={gpsBusy} title={gpsBusy ? '위치를 확인하고 있습니다…' : '현재 위치를 출발지로'} onPress={() => void locate()} />}
-        {gpsBusy && <ActivityIndicator />}
-        {message && <Notice>{message}</Notice>}
-      </Card>
-      <Heading>지도에서 선택해 주세요</Heading>
-      <Chips values={['실외', '실내'] as const} value={buildingId === null ? '실외' : '실내'} onChange={(value) => {
+  function toggleTracking() { gps.reset(); lastReroute.current = -1; setTracking((old) => !old); }
+
+  const sheetMax = (share: number) => Math.round(Math.max(220, (window.height - layout.tabMinHeight) * share));
+  const notices = [
+    demo !== 'none' ? '개발용 가상 경로입니다. 실제 한양대 길이나 건물이 아닙니다.' : null,
+    data.status === 'ready' && data.counts.edges === 0 ? '실제 캠퍼스 길 데이터가 아직 없습니다. C조원 데이터 연결 후 실제 길찾기를 이용할 수 있습니다.' : null,
+    ...data.issues,
+    demo === 'none' ? photoNotice : null,
+  ].filter((item): item is string => Boolean(item));
+  const messageBlock = <>
+    {message && <Notice>{message}</Notice>}
+    {gpsBusy && <View style={st.busy}><ActivityIndicator color={t.color.primary} /><Text style={st.busyText}>위치를 확인하고 있습니다…</Text></View>}
+  </>;
+  const indoorControls = <View style={{ gap: 10 }}>
+    <View style={st.rowBetween}>
+      <Text style={st.sectionTitle}>{buildingId === null ? '실외 지도' : `${building?.name ?? '실내'} · ${floorLabel(level)}`}</Text>
+      <Segmented values={['실외', '실내'] as const} value={buildingId === null ? '실외' : '실내'} onChange={(value) => {
         if (value === '실외') selectBuilding(null);
-        else if (data.buildings[0]) selectBuilding(data.buildings[0].id);
+        else if (data.buildings[0]) selectBuilding(buildingId ?? data.buildings[0].id);
         else setMessage('등록된 실내 건물·층 데이터가 없습니다. 임의의 실내 경로는 만들지 않습니다.');
       }} />
-      {buildingId !== null && <>
-        <ScrollView horizontal contentContainerStyle={{ gap: 8 }}>{data.buildings.map((item) => <Button key={item.id} secondary title={item.name} onPress={() => selectBuilding(item.id)} />)}</ScrollView>
-        <Chips values={(building?.levels ?? []).map(String)} value={String(level)} onChange={(value) => setLevel(Number(value))} />
-        <Body>{building?.name} · {level !== null && level < 0 ? `지하 ${-level}층` : `${level}층`} · 등록된 지점·연결만 표시합니다. 층은 경로 판단에 사용하지 않습니다.</Body>
-      </>}
-      <ActionRow><View style={{ flex: 1 }}><Button secondary title="지도에서 출발 선택" onPress={() => setMapPick('from')} /></View><View style={{ flex: 1 }}><Button secondary title="지도에서 도착 선택" onPress={() => setMapPick('to')} /></View></ActionRow>
-      {mapPick && <Notice>{mapPick === 'from' ? '출발' : '도착'} 지점을 눌러 주세요.{buildingId ? ' 실내에서는 등록된 초록 지점이나 아래 목록을 선택해 주세요.' : ' 길 근처의 점을 누르면 기존 엔진이 보행 경로에 연결합니다.'}</Notice>}
-      {mapPick && <Button secondary title="지도 선택 취소" onPress={() => setMapPick(null)} />}
-      <Body>입장=파랑 · 대기=주황 · 퇴장=회색. 실외 보기는 전체 경로 개요이며, 실내는 건물·층을 골라 확인해 주세요.</Body>
-      {scopePlaces.length === 0 ? <Empty message="이 보기에 등록된 장소가 없습니다." /> : <Card><Heading>이 보기의 장소</Heading>{visiblePlaces.map((place) => <View key={place.id} style={{ gap: 4 }}><Button secondary title={`${place.name} · ${placeDetail(place, data.buildings)}`} onPress={() => choose(place, mapPick ?? 'to')} />{demo === 'none' && <Button secondary title={state.favorites.some((p) => p.key === `place:${place.id}`) ? '장소 즐겨찾기 해제' : '장소 즐겨찾기'} onPress={() => dispatch({ type: 'favorite', destination: placeDestination(place) })} />}</View>)}{scopePlaces.length > 20 && <Button secondary title={placesExpanded ? '장소 목록 접기' : `장소 ${scopePlaces.length}개 전체 보기`} onPress={() => setPlacesExpanded((value) => !value)} />}</Card>}
-      <Card><Heading>이동 안내</Heading>
-        {result.message && <Notice>{result.message}</Notice>}
-        {route ? <>
-          <Heading>{route.timeSec === 0 ? 0 : Math.max(1, Math.ceil(route.timeSec / 60))}분 · {Math.round(route.distanceM)}m</Heading>
-          <Body>계단 {route.stairsCount}곳 · 에스컬레이터 {route.escalatorCount}곳</Body>
-          {route.fallbackMessage && <Notice>{route.fallbackMessage}</Notice>}
-          {route.slopeWarnings.map((item, i) => <Notice key={`${item.edgeId}-${i}`}>{item.message}</Notice>)}
-          {route.floorChanges.map((item, i) => <Body key={i}>{item.label}</Body>)}
-          {route.steps.map((step, i) => <Body key={i}>{i + 1}. {step.text}</Body>)}
-          {route.distanceM === 0 && <Body>출발지와 목적지가 같습니다.</Body>}
-          {stepPhotos.some((step) => step.photo !== null) ? <Button secondary title="사진으로 이동 안내 보기" onPress={() => setPhotoIndex(0)} /> : <Body>{demo === 'none' ? photoNotice : '가상 경로 시험에서는 서버 사진을 사용하지 않습니다.'} 현재는 문구와 지도로 안내합니다.</Body>}
-        </> : result.status === 'idle' && <Body>출발지와 목적지를 선택하고 길찾기를 눌러 주세요.</Body>}
-      </Card>
-      {demo === 'none' && <Card><Heading>현재 위치 안내</Heading><Body>위치는 안내를 시작한 동안만 사용하며 앱에서 저장하지 않습니다. 실내 층 추정은 기기·데이터 상태에 따라 부정확할 수 있습니다. 실내 재탐색은 정확한 지점을 수동 선택해 주세요.</Body>
-        <Button secondary disabled={!route || data.counts.edges === 0} title={tracking ? '위치 안내 중지' : '위치 안내 시작'} onPress={() => { gps.reset(); lastReroute.current = -1; setTracking((old) => !old); }} />
-        <Body>{sensors.running ? `위치 수신 중 · ${GPS_MODE_LABEL[gps.mode]}${gps.level === null ? ' · 층 미확인' : ` · ${gps.level}층`}` : '위치 추적을 사용하지 않고 있습니다.'}</Body>
+    </View>
+    {buildingId !== null && <>
+      {data.buildings.length > 1 && <Segmented values={data.buildings.map((item) => item.name)} value={building?.name ?? ''} onChange={(name) => selectBuilding(data.buildings.find((item) => item.name === name)?.id ?? null)} />}
+      <View style={st.floorRow}>{(building?.levels ?? []).map((item) => <Pressable key={item} accessibilityRole="button" accessibilityLabel={floorLabel(item)} accessibilityState={{ selected: item === level }} onPress={() => setLevel(item)} style={[st.floor, item === level && st.floorOn]}>
+        <Text style={[st.floorText, item === level && st.floorTextOn]}>{item < 0 ? `B${-item}` : `${item}F`}</Text>
+      </Pressable>)}</View>
+      <Text style={st.caption}>등록된 지점·연결만 표시합니다. 층은 경로 판단에 사용하지 않습니다.</Text>
+    </>}
+  </View>;
+
+  const homeSheet = <Sheet maxHeight={sheetMax(0.46)}>
+    {messageBlock}
+    {selected ? <View style={st.placeCard}>
+      <View style={{ gap: 2 }}>
+        <Text accessibilityRole="header" style={st.placeName}>{selected.name}</Text>
+        <Text style={st.placeDetail}>{placeDetail(selected, data.buildings)}</Text>
+      </View>
+      <ActionRow>
+        <View style={{ flex: 1 }}><Button secondary title="출발지로" onPress={() => choose(selected, 'from')} /></View>
+        <View style={{ flex: 1 }}><Button title="도착지로" onPress={() => choose(selected, 'to')} /></View>
+      </ActionRow>
+      {demo === 'none' && <TextButton title={state.favorites.some((p) => p.key === `place:${selected.id}`) ? '장소 즐겨찾기 해제' : '장소 즐겨찾기'} onPress={() => dispatch({ type: 'favorite', destination: placeDestination(selected) })} />}
+    </View> : <View style={{ gap: 2 }}>
+      <Text accessibilityRole="header" style={st.sheetTitle}>어디로 가시나요?</Text>
+      <Text style={st.caption}>{demo !== 'none' ? '가상 시험 캠퍼스' : '한양대학교 서울캠퍼스'} · 위치 권한 없이도 길을 찾을 수 있습니다.</Text>
+    </View>}
+    {data.status === 'error' && <View style={{ gap: 8 }}><Notice>{data.error}</Notice><Button secondary title="데이터 다시 읽기" onPress={data.reload} /></View>}
+    {notices.length > 0 && <View style={{ gap: 6 }}>{notices.map((text, i) => <StatusLine key={i}>{text}</StatusLine>)}</View>}
+    {indoorControls}
+    <View style={{ gap: 4 }}>
+      <TextButton title={placesOpen ? '장소 목록 닫기' : `이 보기의 장소 ${scopePlaces.length}곳`} disabled={scopePlaces.length === 0} onPress={() => setPlacesOpen((value) => !value)} />
+      {placesOpen && visiblePlaces.map((place) => <Pressable key={place.id} accessibilityRole="button" onPress={() => showPlace(place)} style={({ pressed }) => [st.listRow, pressed && { backgroundColor: t.color.sunken }]}>
+        <Text style={st.listName}>{place.name}</Text><Text style={st.listDetail}>{placeDetail(place, data.buildings)}</Text>
+      </Pressable>)}
+      {placesOpen && scopePlaces.length > 20 && <TextButton title={placesExpanded ? '장소 목록 접기' : `장소 ${scopePlaces.length}개 전체 보기`} onPress={() => setPlacesExpanded((value) => !value)} />}
+    </View>
+  </Sheet>;
+
+  const planSheet = <Sheet maxHeight={sheetMax(0.5)} footer={<Button title="길찾기" disabled={!from || !to || data.status !== 'ready'} onPress={() => findRoute(from, to)} />}>
+    {messageBlock}
+    <ModeChips value={mode} onChange={changeMode} />
+    {demo !== 'none' && <StatusLine>개발용 가상 경로입니다. 실제 한양대 길이나 건물이 아닙니다.</StatusLine>}
+    {data.status === 'ready' && data.counts.edges === 0 && <StatusLine>실제 캠퍼스 길 데이터가 아직 없습니다. C조원 데이터 연결 후 실제 길찾기를 이용할 수 있습니다.</StatusLine>}
+    <Text style={st.caption}>{!from || !to ? '출발지와 도착지를 정하면 바로 경로를 찾아 드립니다. 입력란을 눌러 현재 위치, 지도, 검색 중에서 골라 주세요.' : '이동 방식을 고른 뒤 길찾기를 눌러 주세요.'}</Text>
+  </Sheet>;
+
+  const hasPhotos = stepPhotos.some((step) => step.photo !== null);
+  const routeSheet = <Sheet maxHeight={sheetMax(0.56)}>
+    <ModeChips value={mode} onChange={changeMode} />
+    {messageBlock}
+    {result.message && <Notice>{result.message}</Notice>}
+    {route ? <>
+      <View style={st.summary}>
+        <View style={st.timeRow} accessible accessibilityLabel={`${minutes(route.timeSec)}분`}><Text style={st.bigTime}>{minutes(route.timeSec)}</Text><Text style={st.bigUnit}>분</Text></View>
+        <Text style={st.distance}>{Math.round(route.distanceM)}m</Text>
+      </View>
+      <View style={st.stats}>
+        <Stat value={`${route.stairsCount}곳`} label="계단" /><View style={st.statDivider} />
+        <Stat value={`${route.escalatorCount}곳`} label="에스컬레이터" /><View style={st.statDivider} />
+        <Stat value={`${route.floorChanges.length}번`} label="층 이동" />
+      </View>
+      {route.fallbackMessage && <Notice>{route.fallbackMessage}</Notice>}
+      {route.slopeWarnings.map((item, i) => <Notice key={`${item.edgeId}-${i}`}>{item.message}</Notice>)}
+      {route.floorChanges.length > 0 && <View style={{ gap: 6 }}>{route.floorChanges.map((item, i) => <View key={i} style={st.floorChange}><Text style={st.floorChangeText}>{item.label}</Text></View>)}</View>}
+      {route.distanceM === 0 && <Text style={st.caption}>출발지와 목적지가 같습니다.</Text>}
+      <ActionRow>
+        {demo === 'none' && <View style={{ flex: 1 }}><Button disabled={data.counts.edges === 0} title={tracking ? '위치 안내 중지' : '위치 안내 시작'} onPress={toggleTracking} /></View>}
+        {hasPhotos && <View style={{ flex: 1 }}><Button secondary title="사진으로 이동 안내 보기" onPress={() => setPhotoIndex(0)} /></View>}
+      </ActionRow>
+      {!hasPhotos && <Text style={st.caption}>{demo === 'none' ? photoNotice : '가상 경로 시험에서는 서버 사진을 사용하지 않습니다.'} 현재는 문구와 지도로 안내합니다.</Text>}
+      {demo === 'none' && <View style={{ gap: 6 }}>
+        <Text style={st.caption}>{sensors.running ? `위치 수신 중 · ${GPS_MODE_LABEL[gps.mode]}${gps.level === null ? ' · 층 미확인' : ` · ${gps.level}층`}` : '위치는 안내를 시작한 동안만 사용하며 앱에서 저장하지 않습니다. 실내 층 추정은 부정확할 수 있으니 실내 재탐색은 정확한 지점을 직접 선택해 주세요.'}</Text>
         {sensors.message && <Notice>{sensors.message}</Notice>}{gps.messages.map((text, i) => <Notice key={i}>{text}</Notice>)}
-      </Card>}
-      {__DEV__ && <Card><Heading>개발용 연결 시험</Heading><Button secondary title="야외 가상 경로 시험" onPress={() => switchData('outdoor')} /><Button secondary title="실내·계단·엘리베이터 시험" onPress={() => switchData('indoor')} />{demo === 'indoor' && <Button title="정문 → 가상 408호 선택" onPress={selectIndoorExample} />}<Button secondary title="실제 캠퍼스 데이터로 돌아가기" onPress={() => switchData('none')} /></Card>}
-    </Page>
+      </View>}
+      {indoorControls}
+      <View style={{ gap: 0 }}>
+        <Text accessibilityRole="header" style={st.sectionTitle}>단계별 안내</Text>
+        {route.steps.map((step, i) => <View key={i} style={st.step}>
+          <View style={st.stepIndex}><Text style={st.stepIndexText}>{i + 1}</Text></View>
+          <Text style={st.stepText}>{step.text}</Text>
+        </View>)}
+      </View>
+    </> : result.status === 'idle' && <Text style={st.caption}>출발지와 목적지를 선택하고 길찾기를 눌러 주세요.</Text>}
+  </Sheet>;
+
+  const pickSheet = <Sheet maxHeight={sheetMax(0.4)} footer={<Button secondary title="지도 선택 취소" onPress={() => setMapPick(null)} />}>
+    <View style={st.rowStart}><EndpointDot kind={mapPick ?? 'to'} /><Text style={st.sheetTitle}>{mapPick === 'from' ? '출발' : '도착'} 지점을 눌러 주세요.</Text></View>
+    <Text style={st.caption}>{buildingId ? '실내에서는 등록된 초록 지점을 선택해 주세요.' : '길 근처의 점을 누르면 기존 엔진이 보행 경로에 연결합니다. 초록 점을 누르면 등록된 지점으로 선택합니다.'}</Text>
+    {messageBlock}
+  </Sheet>;
+
+  const fitTop = screen === 'plan' ? 150 : 90;
+  return <View style={st.root}>
+    <View style={st.mapArea}>
+      <MapCanvas center={data.campus?.center ?? { lat: 37.5572, lng: 127.045 }} label={demo !== 'none' ? '가상 시험 캠퍼스' : building?.name ?? '한양대학교 서울캠퍼스'} route={route} from={from} to={to} places={scopePlaces} graph={data.graph} buildingId={buildingId} level={level}
+        position={sensors.running ? gps.position : myLocation} flow={flow} stepPhotos={stepPhotos} onOpenPhoto={setPhotoIndex}
+        focus={focus} selected={screen === 'home' ? selected : null} fitPadding={{ top: fitTop, bottom: 48, left: 36, right: 36 }}
+        onPoint={(point) => { if (!mapPick) return; if (buildingId) { setMessage('실내에서는 등록된 지점을 선택해 주세요.'); return; } choose(pointPlace(point, '지도에서 선택한 위치'), mapPick); }}
+        onPlace={(place) => { if (mapPick) choose(place, mapPick); else if (screen === 'home') { setSelected(place); setDevOpen(false); } }} />
+      {screen !== 'pick' && <View style={[st.top, { paddingHorizontal: layout.padding }]} pointerEvents="box-none">
+        <View style={[st.topInner, { maxWidth: layout.modalMaxWidth }]} pointerEvents="box-none">
+          {screen === 'home' && <>
+            <SearchBar onSearch={() => openSearch('place')} onRoute={openPlan} />
+            {__DEV__ && <FloatChip label="개발 데이터" text={`개발 · ${DEMO_LABEL[demo]}`} onPress={() => setDevOpen((value) => !value)} />}
+            {__DEV__ && devOpen && <View style={st.devMenu}>
+              <Text style={st.caption}>개발용 연결 시험입니다. 가상 데이터는 실제 한양대 길이 아닙니다.</Text>
+              <Button secondary title="실제 캠퍼스 데이터로 돌아가기" onPress={() => switchData('none')} />
+              <Button secondary title="야외 가상 경로 시험" onPress={() => switchData('outdoor')} />
+              <Button secondary title="실내·계단·엘리베이터 시험" onPress={() => switchData('indoor')} />
+              {demo === 'indoor' && <Button title="정문 → 가상 408호 선택" onPress={selectIndoorExample} />}
+            </View>}
+          </>}
+          {screen === 'plan' && <EndpointCard from={from} to={to} onField={openSearch} onSwap={swap} onClose={closePlan} />}
+          {screen === 'route' && <RoutePill from={from} to={to} onBack={() => { setTracking(false); setRequest(null); }} />}
+        </View>
+      </View>}
+      {screen !== 'pick' && demo === 'none' && <View style={st.fab} pointerEvents="box-none">
+        <RoundButton label="내 위치로 이동" busy={gpsBusy} onPress={() => void locateMe()}><LocateIcon color={myLocation ? t.color.primary : t.color.text} /></RoundButton>
+      </View>}
+    </View>
+    {screen === 'home' ? homeSheet : screen === 'plan' ? planSheet : screen === 'route' ? routeSheet : pickSheet}
     <PhotoViewerModal visible={photoIndex !== null} pages={photoPages} initialIndex={photoIndex ?? 0} onClose={() => setPhotoIndex(null)} />
-    <Modal visible={field !== null} animationType="slide" onRequestClose={() => setField(null)}><SafeAreaView style={{ flex: 1 }}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, width: '100%', maxWidth: layout.modalMaxWidth, alignSelf: 'center', padding: layout.padding, gap: 12 }}>
-      <Heading>{field === 'from' ? '출발지' : '목적지'} 검색</Heading><Button secondary title="닫기" onPress={() => setField(null)} />
-      <TextInput autoFocus value={query} onChangeText={setQuery} placeholder="장소·건물 이름 또는 강의실 호수" accessibilityLabel="장소 검색어" style={s.input} autoCorrect={false} />
-      {demo !== 'none' && <Notice>가상 시험 데이터입니다. 실제 장소가 아닙니다.</Notice>}
-      <FlatList data={matches} keyboardShouldPersistTaps="handled" keyExtractor={(item) => item.id} ListEmptyComponent={<Empty message={data.places.length ? '검색 결과가 없습니다. 다른 이름으로 찾아 주세요.' : '아직 등록된 장소가 없습니다. C조원의 데이터 연결을 기다리고 있습니다.'} />} renderItem={({ item }) => <Pressable accessibilityRole="button" onPress={() => choose(item, field ?? 'to')} style={{ paddingVertical: 16, gap: 4 }}><Heading>{item.name}</Heading><Body>{placeDetail(item, data.buildings)}</Body></Pressable>} />
-    </KeyboardAvoidingView></SafeAreaView></Modal>
+    <PlaceSearch target={search} query={query} onQuery={setQuery} results={matches} detail={(place) => placeDetail(place, data.buildings)}
+      emptyMessage={data.places.length ? '검색 결과가 없습니다. 다른 이름으로 찾아 주세요.' : '아직 등록된 장소가 없습니다. C조원의 데이터 연결을 기다리고 있습니다.'}
+      demoNotice={demo !== 'none'} maxWidth={layout.modalMaxWidth} padding={layout.padding} busy={gpsBusy}
+      onClose={() => setSearch(null)} onChoose={(place) => search === 'place' ? showPlace(place) : choose(place, search ?? 'to')}
+      onCurrent={demo === 'none' ? () => { if (search === 'from' || search === 'to') void pickCurrentAs(search); } : null}
+      onMapPick={() => { if (search === 'from' || search === 'to') { const target = search; setSearch(null); setView('plan'); setMapPick(target); } }} />
   </View>;
 }
+
+const st = StyleSheet.create({
+  root: { flex: 1, backgroundColor: t.color.bg, overflow: 'hidden' },
+  mapArea: { flex: 1, minHeight: 0 },
+  top: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 12 },
+  topInner: { width: '100%', alignSelf: 'center', gap: 10 },
+  fab: { position: 'absolute', right: 16, bottom: 34 },
+  devMenu: { alignSelf: 'flex-end', width: 280, maxWidth: '100%', backgroundColor: t.color.surface, borderRadius: 18, padding: 14, gap: 8, ...floating },
+  busy: { flexDirection: 'row', alignItems: 'center', gap: 8 }, busyText: { fontSize: 13, color: t.color.muted },
+  sheetTitle: { fontSize: 20, lineHeight: 27, fontWeight: '800', color: t.color.text, letterSpacing: -0.3, flexShrink: 1 },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: t.color.text, flexShrink: 1 },
+  caption: { fontSize: 13, lineHeight: 19, color: t.color.muted, flexShrink: 1 },
+  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
+  rowStart: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  placeCard: { gap: 12 },
+  placeName: { fontSize: 21, lineHeight: 28, fontWeight: '800', color: t.color.text, letterSpacing: -0.3 },
+  placeDetail: { fontSize: 14, color: t.color.muted },
+  floorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  floor: { minWidth: 48, minHeight: 40, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: t.color.border, alignItems: 'center', justifyContent: 'center', backgroundColor: t.color.surface },
+  floorOn: { backgroundColor: t.color.text, borderColor: t.color.text },
+  floorText: { fontSize: 14, fontWeight: '700', color: t.color.text }, floorTextOn: { color: 'white' },
+  listRow: { paddingVertical: 12, paddingHorizontal: 4, gap: 2, borderBottomWidth: 1, borderColor: t.color.divider },
+  listName: { fontSize: 15, fontWeight: '700', color: t.color.text }, listDetail: { fontSize: 13, color: t.color.muted },
+  summary: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  timeRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
+  bigTime: { fontSize: 40, lineHeight: 46, fontWeight: '900', color: t.color.text, letterSpacing: -1.2 },
+  bigUnit: { fontSize: 20, lineHeight: 34, fontWeight: '800', color: t.color.text },
+  distance: { fontSize: 18, lineHeight: 34, fontWeight: '700', color: t.color.muted },
+  stats: { flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
+  statDivider: { width: 1, height: 26, backgroundColor: t.color.divider },
+  floorChange: { alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: t.color.soft },
+  floorChangeText: { fontSize: 13, fontWeight: '700', color: t.color.primary },
+  step: { flexDirection: 'row', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderColor: t.color.divider, alignItems: 'flex-start' },
+  stepIndex: { width: 24, height: 24, borderRadius: 12, backgroundColor: t.color.sunken, borderWidth: 1, borderColor: t.color.border, alignItems: 'center', justifyContent: 'center' },
+  stepIndexText: { fontSize: 12, fontWeight: '800', color: t.color.muted },
+  stepText: { flex: 1, fontSize: 14, lineHeight: 21, color: t.color.text },
+});

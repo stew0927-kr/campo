@@ -51,7 +51,9 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
     vi.stubGlobal('__DEV__', true);
     const html = render(createElement(MapScreen));
     expect(html).toContain('실제 캠퍼스 길 데이터가 아직 없습니다');
-    expect(html).toContain('출발:'); expect(html).toContain('도착:'); expect(html).toContain('계단 최소');
+    // Home is a full-screen map: floating place search, the route button and the locate button.
+    expect(html).toContain('건물 이름, 동 번호, 강의실 검색'); expect(html).toContain('길찾기'); expect(html).toContain('내 위치로 이동');
+    expect(html).toContain('어디로 가시나요?');
   });
   it('always shows the essay prototype notice and both date filters', () => {
     const html = render(createElement(EssayScreen, { data: DEMO_CONTENT }));

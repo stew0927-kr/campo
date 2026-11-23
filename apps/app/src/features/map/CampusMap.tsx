@@ -1,17 +1,14 @@
 import { getBuildingOutlineForLevel } from '@campo/core';
 import { Camera, GeoJSONSource, Layer, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { FeatureCollection, Point } from 'geojson';
 import { OSM_ATTRIBUTION, OSM_RASTER_STYLE } from '../../map/style.ts';
-import { screenLayout } from '../../ui/layout.ts';
 import { routeBounds, routeLine } from './model.ts';
 import { floorLines } from './indoor.ts';
 import { RoutePhotoMarkers } from '../../photos/RoutePhotoMarkers.tsx';
 import type { MapProps } from './mapTypes.ts';
-export function CampusMap({ center, label, route, from, to, places, graph, buildingId, level, position, flow, onPoint, onPlace, stepPhotos = [], onOpenPhoto }: MapProps) {
-  const window = useWindowDimensions();
-  const layout = screenLayout(window.width, window.height, window.fontScale);
+export function CampusMap({ center, label, route, from, to, places, graph, buildingId, level, position, flow, onPoint, onPlace, stepPhotos = [], onOpenPhoto, focus = null, selected = null, fitPadding = DEFAULT_PADDING }: MapProps) {
   const camera = useRef<CameraRef>(null);
   const [loaded, setLoaded] = useState(false);
   const [zoom, setZoom] = useState(16);
@@ -26,13 +23,18 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
     if (!loaded) return;
     const floorPoints = places.map((p) => ({ lng: p.lng, lat: p.lat }));
     const bounds = routeBounds(buildingId ? floorPoints : route?.polyline ?? []);
-    if (bounds) camera.current?.fitBounds(bounds, { padding: { top: 40, bottom: 40, left: 35, right: 35 }, duration: 500 });
+    // fitPadding is read on each fit; changing overlays alone must not refit the camera.
+    if (bounds) camera.current?.fitBounds(bounds, { padding: fitPadding, duration: 500 });
   }, [route, loaded, buildingId, level, places]);
+  useEffect(() => {
+    // Only a new focus request moves the camera; zoom changes from the user must not.
+    if (loaded && focus) camera.current?.easeTo({ center: [focus.lng, focus.lat], zoom: Math.max(zoom, 17), duration: 450 });
+  }, [focus?.key, loaded]);
   const building = buildingId ? graph?.buildings.get(buildingId) : null;
   const outline = building ? { type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: getBuildingOutlineForLevel(building, level) } } : null;
-  const color = flow === 'queue' ? '#BA6700' : flow === 'exit' ? '#596579' : '#1465E8';
+  const color = flow === 'queue' ? '#BA6700' : flow === 'exit' ? '#596579' : '#1F5EFF';
   const visible = (place: MapProps['from']) => place && (buildingId === null || place.buildingId === buildingId && place.level === level);
-  return <View style={[styles.frame, { height: layout.mapHeight }]}>
+  return <View accessibilityLabel={label} style={styles.frame}>
     <Map style={styles.map} mapStyle={OSM_RASTER_STYLE}
       onRegionDidChange={(event) => setZoom(event.nativeEvent.zoom)}
       onPress={(event) => { const [lng, lat] = event.nativeEvent.lngLat; onPoint({ lng, lat }); }}
@@ -54,20 +56,25 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
       }}><Layer id="app-place-dots" type="circle" paint={{ 'circle-radius': 6, 'circle-color': '#18744D', 'circle-stroke-color': 'white', 'circle-stroke-width': 2 }} /></GeoJSONSource>
       {zoom >= 17 && places.slice(0, 30).map((place) => <Marker key={`label:${place.id}`} id={`place-label:${place.id}`} lngLat={[place.lng, place.lat]} anchor="top" onPress={() => onPlace(place)}><View style={{ backgroundColor: '#FFFFFFEE', padding: 4, borderRadius: 5, marginTop: 8 }}><Text style={styles.label}>{place.name}</Text></View></Marker>)}
       {onOpenPhoto && <RoutePhotoMarkers stepPhotos={stepPhotos} onOpen={onOpenPhoto} />}
+      {selected && visible(selected) && selected.id !== from?.id && selected.id !== to?.id && <Marker id="selected-place" lngLat={[selected.lng, selected.lat]} anchor="bottom"><View style={styles.selectedPin}><View style={styles.selectedDot} /></View></Marker>}
       {visible(from) && from && <Marker id="route-start" lngLat={[from.lng, from.lat]} anchor="bottom"><View style={[styles.pin, styles.start]}><Text style={styles.pinText}>출발</Text></View></Marker>}
       {visible(to) && to && <Marker id="route-end" lngLat={[to.lng, to.lat]} anchor="bottom"><View style={[styles.pin, styles.end]}><Text style={styles.pinText}>도착</Text></View></Marker>}
       {position && <Marker id="current-position" lngLat={[position.lng, position.lat]}><View style={styles.current} /></Marker>}
     </Map>
-    <View pointerEvents="none" style={styles.campus}><Text style={styles.label}>{label}</Text></View>
     {failed && <Text accessibilityLiveRegion="polite" style={styles.error}>배경 지도를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요. 수동 길찾기는 계속 이용할 수 있습니다.</Text>}
     <Text pointerEvents="none" style={styles.attribution}>{OSM_ATTRIBUTION}</Text>
   </View>;
 }
+const DEFAULT_PADDING = { top: 40, bottom: 40, left: 35, right: 35 };
 const styles = StyleSheet.create({
-  frame: { height: 300, backgroundColor: '#E8EEE9' }, map: { flex: 1 },
-  campus: { position: 'absolute', top: 12, left: 12, padding: 8, borderRadius: 8, backgroundColor: '#FFFFFFEE' }, label: { fontSize: 12, color: '#183451', fontWeight: '600' },
-  attribution: { position: 'absolute', bottom: 4, left: 6, fontSize: 10, color: '#183451', backgroundColor: '#FFFFFFDD', padding: 3 },
-  pin: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 2, borderColor: 'white' }, start: { backgroundColor: '#18744D' }, end: { backgroundColor: '#1465E8' }, pinText: { color: 'white', fontWeight: '700' },
-  current: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#1465E8', borderWidth: 3, borderColor: 'white' },
-  error: { position: 'absolute', top: 50, left: 12, right: 12, padding: 10, backgroundColor: '#FFF2DA', color: '#7A4300', borderRadius: 8 },
+  frame: { flex: 1, backgroundColor: '#E8EEE9' }, map: { flex: 1 },
+  label: { fontSize: 12, color: '#142A44', fontWeight: '600' },
+  // Bottom offsets leave room for the sheet that overlaps the map edge.
+  attribution: { position: 'absolute', bottom: 22, left: 8, fontSize: 10, color: '#142A44', backgroundColor: '#FFFFFFDD', paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4 },
+  pin: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 2, borderColor: 'white', shadowColor: '#0B1F3A', shadowOpacity: 0.25, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
+  start: { backgroundColor: '#10A85E' }, end: { backgroundColor: '#F2473F' }, pinText: { color: 'white', fontWeight: '800', fontSize: 13 },
+  selectedPin: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#142A44', borderWidth: 3, borderColor: 'white', alignItems: 'center', justifyContent: 'center', elevation: 4 },
+  selectedDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'white' },
+  current: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#1F5EFF', borderWidth: 4, borderColor: 'white', elevation: 4 },
+  error: { position: 'absolute', bottom: 48, left: 12, right: 72, padding: 10, backgroundColor: '#FFF5DF', color: '#8A5200', borderRadius: 10, fontSize: 13 },
 });

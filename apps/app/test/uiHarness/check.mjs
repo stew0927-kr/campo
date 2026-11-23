@@ -97,6 +97,24 @@ async function scenario(name, run, viewport = { width: 390, height: 844 }, sourc
     results.push({ name, passed: false, error: String(error) }); throw error;
   } finally { await page.close(); }
 }
+/** The real CampusMap over the fake MapLibre (campusMap.html): marker layout and re-render work per region event. */
+async function markerScenario(name, run) {
+  if (only && !only.test(name)) return;
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const errors = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.setDefaultTimeout(7000);
+  try {
+    await page.goto(`${url}campusMap.html?n=1000`);
+    await page.waitForFunction(() => window.__campoMap && document.querySelector('[data-marker]'));
+    await run(page);
+    assert.deepEqual(errors, []);
+    results.push({ name, passed: true }); console.log('PASS', name);
+  } catch (error) {
+    await page.screenshot({ path: join(output, 'failure.png') }).catch(() => {});
+    results.push({ name, passed: false, error: String(error) }); throw error;
+  } finally { await page.close(); }
+}
 async function handoffSearch(page, expected) {
   await button(page, '여기까지 길찾기').click();
   await selected(page, '지도·길찾기');
@@ -657,6 +675,65 @@ try {
     await button(p, '검사 경로 사진 묶음: 1단계').click(); await text(p, '검사 말풍선').waitFor();
     await roundTrip(p).click(); await absent(text(p, '검사 말풍선'));
     await button(p, '로드뷰로 보기').click(); await roadview(p).getByText(/^가는 길 · 1 \/ /).waitFor();
+  });
+
+  /* ---------- Marker layout in the real CampusMap (fake MapLibre, counts React work) ---------- */
+  await markerScenario('CampusMap markers: throttled pan, exact settle, no re-render when the layout is unchanged', async (p) => {
+    // Helpers live in the page: region events, frame pacing, render counters and the exact layout for comparison.
+    await p.evaluate(() => {
+      const ev = (lng, lat, zoom, bearing = 0) => ({ nativeEvent: { center: [lng, lat], zoom, bearing } });
+      window.__t = {
+        frame: () => new Promise((resolve) => setTimeout(resolve, 16)),
+        moving: (lng, lat, zoom) => window.__campoMap.onRegionIsChanging(ev(lng, lat, zoom)),
+        settle: (lng, lat, zoom) => window.__campoMap.onRegionDidChange(ev(lng, lat, zoom)),
+        counts: () => ({ map: window.__campoRenders.map, markers: window.__campoRenders.markers }),
+        shown: () => [...document.querySelectorAll('[data-marker]')].map((el) => el.getAttribute('data-marker')).sort(),
+        expected: (lng, lat, zoom) => {
+          const L = window.__campoLabels;
+          const frame = document.querySelector('[aria-label="검사 지도"]').getBoundingClientRect();
+          const markers = L.buildMarkers({ places: window.__campoPlaces, facilities: L.floorFacilityNodes(window.__campoGraph, 'bldg_A', 4) });
+          const placed = L.declutter(markers, { lng, lat, zoom, bearing: 0, width: frame.width, height: frame.height }, { stage: L.zoomStage(zoom, true) });
+          return [...placed.filter((x) => x.marker.tone === 'normal').map((x) => `facility:${x.marker.id}`), ...placed.filter((x) => x.label).map((x) => `place-label:${x.marker.id}`)].sort();
+        },
+      };
+    });
+    const lng0 = 127.00065, lat0 = 37.0005;
+    await p.evaluate(async ([lng, lat]) => { window.__t.settle(lng, lat, 20.2); await window.__t.frame(); }, [lng0, lat0]);
+    const first = await p.evaluate(([lng, lat]) => ({ shown: window.__t.shown(), expected: window.__t.expected(lng, lat, 20.2) }), [lng0, lat0]);
+    assert.deepEqual(first.shown, first.expected);
+    const labelsShown = first.shown.filter((id) => id.startsWith('place-label:')).length, iconsShown = first.shown.length - labelsShown;
+    assert.ok(labelsShown > 0 && labelsShown <= 16 && iconsShown > 0 && iconsShown <= 48, JSON.stringify({ labelsShown, iconsShown }));
+    // 60 frames of panning (≈ 7 px per frame at zoom 20.2), then the settle event.
+    const pan = await p.evaluate(async ([lng, lat]) => {
+      const t = window.__t, before = t.counts();
+      for (let f = 1; f <= 60; f++) { t.moving(lng + f * 4e-6, lat, 20.2); await t.frame(); }
+      t.settle(lng + 60 * 4e-6, lat, 20.2); await t.frame(); await t.frame();
+      const after = t.counts();
+      return { map: after.map - before.map, markers: after.markers - before.markers, shown: t.shown(), expected: t.expected(lng + 60 * 4e-6, lat, 20.2) };
+    }, [lng0, lat0]);
+    assert.deepEqual(pan.shown, pan.expected);
+    // The pre-optimisation map re-rendered on all 61 events and rebuilt every drawn marker each time (61 × shown).
+    assert.ok(pan.map <= 15, `map renders ${pan.map}`);
+    assert.ok(pan.markers <= first.shown.length * 6, `marker renders ${pan.markers} for ${first.shown.length} shown`);
+    console.log(`  campus map pan: map renders ${pan.map} (legacy 61), Marker renders ${pan.markers} (legacy ${61 * first.shown.length})`);
+    // A resting finger (±0.3 px) changes nothing: no map or Marker render at all.
+    const jitter = await p.evaluate(async ([lng, lat]) => {
+      const t = window.__t, before = t.counts(), x = lng + 60 * 4e-6;
+      for (let f = 0; f < 60; f++) { t.moving(x + (f % 2 ? 1 : -1) * 1.5e-7, lat, 20.2); await t.frame(); }
+      t.settle(x, lat, 20.2); await t.frame();
+      const after = t.counts(); return { map: after.map - before.map, markers: after.markers - before.markers };
+    }, [lng0, lat0]);
+    assert.deepEqual(jitter, { map: 0, markers: 0 });
+    // A parent re-render with a new onPlace does not rebuild markers, and a tap still reaches the latest callback.
+    const parent = await p.evaluate(async () => { const before = window.__t.counts(); window.__campoRerenderParent(); await window.__t.frame(); return window.__t.counts().markers - before.markers; });
+    assert.equal(parent, 0);
+    const tappable = p.locator('[data-marker^="facility:syn_"] button').first();
+    const id = (await tappable.locator('xpath=ancestor::*[@data-marker][1]').getAttribute('data-marker')).replace('facility:', '');
+    await tappable.click(); assert.equal(await p.evaluate(() => window.__campoPicked), `1:${id}`);
+    // Zooming out past the label stage drops the names at once (stage changes are never throttled).
+    await p.evaluate(async ([lng, lat]) => { window.__t.moving(lng, lat, 18.4); await window.__t.frame(); }, [lng0, lat0]);
+    const zoomedOut = await p.evaluate(([lng, lat]) => ({ shown: window.__t.shown(), expected: window.__t.expected(lng, lat, 18.4) }), [lng0, lat0]);
+    assert.deepEqual(zoomedOut.shown, zoomedOut.expected); assert.equal(zoomedOut.shown.filter((x) => x.startsWith('place-label:')).length, 0);
   });
   for (const size of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 1024, height: 1366 }, { width: 320, height: 568, fontScale: 1.6 }]) {
     await scenario(`layout ${size.width}x${size.height} font ${size.fontScale ?? 1}`, async (p) => {

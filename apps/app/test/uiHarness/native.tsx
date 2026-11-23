@@ -1,7 +1,7 @@
 /* Test-only DOM equivalents for checking real screen event handlers and approximate layout.
  * MapLibre, native text measurement, keyboard and sensors are intentionally not simulated as real hardware.
  */
-import { forwardRef, useImperativeHandle, useRef, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 type Props = Record<string, any>;
 const flatten = (style: any): CSSProperties => {
   if (Array.isArray(style)) return Object.assign({}, ...style.map(flatten));
@@ -21,7 +21,18 @@ const flatten = (style: any): CSSProperties => {
 export const css = (style: any): CSSProperties => ({ minWidth: 0, ...flatten(typeof style === 'function' ? style({ pressed: false }) : style) });
 const aria = (p: Props) => ({ role: p.accessibilityRole === 'header' ? 'heading' : p.accessibilityRole, 'aria-label': p.accessibilityLabel,
   'aria-selected': p.accessibilityState?.selected, 'aria-checked': p.accessibilityState?.checked, 'aria-expanded': p.accessibilityState?.expanded, 'aria-disabled': p.disabled || p.accessibilityState?.disabled });
-export function View(p: Props) { return <div {...aria(p)} style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0, position: 'relative', pointerEvents: p.pointerEvents === 'box-none' ? 'none' : undefined, ...css(p.style) }}>{p.children}</div>; }
+/** onLayout is reported only on pages that opt in (campusMap.html), so the app screens keep their current sizing. */
+function LayoutView(p: Props) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current; if (!el || !p.onLayout) return;
+    const report = () => { const r = el.getBoundingClientRect(); p.onLayout({ nativeEvent: { layout: { x: r.x, y: r.y, width: r.width, height: r.height } } }); };
+    const observer = new ResizeObserver(report); observer.observe(el); return () => observer.disconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <div ref={ref} {...aria(p)} style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0, position: 'relative', ...css(p.style) }}>{p.children}</div>;
+}
+export function View(p: Props) { if (p.onLayout && (window as any).__campoLayoutEvents) return <LayoutView {...p} />; return <div {...aria(p)} style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0, position: 'relative', pointerEvents: p.pointerEvents === 'box-none' ? 'none' : undefined, ...css(p.style) }}>{p.children}</div>; }
 export function Text(p: Props) {
   const scale = useWindowDimensions().fontScale;
   const style = css(p.style);

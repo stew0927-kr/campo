@@ -1,6 +1,6 @@
 import { getBuildingOutlineForLevel } from '@campo/core';
 import { Camera, GeoJSONSource, Layer, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { FeatureCollection, Point } from 'geojson';
 import { OSM_ATTRIBUTION, OSM_RASTER_STYLE } from '../../map/style.ts';
@@ -8,7 +8,8 @@ import { routeBounds, routeLine } from './model.ts';
 import { floorLines } from './indoor.ts';
 import { Image } from 'expo-image';
 import type { MapProps, RoadviewPreview } from './mapTypes.ts';
-import { buildMarkers, declutter, floorFacilityNodes, labelLift, MARKER_KIND_LABEL, zoomStage, type MapView, type PlacedMarker } from './mapLabels.ts';
+import { buildMarkers, DECLUTTER_THROTTLE_MS, DeclutterScheduler, floorFacilityNodes, labelLift, MARKER_KIND_LABEL, type MapMarker, type MapView, type PlacedMarker } from './mapLabels.ts';
+import type { CampusPlace } from '../../contracts.ts';
 import { buildingShapes } from './buildings.ts';
 import { FacilityIcon, MapLabel } from './MapGlyphs.tsx';
 import { theme as t } from '../../ui/theme.ts';
@@ -17,9 +18,17 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
   highlightBuildings = false, mappedBuildingIds = [], onBuildingPress, markedBuildingId = null }: MapProps) {
   const camera = useRef<CameraRef>(null);
   const [loaded, setLoaded] = useState(false);
-  // Current viewport (center, zoom, bearing, size) for zoom stages and screen-space decluttering.
-  const [view, setView] = useState<MapView>({ lng: center.lng, lat: center.lat, zoom: 16, bearing: 0, width: 0, height: 0 });
-  const zoom = view.zoom;
+  // Current viewport (center, zoom, bearing, size). Kept in a ref: a region event must not re-render the whole map;
+  // only a changed marker layout (from the scheduler) does.
+  const viewRef = useRef<MapView>({ lng: center.lng, lat: center.lat, zoom: 16, bearing: 0, width: 0, height: 0 });
+  const scheduler = useRef<DeclutterScheduler | null>(null);
+  scheduler.current ??= new DeclutterScheduler();
+  const [placed, setPlaced] = useState<PlacedMarker[]>([]);
+  const trailing = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest onPlace without changing the memoised markers' props on every parent render.
+  const onPlaceRef = useRef(onPlace);
+  onPlaceRef.current = onPlace;
+  const handlePlace = useCallback((place: CampusPlace) => onPlaceRef.current(place), []);
   const [failed, setFailed] = useState(false);
   const line = useMemo(() => routeLine(route?.polyline ?? []), [route]);
   const indoor = useMemo(() => floorLines(graph, buildingId, level, route), [graph, buildingId, level, route]);
@@ -28,12 +37,35 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
   const dots: FeatureCollection<Point> = useMemo(() => ({ type: 'FeatureCollection', features: places.map((place) => ({ type: 'Feature', properties: { id: place.id }, geometry: { type: 'Point', coordinates: [place.lng, place.lat] } })) }), [places]);
   const indoorView = buildingId !== null;
   const facilities = useMemo(() => floorFacilityNodes(graph, buildingId, level), [graph, buildingId, level]);
+  const routeNodeIds = route?.nodeIds ?? null;
   const markers = useMemo(() => {
     const inScope = (place: MapProps['from']) => (place && (buildingId === null ? place.buildingId === null : place.buildingId === buildingId && place.level === level) ? place : null);
-    return buildMarkers({ places, facilities, from: inScope(from), to: inScope(to), selected: inScope(selected), routeNodeIds: route?.nodeIds ?? null });
-  }, [places, facilities, from, to, selected, route, buildingId, level]);
-  const stage = zoomStage(zoom, indoorView);
-  const placed = useMemo(() => (view.width > 0 ? declutter(markers, view, { stage }) : []), [markers, view, stage]);
+    return buildMarkers({ places, facilities, from: inScope(from), to: inScope(to), selected: inScope(selected), routeNodeIds });
+  }, [places, facilities, from, to, selected, routeNodeIds, buildingId, level]);
+  // New markers or indoor/outdoor: lay out again now. setPlaced bails out when the scheduler returns the same array.
+  useEffect(() => { setPlaced(scheduler.current!.setMarkers(markers, indoorView)); }, [markers, indoorView]);
+  useEffect(() => () => { if (trailing.current) clearTimeout(trailing.current); }, []);
+  const regionView = (event: { nativeEvent: { center: [number, number] | number[]; zoom: number; bearing: number } }): MapView => {
+    const { center: [lng, lat], zoom: z, bearing } = event.nativeEvent;
+    return (viewRef.current = { ...viewRef.current, lng: lng!, lat: lat!, zoom: z, bearing });
+  };
+  /**
+   * While panning/zooming: throttled layout. If movement pauses with a deferred layout and no settle event follows,
+   * a debounced trailing layout catches up (it never fires while events keep coming, so it adds no work mid-gesture).
+   */
+  const onMoving = (event: Parameters<typeof regionView>[0]) => {
+    const s = scheduler.current!;
+    setPlaced(s.moving(regionView(event), Date.now()));
+    if (trailing.current) { clearTimeout(trailing.current); trailing.current = null; }
+    if (s.pending) trailing.current = setTimeout(() => { trailing.current = null; setPlaced(s.flush(Date.now())); }, DECLUTTER_THROTTLE_MS);
+  };
+  /** Settled: exact layout. */
+  const onSettled = (view: MapView) => {
+    if (trailing.current) { clearTimeout(trailing.current); trailing.current = null; }
+    setPlaced(scheduler.current!.settle(view, Date.now()));
+  };
+  const icons = useMemo(() => (indoorView ? placed.filter((p) => p.marker.tone === 'normal').map((p) => p.marker) : []), [placed, indoorView]);
+  const labels = useMemo(() => placed.filter((p) => p.label && p.marker.name).map((p) => p.marker), [placed]);
   const shapes = useMemo(() => buildingShapes(graph, highlightBuildings ? mappedBuildingIds : [], buildingId), [graph, highlightBuildings, mappedBuildingIds, buildingId]);
   const marked = useMemo(() => buildingShapes(graph, markedBuildingId ? [markedBuildingId] : []), [graph, markedBuildingId]);
   useEffect(() => {
@@ -48,15 +80,15 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
   }, [route, loaded, buildingId, level, places]);
   useEffect(() => {
     // Only a new focus request moves the camera; zoom changes from the user must not.
-    if (loaded && focus) camera.current?.easeTo({ center: [focus.lng, focus.lat], zoom: focus.zoom ?? Math.max(zoom, 17), duration: 450 });
+    if (loaded && focus) camera.current?.easeTo({ center: [focus.lng, focus.lat], zoom: focus.zoom ?? Math.max(viewRef.current.zoom, 17), duration: 450 });
   }, [focus?.key, loaded]);
   const building = buildingId ? graph?.buildings.get(buildingId) : null;
   const outline = building ? { type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: getBuildingOutlineForLevel(building, level) } } : null;
   const color = flow === 'queue' ? '#BA6700' : flow === 'exit' ? '#596579' : '#1F5EFF';
   const visible = (place: MapProps['from']) => place && (buildingId === null || place.buildingId === buildingId && place.level === level);
-  return <View accessibilityLabel={label} style={styles.frame} onLayout={(event) => { const { width, height } = event.nativeEvent.layout; setView((old) => ({ ...old, width, height })); }}>
+  return <View accessibilityLabel={label} style={styles.frame} onLayout={(event) => { const { width, height } = event.nativeEvent.layout; onSettled((viewRef.current = { ...viewRef.current, width, height })); }}>
     <Map style={styles.map} mapStyle={OSM_RASTER_STYLE}
-      onRegionDidChange={(event) => { const { center: [lng, lat], zoom: z, bearing } = event.nativeEvent; setView((old) => ({ ...old, lng, lat, zoom: z, bearing })); }}
+      onRegionIsChanging={onMoving} onRegionDidChange={(event) => onSettled(regionView(event))}
       onPress={(event) => { const [lng, lat] = event.nativeEvent.lngLat; onPoint({ lng, lat }); }}
       onDidFinishLoadingMap={() => { setLoaded(true); setFailed(false); }} onDidFailLoadingMap={() => setFailed(true)}>
       <Camera ref={camera} initialViewState={{ center: [center.lng, center.lat], zoom: 16 }} />
@@ -87,10 +119,8 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
         {/* Indoors the facility icons carry the meaning; the dots stay small as tap targets for places the icons leave out. */}
         <Layer id="app-place-dots" type="circle" paint={{ 'circle-radius': indoorView ? 3.5 : 6, 'circle-color': indoorView ? '#8A97A8' : '#18744D', 'circle-stroke-color': 'white', 'circle-stroke-width': indoorView ? 1.5 : 2 }} />
       </GeoJSONSource>
-      {indoorView && placed.filter((p) => p.marker.tone === 'normal').map((p) => <FacilityMarker key={`icon:${p.marker.id}`} placed={p} onPlace={onPlace} />)}
-      {placed.filter((p) => p.label && p.marker.name).map((p) => <Marker key={`label:${p.marker.id}`} id={`place-label:${p.marker.id}`} lngLat={[p.marker.lng, p.marker.lat]} anchor="bottom" offset={[0, -labelLift(p.marker.tone)]}>
-        <View pointerEvents="none"><MapLabel name={p.marker.name!} kind={p.marker.kind} tone={p.marker.tone} /></View>
-      </Marker>)}
+      {icons.map((marker) => <FacilityMarker key={`icon:${marker.id}`} marker={marker} onPlace={handlePlace} />)}
+      {labels.map((marker) => <LabelMarker key={`label:${marker.id}`} marker={marker} />)}
       {photoSpots.length > 0 && stepGroups.length === 0 && <GeoJSONSource id="app-photo-spots" data={spotData} hitbox={HITBOX} onPress={(event) => {
         const i = event.nativeEvent.features[0]?.properties?.['i'];
         const spot = typeof i === 'number' ? photoSpots[i] : undefined;
@@ -117,15 +147,24 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
 const DEFAULT_PADDING = { top: 40, bottom: 40, left: 35, right: 35 };
 const HITBOX = { top: 16, right: 16, bottom: 16, left: 16 };
 
-/** One facility icon centred on its coordinate. Registered places are tappable (44pt hit area); bare stairs/lifts are not. */
-function FacilityMarker({ placed: { marker }, onPlace }: { placed: PlacedMarker; onPlace: MapProps['onPlace'] }) {
+/**
+ * One facility icon centred on its coordinate. Registered places are tappable (44pt hit area); bare stairs/lifts are not.
+ * Memoised on the marker object (stable while the marker list is), so a pan that keeps an icon does not rebuild it.
+ */
+const FacilityMarker = memo(function FacilityMarker({ marker, onPlace }: { marker: MapMarker; onPlace: (place: CampusPlace) => void }) {
   const place = marker.place;
   const kind = MARKER_KIND_LABEL[marker.kind];
   return <Marker id={`facility:${marker.id}`} lngLat={[marker.lng, marker.lat]} anchor="center">
     {place ? <Pressable accessibilityRole="button" accessibilityLabel={`${place.name}, ${kind}`} hitSlop={11} onPress={() => onPlace(place)}><FacilityIcon kind={marker.kind} /></Pressable>
       : <View accessible accessibilityLabel={kind}><FacilityIcon kind={marker.kind} /></View>}
   </Marker>;
-}
+});
+/** Name label above a marker; memoised like FacilityMarker. */
+const LabelMarker = memo(function LabelMarker({ marker }: { marker: MapMarker }) {
+  return <Marker id={`place-label:${marker.id}`} lngLat={[marker.lng, marker.lat]} anchor="bottom" offset={[0, -labelLift(marker.tone)]}>
+    <View pointerEvents="none"><MapLabel name={marker.name!} kind={marker.kind} tone={marker.tone} /></View>
+  </Marker>;
+});
 const DOT = 14;
 const STEM = 22;
 

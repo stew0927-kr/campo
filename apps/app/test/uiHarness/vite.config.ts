@@ -21,6 +21,7 @@ export default defineConfig({
     { find: /^expo-constants$/, replacement: local('./constants.ts') },
     { find: /^expo-status-bar$/, replacement: local('./statusBar.tsx') },
     { find: /^expo-image$/, replacement: local('./image.tsx') },
+    { find: /^@maplibre\/maplibre-react-native$/, replacement: local('./maplibre.tsx') },
     { find: /.*\/MapCanvas(?:\.web)?\.tsx$/, replacement: local('./map.tsx') },
     { find: /.*\/PhotoViewerModal\.tsx$/, replacement: local('./photos.tsx') },
     // The real split roadview screen runs; only its native mini map is replaced.

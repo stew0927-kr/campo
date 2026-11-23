@@ -1,10 +1,15 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 const local = (name: string) => fileURLToPath(new URL(name, import.meta.url));
 const rootModule = (name: string) => fileURLToPath(new URL(`../../../../node_modules/${name}`, import.meta.url));
+/** Only MapScreen's indoor fixture import goes to the harness switch (which itself reads the original JSON). */
+const harnessFixture: Plugin = {
+  name: 'campo-harness-fixture', enforce: 'pre',
+  resolveId(source, importer) { return source.endsWith('/indoorFixture.json') && importer?.endsWith('/MapScreen.tsx') ? local('./indoorFixture.ts') : null; },
+};
 export default defineConfig({
-  root: local('./'), plugins: [react()], define: { __DEV__: true },
+  root: local('./'), plugins: [harnessFixture, react()], define: { __DEV__: true },
   resolve: { alias: [
     { find: /.*\/configured\.ts$/, replacement: local('./connection.ts') },
     { find: /^react$/, replacement: rootModule('react/index.js') },
@@ -15,9 +20,11 @@ export default defineConfig({
     { find: /^expo-sensors$/, replacement: local('./sensors.ts') },
     { find: /^expo-constants$/, replacement: local('./constants.ts') },
     { find: /^expo-status-bar$/, replacement: local('./statusBar.tsx') },
+    { find: /^expo-image$/, replacement: local('./image.tsx') },
     { find: /.*\/MapCanvas(?:\.web)?\.tsx$/, replacement: local('./map.tsx') },
     { find: /.*\/PhotoViewerModal\.tsx$/, replacement: local('./photos.tsx') },
-    { find: /.*\/RoadviewScreen\.tsx$/, replacement: local('./roadview.tsx') },
+    // The real split roadview screen runs; only its native mini map is replaced.
+    { find: /.*\/RoadviewMiniMap\.tsx$/, replacement: local('./miniMap.tsx') },
   ] },
   server: { host: '127.0.0.1', port: 5199, strictPort: true, fs: { allow: [fileURLToPath(new URL('../../../../', import.meta.url))] } },
 });

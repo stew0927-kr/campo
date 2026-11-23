@@ -18,9 +18,9 @@ const flatten = (style: any): CSSProperties => {
   for (const key of ['shadowColor', 'shadowOpacity', 'shadowRadius', 'shadowOffset', 'elevation']) delete out[key];
   return out;
 };
-const css = (style: any): CSSProperties => ({ minWidth: 0, ...flatten(typeof style === 'function' ? style({ pressed: false }) : style) });
+export const css = (style: any): CSSProperties => ({ minWidth: 0, ...flatten(typeof style === 'function' ? style({ pressed: false }) : style) });
 const aria = (p: Props) => ({ role: p.accessibilityRole === 'header' ? 'heading' : p.accessibilityRole, 'aria-label': p.accessibilityLabel,
-  'aria-selected': p.accessibilityState?.selected, 'aria-checked': p.accessibilityState?.checked, 'aria-disabled': p.disabled || p.accessibilityState?.disabled });
+  'aria-selected': p.accessibilityState?.selected, 'aria-checked': p.accessibilityState?.checked, 'aria-expanded': p.accessibilityState?.expanded, 'aria-disabled': p.disabled || p.accessibilityState?.disabled });
 export function View(p: Props) { return <div {...aria(p)} style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0, position: 'relative', pointerEvents: p.pointerEvents === 'box-none' ? 'none' : undefined, ...css(p.style) }}>{p.children}</div>; }
 export function Text(p: Props) {
   const scale = useWindowDimensions().fontScale;

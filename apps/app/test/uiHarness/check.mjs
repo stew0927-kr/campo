@@ -97,7 +97,7 @@ try {
     for (const name of ['입장 동선 · 지도 연결 대기', '대기 동선 · 지도 연결 대기', '퇴장 동선 · 지도 연결 대기']) {
       await tab(p, '축제').click(); await button(p, name).click(); await selected(p, '지도·길찾기');
       await p.getByRole('dialog').waitFor(); assert.equal(await p.getByRole('textbox', { name: '장소 검색어' }).inputValue(), '가상 축제 광장'); await button(p, '닫기').click();
-      await text(p, '출발: 검색해서 선택해 주세요').waitFor();
+      await button(p, '출발: 검색해서 선택해 주세요').waitFor();
     }
     await tab(p, '내정보').click(); await button(p, '부스').click(); await text(p, '가상 만들기 부스').waitFor();
   });
@@ -121,31 +121,65 @@ try {
   });
   await scenario('walking preferences update real map controls and denied GPS stays manual', async (p) => {
     await tab(p, '내정보').click(); await button(p, '휠체어 보행을 기본으로 설정').click();
-    await tab(p, '지도·길찾기').click(); assert.equal(await button(p, '휠체어').getAttribute('aria-selected'), 'true');
+    await tab(p, '지도·길찾기').click(); await button(p, '길찾기').click();
+    assert.equal(await button(p, '휠체어').getAttribute('aria-selected'), 'true');
+    await button(p, '길찾기 닫기').click(); await text(p, '어디로 가시나요?').waitFor();
+    await button(p, '내 위치로 이동').click(); await text(p, '위치 권한이 없어도 출발지와 목적지를 직접 선택').waitFor();
+    await button(p, '길찾기').click(); await button(p, '출발: 검색해서 선택해 주세요').click();
     await button(p, '현재 위치를 출발지로').click(); await text(p, '위치 권한이 없어도 출발지와 목적지를 직접 선택').waitFor();
+    assert.equal(await p.getByRole('dialog').count(), 0);
+    await button(p, '길찾기 닫기').click();
     await button(p, '실내').click(); await text(p, '등록된 실내 건물·층 데이터가 없습니다').waitFor();
   });
-  await scenario('manual demo route, swap, reset and map selection cancel', async (p) => {
-    await button(p, '야외 가상 경로 시험').click();
+  await scenario('granted GPS centres the map and can become the start', async (p) => {
+    await p.evaluate(() => { window.__campoGps = { lat: 37.5572, lng: 127.045 }; });
+    await button(p, '내 위치로 이동').click(); await text(p, '검사 카메라 이동 1회').waitFor();
+    await button(p, '길찾기').click(); await button(p, '출발: 검색해서 선택해 주세요').click();
+    await button(p, '현재 위치를 출발지로').click(); await button(p, '출발: 현재 위치').waitFor();
+    await text(p, '현재 위치를 출발지로 선택했습니다').waitFor();
+  });
+  await scenario('home search focuses a place, sets endpoints and routes with bottom travel modes', async (p) => {
+    await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
+    await button(p, '장소 검색 열기').click();
+    let dialog = p.getByRole('dialog'); await dialog.getByRole('textbox', { name: '장소 검색어' }).fill('가상 시험 지점 1');
+    await dialog.getByRole('button', { name: /가상 시험 지점 1/ }).click();
+    await text(p, '검사 선택 장소: 가상 시험 지점 1').waitFor(); await text(p, '검사 카메라 이동 1회').waitFor();
+    await button(p, '출발지로').click(); await button(p, '출발: 가상 시험 지점 1').waitFor();
+    await button(p, '도착: 검색해서 선택해 주세요').click(); dialog = p.getByRole('dialog');
+    await dialog.getByRole('textbox').fill('가상 시험 지점 3'); await dialog.getByRole('button', { name: /가상 시험 지점 3/ }).click();
+    await text(p, '검사 경로 좌표').waitFor(); await text(p, '단계별 안내').waitFor();
+    await button(p, '계단 없는 길').click(); assert.equal(await button(p, '계단 없는 길').getAttribute('aria-selected'), 'true');
+    await text(p, '검사 경로 좌표').waitFor();
+    await p.evaluate(() => window.__campoBack()); await button(p, '출발: 가상 시험 지점 1').waitFor();
+    assert.equal(await text(p, '검사 경로 좌표').count(), 0);
+    await button(p, '출발·도착 바꾸기').click(); await text(p, '검사 경로 좌표').waitFor();
+    await button(p, '출발·도착 수정').click(); await button(p, '출발: 가상 시험 지점 3').waitFor();
+    await p.evaluate(() => window.__campoBack()); await text(p, '어디로 가시나요?').waitFor();
+    await button(p, '길찾기').click(); await button(p, '출발: 검색해서 선택해 주세요').waitFor();
+  });
+  await scenario('manual demo route, map selection cancel and map point start', async (p) => {
+    await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
+    await button(p, '길찾기').click();
     for (const [field, name] of [['출발', '가상 시험 지점 1'], ['도착', '가상 시험 지점 3']]) {
       await button(p, new RegExp(`^${field}:`)).click(); const dialog = p.getByRole('dialog');
       await dialog.getByRole('textbox').fill(name); await dialog.getByRole('button', { name: new RegExp(name) }).click();
     }
-    await button(p, '길찾기').click(); await text(p, '검사 경로 좌표').waitFor();
-    await button(p, '출발·도착 바꾸기').click(); await button(p, '출발: 가상 시험 지점 3').waitFor();
-    await button(p, '길찾기').click(); await text(p, '검사 경로 좌표').waitFor();
-    await button(p, '선택 초기화').click(); await button(p, '도착: 검색해서 선택해 주세요').waitFor();
-    await button(p, '지도에서 출발 선택').click(); await button(p, '지도 선택 취소').click();
+    await text(p, '검사 경로 좌표').waitFor();
+    await button(p, '출발·도착 수정').click(); await button(p, '길찾기 닫기').click();
+    await button(p, '길찾기').click(); await button(p, '도착: 검색해서 선택해 주세요').waitFor();
+    await button(p, /^출발:/).click(); await button(p, '지도에서 출발 선택').click(); await button(p, '지도 선택 취소').click();
     assert.equal(await button(p, '지도 선택 취소').count(), 0);
-    await button(p, '지도에서 출발 선택').click(); await button(p, '검사: 지도 임의 점 선택').click();
+    await button(p, /^출발:/).click(); await button(p, '지도에서 출발 선택').click(); await button(p, '검사: 지도 임의 점 선택').click();
     await button(p, '출발: 지도에서 선택한 위치').waitFor();
   });
   await scenario('indoor route, floor controls and cross-tab intent clears the developer fixture', async (p) => {
-    await button(p, '실내·계단·엘리베이터 시험').click(); await button(p, '정문 → 가상 408호 선택').click();
+    await button(p, '개발 데이터').click(); await button(p, '실내·계단·엘리베이터 시험').click();
+    await button(p, '개발 데이터').click(); await button(p, '정문 → 가상 408호 선택').click();
     await button(p, '엘리베이터 우선').click(); await button(p, '길찾기').click();
     await text(p, '검사 경로 좌표').waitFor(); await text(p, '층 (엘리베이터)').waitFor();
     await button(p, '실외').click(); assert.equal(await button(p, '실외').getAttribute('aria-selected'), 'true');
     await button(p, '실내').click(); assert.equal(await button(p, '실내').getAttribute('aria-selected'), 'true');
+    await button(p, '휠체어').click(); assert.equal(await button(p, '휠체어').getAttribute('aria-selected'), 'true'); await text(p, '검사 경로 좌표').waitFor();
     await tab(p, '논술').click(); await button(p, '고사장 상세 보기').first().click(); await handoffSearch(p, '가상 시험관 가상 301호');
     await text(p, '실제 캠퍼스 길 데이터가 아직 없습니다').waitFor();
   });
@@ -177,7 +211,7 @@ try {
     await text(p, '서버 공개 데이터를 표시합니다').waitFor();
   }, undefined, 'photo-error');
   await scenario('cross-tab destination clears a pending map selection', async (p) => {
-    await button(p, '지도에서 출발 선택').click(); await button(p, '지도 선택 취소').waitFor();
+    await button(p, '길찾기').click(); await button(p, /^출발:/).click(); await button(p, '지도에서 출발 선택').click(); await button(p, '지도 선택 취소').waitFor();
     await tab(p, '논술').click(); await button(p, '고사장 상세 보기').first().click();
     await handoffSearch(p, '가상 시험관 가상 301호');
     assert.equal(await button(p, '지도 선택 취소').count(), 0);
@@ -193,14 +227,14 @@ try {
     assert.equal(await button(p, '길찾기').isDisabled(), true);
   }, undefined, 'bad-node');
   await scenario('out-of-campus route failure shows guidance without a stale route', async (p) => {
-    await button(p, '야외 가상 경로 시험').click();
-    await button(p, '도착: 검색해서 선택해 주세요').click();
+    await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
+    await button(p, '길찾기').click(); await button(p, '도착: 검색해서 선택해 주세요').click();
     await p.getByRole('dialog').getByRole('textbox').fill('결과없는장소');
     await text(p, '검색 결과가 없습니다').waitFor();
     await p.getByRole('dialog').getByRole('textbox').fill('가상 시험 지점 3');
     await p.getByRole('dialog').getByRole('button', { name: /가상 시험 지점 3/ }).click();
-    await button(p, '지도에서 출발 선택').click(); await button(p, '검사: 캠퍼스 밖 선택').click();
-    await button(p, '길찾기').click(); await text(p, '걷는 길이 없는 위치입니다').waitFor();
+    await button(p, /^출발:/).click(); await button(p, '지도에서 출발 선택').click(); await button(p, '검사: 캠퍼스 밖 선택').click();
+    await text(p, '걷는 길이 없는 위치입니다').waitFor();
     assert.equal(await text(p, '검사 경로 좌표').count(), 0);
   });
   for (const size of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 1024, height: 1366 }, { width: 320, height: 568, fontScale: 1.6 }]) {

@@ -1,0 +1,71 @@
+{
+  "title": "동네 공구 대여 · 기획 검증 기준",
+  "start": "tools",
+  "initial": {"date": "", "dateSelected": false, "reservation": "확정 전"},
+  "screens": {
+    "tools": {
+      "title": "공구 목록",
+      "actions": [
+        {"id": "open-drill", "label": "전동 드릴 상세 보기", "to": "drill", "requirement": "open-drill"}
+      ]
+    },
+    "drill": {
+      "title": "전동 드릴 상세",
+      "actions": [
+        {"id": "back-to-tools", "label": "공구 목록", "to": "tools", "requirement": "back-to-list"},
+        {"id": "choose-date", "label": "대여 날짜 선택", "to": "rental-date", "requirement": "open-date"}
+      ],
+      "assertions": [
+        {"selector": ".info-rows > div:nth-child(1) dd", "text": "2대", "requirement": "read-details"},
+        {"selector": ".info-rows > div:nth-child(2) dd", "text": "하루 3,000원", "requirement": "read-details"}
+      ]
+    },
+    "rental-date": {
+      "title": "날짜 선택",
+      "actions": [
+        {"id": "back-to-drill", "label": "공구 상세", "to": "drill", "requirement": "back-to-detail"},
+        {"id": "select-friday", "label": "금요일", "to": "rental-date", "set": {"date": "금요일", "dateSelected": true}, "requirement": "set-friday"},
+        {"id": "select-saturday", "label": "토요일", "to": "rental-date", "set": {"date": "토요일", "dateSelected": true}, "requirement": "set-saturday"},
+        {"id": "review-rental", "label": "대여 내용 확인", "to": "rental-confirm", "when": {"dateSelected": true}, "requirement": "review-date", "hiddenRequirement": "require-date"}
+      ],
+      "assertions": [
+        {"selector": "[data-action='select-friday']", "attribute": "aria-pressed", "value": "false", "when": {"date": ""}},
+        {"selector": "[data-action='select-saturday']", "attribute": "aria-pressed", "value": "false", "when": {"date": ""}},
+        {"selector": "[data-action='select-friday']", "attribute": "aria-pressed", "value": "true", "when": {"date": "금요일"}},
+        {"selector": "[data-action='select-saturday']", "attribute": "aria-pressed", "value": "false", "when": {"date": "금요일"}},
+        {"selector": "[data-action='select-friday']", "attribute": "aria-pressed", "value": "false", "when": {"date": "토요일"}},
+        {"selector": "[data-action='select-saturday']", "attribute": "aria-pressed", "value": "true", "when": {"date": "토요일"}}
+      ]
+    },
+    "rental-confirm": {
+      "title": "대여 확인 팝업",
+      "actions": [
+        {"id": "close", "label": "닫기", "to": "rental-date", "requirement": "close-retains-date"},
+        {"id": "confirm-rental", "label": "예약 확정", "to": "rental-complete", "set": {"reservation": "예약 확정"}, "requirement": "confirm-rental"}
+      ],
+      "assertions": [
+        {"selector": ".paper-modal .info-rows > div:nth-child(1) dd", "text": "전동 드릴", "requirement": "review-date"},
+        {"selector": ".paper-modal .info-rows > div:nth-child(2) dd", "text": "{{date}}", "requirement": "review-date"}
+      ]
+    },
+    "rental-complete": {
+      "title": "예약 완료",
+      "actions": [
+        {"id": "open-my-rentals", "label": "내 대여 보기", "to": "my-rentals", "requirement": "view-rentals"}
+      ],
+      "assertions": [
+        {"selector": ".info-rows > div:nth-child(2) dd", "text": "{{date}}", "requirement": "confirm-rental"}
+      ]
+    },
+    "my-rentals": {
+      "title": "내 대여",
+      "end": true,
+      "actions": [],
+      "assertions": [
+        {"selector": ".info-rows > div:nth-child(1) dd", "text": "전동 드릴", "requirement": "view-rentals"},
+        {"selector": ".info-rows > div:nth-child(2) dd", "text": "{{date}}", "requirement": "view-rentals"},
+        {"selector": ".info-rows > div:nth-child(3) dd", "text": "{{reservation}}", "requirement": "view-rentals"}
+      ]
+    }
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "XU Wireflow Review"
+  short_description: "단순한 더미 화면을 눌러 보며 기획 중인 앱의 구조와 사용자 흐름을 점검하세요"
+  default_prompt: "$wireflow-review로 내 앱 기획을 클릭 가능한 흐름으로 펼쳐줘. 사용자가 목표에 이르는 동안 놓친 단계, 돌아갈 길, 아직 정할 일을 함께 짚어줘."

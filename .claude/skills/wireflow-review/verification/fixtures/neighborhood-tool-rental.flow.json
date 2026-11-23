@@ -1,0 +1,249 @@
+{
+  "id": "neighborhood-tool-rental",
+  "title": "동네 공구 대여",
+  "device": "mobile",
+  "goal": "전동 드릴의 대여 날짜를 고르고 예약한 뒤 ‘내 대여’에서 확인한다.",
+  "source": "동네 공구 대여 기획안",
+  "start": "tools",
+  "stages": ["공구 찾기", "대여 날짜와 확인", "예약 결과"],
+  "vars": {"date": "", "dateSelected": false, "reservation": "확정 전"},
+  "screens": [
+    {
+      "id": "tools", "number": "01.01", "title": "공구 목록", "stage": 0, "origin": "source",
+      "brief": "공구 목록에서 대여 가능한 전동 드릴을 골라 상세로 들어갈 수 있어야 합니다.",
+      "ui": {
+        "blocks": [{"type": "rows", "rows": [{"label": "전동 드릴", "value": "대여 가능"}]}]
+      },
+      "actions": [{"id": "open-drill", "label": "전동 드릴 상세 보기", "to": "drill"}]
+    },
+    {
+      "id": "drill", "number": "01.02", "title": "전동 드릴 상세", "stage": 0, "origin": "source",
+      "brief": "날짜를 고르기 전에 전동 드릴의 대여 가능 여부와 대여료를 확인합니다.",
+      "uxConditions": ["재고 2대와 하루 3,000원은 검토용 예시입니다."],
+      "ui": {
+        "heading": "전동 드릴",
+        "blocks": [
+          {"type": "visual", "label": "전동 드릴 사진"},
+          {"type": "rows", "rows": [
+            {"label": "대여 가능 재고", "value": "2대"},
+            {"label": "대여료", "value": "하루 3,000원"}
+          ]}
+        ]
+      },
+      "actions": [
+        {"id": "back-to-tools", "label": "공구 목록", "kind": "back", "to": "tools"},
+        {"id": "choose-date", "label": "대여 날짜 선택", "to": "rental-date"}
+      ]
+    },
+    {
+      "id": "rental-date", "number": "02.01", "title": "날짜 선택", "stage": 1, "origin": "source",
+      "brief": "전동 드릴을 빌릴 날짜를 선택하고, 확정 전에 대여 내용을 확인할 수 있어야 합니다.",
+      "body": "전동 드릴을 빌릴 날을 골라 주세요.",
+      "uxConditions": ["금요일과 토요일 중 하루를 선택합니다.", "검토용 UI에서는 날짜를 고르면 ‘대여 내용 확인’ 버튼이 나타납니다."],
+      "ui": {"choiceLabel": "대여 날짜"},
+      "actions": [
+        {"id": "back-to-drill", "label": "공구 상세", "kind": "back", "to": "drill"},
+        {"id": "select-friday", "label": "금요일", "kind": "choice", "to": "rental-date", "set": {"date": "금요일", "dateSelected": true}},
+        {"id": "select-saturday", "label": "토요일", "kind": "choice", "to": "rental-date", "set": {"date": "토요일", "dateSelected": true}},
+        {"id": "review-rental", "label": "대여 내용 확인", "to": "rental-confirm", "when": {"dateSelected": true}}
+      ]
+    },
+    {
+      "id": "rental-confirm", "number": "02.02", "title": "대여 확인 팝업", "stage": 1, "origin": "source",
+      "brief": "확정 전에 선택한 공구와 날짜를 다시 확인합니다. 확정하지 않고 닫아도 고른 날짜를 유지합니다.",
+      "uxConditions": ["예약 확정 시 선택한 날짜로 03.01 예약 완료 화면을 엽니다.", "닫기를 누르면 02.01 날짜 선택으로 돌아갑니다. 방금 고른 날짜는 선택 상태로 남고 예약은 확정 전 상태를 유지합니다."],
+      "preview": {"date": "금요일", "dateSelected": true},
+      "ui": {
+        "overlay": "rental-date",
+        "heading": "대여 확인",
+        "blocks": [{"type": "rows", "rows": [
+          {"label": "공구", "value": "전동 드릴"},
+          {"label": "대여 날짜", "value": "{{date}}"}
+        ]}]
+      },
+      "actions": [
+        {"id": "confirm-rental", "label": "예약 확정", "to": "rental-complete", "set": {"reservation": "예약 확정"}},
+        {"id": "close", "label": "닫기", "kind": "close", "to": "rental-date"}
+      ]
+    },
+    {
+      "id": "rental-complete", "number": "03.01", "title": "예약 완료", "stage": 2, "origin": "source",
+      "brief": "예약이 완료됐음을 알려 주고 내 대여로 연결합니다.",
+      "preview": {"date": "금요일", "dateSelected": true, "reservation": "예약 확정"},
+      "ui": {
+        "blocks": [{"type": "rows", "rows": [
+          {"label": "공구", "value": "전동 드릴"},
+          {"label": "대여 날짜", "value": "{{date}}"}
+        ]}]
+      },
+      "actions": [{"id": "open-my-rentals", "label": "내 대여 보기", "to": "my-rentals"}]
+    },
+    {
+      "id": "my-rentals", "number": "03.02", "title": "내 대여", "stage": 2, "origin": "source",
+      "brief": "예약한 공구, 날짜, 확정 상태를 내 대여에서 다시 확인할 수 있어야 합니다.",
+      "end": true,
+      "preview": {"date": "금요일", "dateSelected": true, "reservation": "예약 확정"},
+      "ui": {
+        "blocks": [{"type": "rows", "rows": [
+          {"label": "공구", "value": "전동 드릴"},
+          {"label": "대여 날짜", "value": "{{date}}"},
+          {"label": "예약 상태", "value": "{{reservation}}"}
+        ]}]
+      },
+      "actions": []
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "reserve-friday", "title": "금요일 예약 후 내 대여 확인",
+      "steps": [
+        {"action": "open-drill", "screen": "drill"},
+        {"action": "choose-date", "screen": "rental-date", "vars": {"date": ""}},
+        {"action": "select-friday", "screen": "rental-date", "vars": {"date": "금요일"}},
+        {"action": "review-rental", "screen": "rental-confirm", "vars": {"date": "금요일", "reservation": "확정 전"}},
+        {"action": "confirm-rental", "screen": "rental-complete", "vars": {"date": "금요일", "reservation": "예약 확정"}},
+        {"action": "open-my-rentals", "screen": "my-rentals", "vars": {"date": "금요일", "reservation": "예약 확정"}}
+      ]
+    },
+    {
+      "id": "reserve-saturday", "title": "토요일로 바꿔 예약 후 내 대여 확인",
+      "steps": [
+        {"action": "open-drill", "screen": "drill"},
+        {"action": "choose-date", "screen": "rental-date", "vars": {"date": ""}},
+        {"action": "select-friday", "screen": "rental-date", "vars": {"date": "금요일"}},
+        {"action": "select-saturday", "screen": "rental-date", "vars": {"date": "토요일"}},
+        {"action": "review-rental", "screen": "rental-confirm", "vars": {"date": "토요일", "reservation": "확정 전"}},
+        {"action": "confirm-rental", "screen": "rental-complete", "vars": {"date": "토요일", "reservation": "예약 확정"}},
+        {"action": "open-my-rentals", "screen": "my-rentals", "vars": {"date": "토요일", "reservation": "예약 확정"}}
+      ]
+    },
+    {
+      "id": "close-keeps-date", "title": "확인 팝업을 닫으면 선택한 토요일 유지",
+      "start": "rental-date",
+      "steps": [
+        {"action": "select-saturday", "screen": "rental-date", "vars": {"date": "토요일"}},
+        {"action": "review-rental", "screen": "rental-confirm", "vars": {"date": "토요일", "reservation": "확정 전"}},
+        {"action": "close", "screen": "rental-date", "vars": {"date": "토요일", "dateSelected": true, "reservation": "확정 전"}}
+      ]
+    },
+    {
+      "id": "reserve-saturday-after-close", "title": "금요일 확인 팝업을 닫고 토요일로 변경해 예약",
+      "steps": [
+        {"action": "open-drill", "screen": "drill"},
+        {"action": "choose-date", "screen": "rental-date", "vars": {"date": ""}},
+        {"action": "select-friday", "screen": "rental-date", "vars": {"date": "금요일"}},
+        {"action": "review-rental", "screen": "rental-confirm", "vars": {"date": "금요일", "reservation": "확정 전"}},
+        {"action": "close", "screen": "rental-date", "vars": {"date": "금요일", "dateSelected": true, "reservation": "확정 전"}},
+        {"action": "select-saturday", "screen": "rental-date", "vars": {"date": "토요일"}},
+        {"action": "review-rental", "screen": "rental-confirm", "vars": {"date": "토요일", "reservation": "확정 전"}},
+        {"action": "confirm-rental", "screen": "rental-complete", "vars": {"date": "토요일", "reservation": "예약 확정"}},
+        {"action": "open-my-rentals", "screen": "my-rentals", "vars": {"date": "토요일", "reservation": "예약 확정"}}
+      ]
+    }
+  ],
+  "review": {
+    "source": "기획에서 확인한 내용은 공구 목록부터 내 대여까지의 연결, 금요일·토요일 선택, 팝업에 표시할 정보입니다. 후속 검토 요청에 따라 팝업을 닫으면 날짜 선택으로 돌아가 방금 고른 날짜를 유지합니다. 재고 2대와 하루 3,000원은 예시입니다. 상세와 날짜 선택의 뒤로 가기, 날짜 선택 뒤 확인 버튼 표시를 검토용 UI로 보완했습니다.",
+    "stateLabels": {"date": "선택한 날짜", "dateSelected": "날짜 선택 여부", "reservation": "예약 상태"},
+    "requirements": [
+      {"id": "open-drill", "group": "공구 찾기", "screen": "tools", "title": "전동 드릴 상세 열기", "expected": "공구 목록에서 전동 드릴을 누르면 상세가 열려요.", "action": "open-drill"},
+      {"id": "read-details", "group": "공구 찾기", "screen": "drill", "title": "재고와 대여료 확인", "expected": "드릴 상세에 대여 가능 재고 2대와 하루 대여료 3,000원이 표시돼요."},
+      {"id": "back-to-list", "group": "공구 찾기", "screen": "drill", "title": "상세에서 목록으로 돌아가기", "expected": "상세의 공구 목록 버튼을 누르면 원래 목록으로 돌아가요.", "action": "back-to-tools"},
+      {"id": "open-date", "group": "날짜 선택", "screen": "drill", "title": "대여 날짜 화면 열기", "expected": "대여 날짜 선택을 누르면 날짜 선택 화면이 열려요.", "action": "choose-date"},
+      {"id": "require-date", "group": "날짜 선택", "screen": "rental-date", "title": "날짜 선택 전 확인 버튼 숨김", "expected": "날짜를 고르기 전에는 대여 내용 확인 버튼이 보이지 않아요."},
+      {"id": "set-friday", "group": "날짜 선택", "screen": "rental-date", "title": "금요일 선택", "expected": "금요일을 누르면 선택한 날짜가 금요일로 바뀌어요.", "action": "select-friday"},
+      {"id": "set-saturday", "group": "날짜 선택", "screen": "rental-date", "title": "토요일로 변경", "expected": "토요일을 누르면 선택한 날짜가 토요일로 바뀌어요.", "action": "select-saturday"},
+      {"id": "back-to-detail", "group": "날짜 선택", "screen": "rental-date", "title": "날짜 선택에서 상세로 돌아가기", "expected": "날짜 화면의 공구 상세 버튼을 누르면 전동 드릴 상세로 돌아가요.", "action": "back-to-drill"},
+      {"id": "review-date", "group": "대여 확인과 복귀", "screen": "rental-date", "title": "선택한 공구와 날짜 확인", "expected": "선택한 날짜로 대여 확인 팝업을 열고, 팝업에 공구 이름과 선택한 날짜를 보여줘요.", "action": "review-rental"},
+      {"id": "close-retains-date", "group": "대여 확인과 복귀", "screen": "rental-confirm", "title": "팝업 닫기 후 선택한 날짜 유지", "expected": "팝업을 닫으면 날짜 선택으로 돌아가고, 선택한 날짜와 확정 전 상태가 유지돼요.", "action": "close"},
+      {"id": "confirm-rental", "group": "예약 완료와 조회", "screen": "rental-confirm", "title": "대여 예약 확정", "expected": "확정하면 예약 완료 화면이 열리고, 선택한 날짜와 예약 확정 상태가 유지돼요.", "action": "confirm-rental"},
+      {"id": "view-rentals", "group": "예약 완료와 조회", "screen": "rental-complete", "title": "내 대여에서 확정 정보 확인", "expected": "내 대여에서 확정한 공구, 날짜, 예약 상태를 다시 볼 수 있어요.", "action": "open-my-rentals"}
+    ],
+    "audit": {
+      "explore": true,
+      "fixtures": [
+        {"screen": "rental-date", "vars": {"date": "토요일", "dateSelected": true}}
+      ],
+      "journeys": [
+        {
+          "title": "금요일 예약 정보 확인",
+          "start": "tools",
+          "steps": [
+            {"action": "open-drill", "screen": "drill", "requirement": "open-drill"},
+            {"inspect": {"title": "상세 재고 표시", "selector": ".info-rows > div:nth-child(1) dd", "text": ["2대"], "exact": true}, "requirement": "read-details"},
+            {"inspect": {"title": "상세 대여료 표시", "selector": ".info-rows > div:nth-child(2) dd", "text": ["하루 3,000원"], "exact": true}, "requirement": "read-details"},
+            {"action": "choose-date", "screen": "rental-date", "requirement": "open-date"},
+            {"action": "select-friday", "screen": "rental-date", "vars": {"date": "금요일"}, "requirement": "set-friday"},
+            {"action": "review-rental", "screen": "rental-confirm", "keep": ["date"], "requirement": "review-date"},
+            {"inspect": {"title": "팝업에 공구와 금요일 표시", "selector": ".paper-modal .info-rows", "text": ["전동 드릴", "금요일"]}, "requirement": "review-date"},
+            {"action": "confirm-rental", "screen": "rental-complete", "keep": ["date"], "vars": {"reservation": "예약 확정"}, "requirement": "confirm-rental"},
+            {"action": "open-my-rentals", "screen": "my-rentals", "keep": ["date", "reservation"], "requirement": "view-rentals"},
+            {"inspect": {"title": "내 대여에 금요일 예약 표시", "selector": ".info-rows", "text": ["전동 드릴", "금요일", "예약 확정"]}, "requirement": "view-rentals"}
+          ]
+        },
+        {
+          "title": "토요일로 변경해 예약",
+          "start": "tools",
+          "steps": [
+            {"action": "open-drill", "screen": "drill", "requirement": "open-drill"},
+            {"action": "choose-date", "screen": "rental-date", "requirement": "open-date"},
+            {"action": "select-friday", "screen": "rental-date", "requirement": "set-friday"},
+            {"action": "select-saturday", "screen": "rental-date", "vars": {"date": "토요일"}, "requirement": "set-saturday"},
+            {"action": "review-rental", "screen": "rental-confirm", "keep": ["date"], "requirement": "review-date"},
+            {"inspect": {"title": "팝업에 변경한 토요일 표시", "selector": ".paper-modal .info-rows", "text": ["전동 드릴", "토요일"]}, "requirement": "review-date"},
+            {"action": "confirm-rental", "screen": "rental-complete", "keep": ["date"], "vars": {"reservation": "예약 확정"}, "requirement": "confirm-rental"},
+            {"action": "open-my-rentals", "screen": "my-rentals", "keep": ["date", "reservation"], "requirement": "view-rentals"},
+            {"inspect": {"title": "내 대여에 토요일 예약 표시", "selector": ".info-rows", "text": ["전동 드릴", "토요일", "예약 확정"]}, "requirement": "view-rentals"}
+          ]
+        },
+        {
+          "title": "금요일 확인 팝업을 닫고 토요일로 변경해 예약",
+          "start": "tools",
+          "steps": [
+            {"action": "open-drill", "screen": "drill", "requirement": "open-drill"},
+            {"action": "choose-date", "screen": "rental-date", "requirement": "open-date"},
+            {"action": "select-friday", "screen": "rental-date", "vars": {"date": "금요일"}, "requirement": "set-friday"},
+            {"action": "review-rental", "screen": "rental-confirm", "keep": ["date"], "vars": {"reservation": "확정 전"}, "requirement": "review-date"},
+            {"inspect": {"title": "변경 전 대여 날짜가 금요일인지 확인", "selector": ".paper-modal .info-rows > div:nth-child(2) > dd", "text": ["금요일"]}, "requirement": "review-date"},
+            {"action": "close", "selector": ".paper-dismiss", "screen": "rental-date", "keep": ["date", "dateSelected", "reservation"], "requirement": "close-retains-date"},
+            {"inspect": {"title": "복귀 후 금요일 선택 표시 유지", "selector": "[data-action='select-friday'][aria-pressed='true']", "text": ["금요일"]}, "requirement": "close-retains-date"},
+            {"action": "select-saturday", "screen": "rental-date", "vars": {"date": "토요일"}, "requirement": "set-saturday"},
+            {"action": "review-rental", "screen": "rental-confirm", "keep": ["date"], "vars": {"reservation": "확정 전"}, "requirement": "review-date"},
+            {"inspect": {"title": "변경한 대여 날짜가 토요일인지 확인", "selector": ".paper-modal .info-rows > div:nth-child(2) > dd", "text": ["토요일"]}, "requirement": "review-date"},
+            {"action": "confirm-rental", "screen": "rental-complete", "keep": ["date"], "vars": {"reservation": "예약 확정"}, "requirement": "confirm-rental"},
+            {"action": "open-my-rentals", "screen": "my-rentals", "keep": ["date", "reservation"], "requirement": "view-rentals"},
+            {"inspect": {"title": "확정한 대여 날짜가 토요일인지 확인", "selector": ".info-rows > div:nth-child(2) > dd", "text": ["토요일"]}, "requirement": "view-rentals"}
+          ]
+        }
+      ],
+      "recovery": [
+        {
+          "title": "날짜 선택과 공구 상세에서 뒤로 이동",
+          "start": "tools",
+          "steps": [
+            {"action": "open-drill", "screen": "drill"},
+            {"action": "choose-date", "screen": "rental-date"},
+            {"action": "back-to-drill", "screen": "drill", "requirement": "back-to-detail"},
+            {"action": "back-to-tools", "screen": "tools", "requirement": "back-to-list"}
+          ]
+        },
+        {
+          "title": "날짜 미선택 상태에서는 대여 내용을 확인할 수 없음",
+          "start": "rental-date",
+          "steps": [
+            {"inspect": {"title": "날짜 선택 전 대여 내용 확인 버튼 숨김", "selector": "[data-action='review-rental']", "absent": true}, "requirement": "require-date"}
+          ]
+        },
+        {
+          "title": "팝업 닫기 후 토요일 선택 유지",
+          "start": "rental-date",
+          "steps": [
+            {"action": "select-saturday", "screen": "rental-date", "vars": {"date": "토요일"}, "requirement": "set-saturday"},
+            {"action": "review-rental", "screen": "rental-confirm", "keep": ["date"], "requirement": "review-date"},
+            {"action": "close", "selector": ".paper-dismiss", "screen": "rental-date", "keep": ["date", "dateSelected", "reservation"], "requirement": "close-retains-date"},
+            {"inspect": {"title": "토요일 선택 표시 유지", "selector": "[data-action='select-saturday'][aria-pressed='true']", "text": ["토요일"]}, "requirement": "close-retains-date"}
+          ]
+        }
+      ]
+    }
+  }
+}

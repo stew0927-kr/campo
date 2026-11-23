@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ko" data-build="ready">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XU Wireflow Review</title>
+  <style>/* wireflow:styles */</style>
+</head>
+<body>
+  <div class="workspace">
+    <header class="toolbar">
+      <div class="identity">
+        <h1>XU Wireflow Review <span class="divider">|</span> <span id="sample-name"></span></h1>
+      </div>
+      <div class="canvas-tools" aria-label="캔버스 조작" data-en-aria-label="Canvas controls">
+        <button id="overview" type="button" class="tool" data-en="Overview">전체 보기</button>
+        <button type="button" id="zoom-out" aria-label="축소" data-en-aria-label="Zoom out">−</button>
+        <button type="button" id="zoom-readout" aria-label="현재 확대 비율" data-en-aria-label="Current zoom" disabled></button>
+        <button type="button" id="zoom-in" aria-label="확대" data-en-aria-label="Zoom in">+</button>
+        <details id="canvas-more" class="canvas-more">
+          <summary aria-label="캔버스 도구 더 보기" data-en-aria-label="More canvas tools" title="캔버스 도구 더 보기" data-en-title="More canvas tools">⋯</summary>
+          <div class="canvas-more-panel">
+            <div class="tools">
+              <label class="sr-only" for="screen-picker" data-en="Choose a screen">화면 선택</label>
+              <span class="toolbar-picker"><select id="screen-picker"></select></span>
+              <label class="sr-only" for="device-picker" data-en="Device size">기기 해상도</label>
+              <span class="toolbar-picker"><select id="device-picker"></select></span>
+              <button id="test-mode" type="button" class="tool" aria-pressed="false" hidden data-en="Test mode">테스트 모드</button>
+            </div>
+            <select id="route-picker" class="tool" aria-label="표시할 경로" data-en-aria-label="Show a path"></select>
+            <button type="button" id="center" class="center" data-en="Fit selected screen">선택 화면에 맞춤</button>
+            <button id="experimental-layout" type="button"><span data-en="Edit layout">배치 편집</span> <span data-en="Experimental">실험 기능</span></button>
+          </div>
+        </details>
+      </div>
+      <button id="requests-open" type="button" class="tool requests-trigger" aria-haspopup="dialog" aria-controls="request-list">
+        <span data-en="AI change requests">수정 요청 목록</span> <span id="request-count" aria-hidden="true">0</span>
+      </button>
+      <div class="layout-toolbar" id="layout-toolbar" hidden>
+        <button id="layout-edit" type="button" class="tool" data-en="Finish editing layout">실험 편집 완료</button>
+        <button id="number-preview" type="button" class="tool soft" data-en="Renumber screens">번호 다시 매기기</button>
+        <button id="reset-layout" type="button" class="tool" data-en="Reset layout">기본 배치로</button>
+        <button id="undo-layout" type="button" class="tool" data-en="Undo">되돌리기</button>
+      </div>
+      <p id="test-mode-status" role="status"></p>
+    </header>
+    <div class="work-area" id="work-area">
+      <aside class="review-sidebar" aria-label="Flow 검증" data-en-aria-label="Flow Verification">
+        <div class="review-toolbar">
+          <button id="review-open" type="button" class="tool" aria-expanded="false" aria-controls="review" data-en="Flow Verification">흐름 검증</button>
+          <button id="run-checks" type="button" class="tool" aria-controls="review-results" hidden data-en="Run checks">검증 실행</button>
+        </div>
+        <section id="review" aria-label="검증 항목과 결과" data-en-aria-label="Requirements and results" hidden>
+          <div id="review-results">
+            <p id="requirements-summary" role="status"></p>
+            <div id="review-proposals" class="finding-actions" hidden></div>
+            <div id="findings"></div>
+            <p id="review-request-status" class="issue-request-status" role="status"></p>
+            <details id="review-scope">
+              <summary data-en="Coverage and full paths">검증 범위와 전체 경로</summary>
+              <div class="review-coverage">
+                <p id="findings-title"></p>
+                <p id="independent-verification" hidden></p>
+                <p id="checks"></p>
+                <p id="reachability-coverage" hidden></p>
+                <p id="journey-coverage"></p>
+                <p id="interaction-coverage"></p>
+                <p id="model-coverage"></p>
+                <p id="recovery-coverage"></p>
+              </div>
+              <p class="review-note" data-en="These checks ran on the current mockup. Review unspecified policies and untested state combinations manually.">현재 더미에서 실행한 검사입니다. 기획에 정의되지 않은 정책과 준비하지 않은 상태 조합은 직접 확인해야 해요.</p>
+              <p id="review-source" class="review-note"></p>
+              <details id="journey-details"><summary data-en="End-to-end checks">전체 경로 검사</summary><ul id="journey-results" class="recovery-results"></ul></details>
+              <details id="recovery-details"><summary data-en="Recovery checks">예외와 복귀 검사</summary><ul id="recovery-results" class="recovery-results"></ul></details>
+              <details id="scenario-results"><summary data-en="Scenario checks">시나리오 검사</summary><div id="scenarios" class="scenario-list"></div></details>
+            </details>
+          </div>
+          <section id="manual-review" class="review-section">
+            <h3 data-en="Try it yourself">직접 눌러보기</h3>
+            <p data-en="Choose a scenario to open its first screen and follow the steps in the mockup.">상황을 고르면 시작 화면과 단계 안내가 열려요. 화면 속 조작을 직접 해 보세요.</p>
+            <details id="manual-scenarios"><summary data-en="Choose a scenario">체험할 상황 고르기</summary><div id="sample-tasks" class="sample-tasks"></div></details>
+          </section>
+          <details class="review-section" id="manual-history">
+            <summary data-en="Your navigation history">내가 눌러 본 경로</summary>
+            <p id="trace-summary" class="trace-summary"></p>
+            <ol id="trace-list" class="trace-list" reversed></ol>
+          </details>
+        </section>
+      </aside>
+      <div class="canvas-area">
+        <section id="scenario-guide" class="verification-flow" aria-label="체험 안내" data-en-aria-label="Scenario guide" hidden>
+          <div class="verification-head">
+            <div class="verification-title"><span id="scenario-progress"></span><h2 id="scenario-title"></h2></div>
+            <div class="verification-controls">
+              <button id="scenario-return" class="tool" type="button" hidden data-en="Resume scenario">진행 화면으로</button>
+              <button id="scenario-restart" class="tool" type="button" data-en="Start over">처음부터</button>
+              <button id="scenario-close" class="tool quiet" type="button" data-en="Close guide">안내 닫기</button>
+            </div>
+          </div>
+          <p id="scenario-instruction" role="status"></p>
+        </section>
+        <section id="verification-flow" class="verification-flow" aria-label="검증 경로" data-en-aria-label="Verification path" hidden>
+          <div class="verification-head">
+            <div class="verification-title"><span id="flow-status"></span><h2 id="flow-title"></h2></div>
+            <div class="verification-controls">
+              <button id="flow-fit" class="tool" type="button" data-en="Fit path">경로 맞춤</button>
+              <button id="flow-close" class="tool quiet" type="button" data-en="Close">닫기</button>
+            </div>
+          </div>
+          <ol id="flow-steps" class="flow-steps" aria-label="검증 순서" data-en-aria-label="Verification steps"></ol>
+          <p id="flow-step-detail" role="status"></p>
+          <dl id="flow-planning" class="finding-result planning-evidence" hidden></dl>
+          <dl id="flow-issue" class="finding-result" hidden>
+            <dt data-en="Expected in mockup">더미 검사 기준</dt><dd id="flow-expected"></dd><dt data-en="Actual">실제</dt><dd id="flow-actual"></dd>
+          </dl>
+        </section>
+        <main class="canvas paper-canvas" id="canvas" aria-label="화면 캔버스" data-en-aria-label="Screen canvas">
+          <div class="plane" id="plane" aria-hidden="true"></div>
+          <div class="world" id="groups"></div>
+          <canvas id="connections" aria-hidden="true"></canvas>
+          <div class="world" id="world"></div>
+          <div id="layout-guide-x" class="layout-guide" hidden aria-hidden="true"></div>
+          <div id="layout-guide-y" class="layout-guide" hidden aria-hidden="true"></div>
+          <p id="layout-status" role="status" hidden></p>
+          <div id="screen-tools" class="screen-inspector" role="group" aria-label="선택 화면 도구" data-en-aria-label="Selected screen tools" hidden>
+            <button id="request-open" type="button" class="tool" aria-controls="request-editor" aria-expanded="false" data-en="Request a change">수정 요청</button>
+            <button id="description-open" type="button" class="tool" aria-controls="screen-description" aria-expanded="false" data-en="Design rationale">기획 근거</button>
+          </div>
+        </main>
+        <aside id="request-editor" class="inspector-panel request-editor" role="region" aria-labelledby="request-title" hidden>
+          <header class="dialog-head"><h2 id="request-title"></h2><button id="request-close" type="button" class="tool quiet" aria-label="수정 요청 닫기" data-en-aria-label="Close change request" data-en="Close">닫기</button></header>
+          <dl id="request-planning" class="finding-result planning-evidence" hidden></dl>
+          <form id="request-form">
+            <label for="request-text" data-en="What should change on this screen?">이 화면에서 바꿀 내용</label>
+            <textarea id="request-text" rows="3" placeholder="바꾸려는 요소와 원하는 동작을 적어 보세요." data-en-placeholder="Describe the element and how it should behave."></textarea>
+            <button id="request-save" type="submit" class="tool primary" disabled data-en="Add to list">목록에 담기</button>
+          </form>
+          <div class="request-feedback">
+            <p id="request-status" role="status"></p>
+            <button id="saved-request-list" type="button" class="tool quiet" hidden data-en="View AI change requests">AI 수정 요청 보기</button>
+          </div>
+        </aside>
+        <aside id="screen-description" class="inspector-panel" role="region" aria-labelledby="description-title" hidden>
+          <header class="dialog-head"><h2 id="description-title"></h2><button id="description-close" type="button" class="tool quiet" aria-label="기획 근거 닫기" data-en-aria-label="Close design rationale" data-en="Close">닫기</button></header>
+          <p id="description-source" class="brief-source"></p>
+          <p id="description-brief"></p>
+          <dl id="description-planning" class="finding-result planning-evidence" hidden></dl>
+          <section id="description-conditions">
+            <h3 data-en="Conditions and branches">조건과 화면 분기</h3>
+            <ul id="ux-conditions" class="description-list"></ul>
+          </section>
+          <section id="description-decisions" hidden>
+            <h3 data-en="Decisions needed">결정 필요</h3>
+            <ul id="ux-decisions" class="description-list"></ul>
+          </section>
+          <details class="screen-links"><summary data-en="Linked screens">더미에 연결된 화면</summary><ul id="description-links" class="description-list"></ul></details>
+        </aside>
+      </div>
+    </div>
+    <footer class="footer">
+      <div id="route-warning" hidden>
+        <output id="route-stop"></output>
+        <button id="route-proposals-open" class="tool soft" type="button" aria-haspopup="dialog" aria-controls="route-proposals" data-en="View proposed fixes" hidden>개선안 보기</button>
+      </div>
+      <output id="screen-decisions" hidden></output>
+      <div id="simulation" class="simulation" role="group" aria-label="모의 입력" data-en-aria-label="Simulation controls"></div>
+    </footer>
+  </div>
+  <dialog id="route-proposals" aria-labelledby="route-proposals-title">
+    <form method="dialog" class="dialog-head">
+      <h2 id="route-proposals-title"></h2>
+      <button class="tool quiet" autofocus data-en="Close">닫기</button>
+    </form>
+    <div id="route-proposal-list"></div>
+    <p id="route-proposal-error" role="alert"></p>
+  </dialog>
+  <dialog id="custom-size" aria-labelledby="custom-size-title">
+    <form id="custom-size-form">
+      <div class="dialog-head"><h2 id="custom-size-title" data-en="Custom screen size">화면 크기 직접 입력</h2></div>
+      <div class="custom-size-fields">
+        <label for="custom-width"><span data-en="Width (CSS px)">가로 (CSS px)</span><input id="custom-width" type="number" inputmode="numeric" min="1" step="1" required autofocus></label>
+        <label for="custom-height"><span data-en="Height (CSS px)">세로 (CSS px)</span><input id="custom-height" type="number" inputmode="numeric" min="1" step="1" required></label>
+      </div>
+      <div class="custom-size-actions">
+        <button id="custom-size-cancel" class="tool quiet" type="button" data-en="Cancel">취소</button>
+        <button class="tool primary" type="submit" data-en="Apply">적용</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="numbering" aria-labelledby="numbering-title">
+    <form method="dialog" class="dialog-head"><h2 id="numbering-title" data-en="Preview renumbering">번호 변경 미리보기</h2><button class="tool quiet" aria-label="번호 변경 미리보기 닫기" data-en-aria-label="Close renumbering preview" data-en="Close">닫기</button></form>
+    <p id="numbering-summary"></p>
+    <ul id="numbering-changes" class="numbering-changes"></ul>
+    <button id="apply-numbering" type="button" class="tool primary" data-en="Apply numbering">번호 적용</button>
+  </dialog>
+  <dialog id="request-list" aria-labelledby="request-list-title">
+    <form method="dialog" class="dialog-head"><h2 id="request-list-title"><span data-en="AI change requests">AI 수정 요청</span></h2><button class="tool quiet" aria-label="AI 수정 요청 닫기" data-en-aria-label="Close AI change requests" data-en="Close">닫기</button></form>
+    <p id="requests-empty" data-en="Write a change request beside the selected screen and choose Add to list.">선택한 화면 옆에서 수정 요청을 작성하고 ‘목록에 담기’를 누르세요.</p>
+    <p id="requests-instructions" hidden data-en="Select requests to copy and paste them into your current AI chat.">보낼 요청을 골라 복사한 뒤, 지금 작업 중인 AI 채팅에 붙여넣으세요.</p>
+    <ol id="saved-requests" class="saved-requests"></ol>
+    <button id="copy-requests" type="button" class="tool primary" disabled data-en="Copy requests for AI">AI에 붙여넣을 요청 복사</button>
+    <p id="copy-status" role="status"></p>
+    <textarea id="copy-text" rows="5" hidden readonly aria-label="복사할 요청" data-en-aria-label="Requests to copy"></textarea>
+  </dialog>
+  <script id="flow-data" type="application/json"><!-- wireflow:data --></script>
+  <script id="build-data" type="application/json"><!-- wireflow:build --></script>
+  <script>/* wireflow:locale */</script>
+  <script>
+    const language = WireflowLocale.resolve(JSON.parse(document.getElementById('flow-data').textContent),navigator.language);
+    const ui = WireflowLocale.translator(language);
+    document.documentElement.lang = language;
+    if (language === 'en') WireflowLocale.applyEnglish(document);
+  </script>
+  <script><!-- wireflow:engine --></script>
+  <script>/* wireflow:connections */</script>
+  <script>/* wireflow:layout */</script>
+  <script>/* wireflow:audit */</script>
+  <script>/* wireflow:reachability-audit */</script>
+  <script>/* wireflow:verification-view */</script>
+  <script>/* wireflow:review-panel */</script>
+  <script>/* wireflow:screen */</script>
+  <script>/* wireflow:workshop */</script>
+  <script>/* wireflow:viewer */</script>
+</body>
+</html>

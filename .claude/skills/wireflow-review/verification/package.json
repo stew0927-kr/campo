@@ -1,0 +1,18 @@
+{
+  "name": "wireflow-verification",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test plan.test.cjs browser.test.cjs integration.test.cjs",
+    "test:model": "node --test plan.test.cjs",
+    "test:browser": "node --test browser.test.cjs",
+    "test:integration": "node --test integration.test.cjs"
+  },
+  "dependencies": {
+    "playwright": "1.65.1",
+    "xstate": "5.33.4"
+  }
+}

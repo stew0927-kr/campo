@@ -43,7 +43,7 @@ async function scenario(name, run, viewport = { width: 390, height: 844 }, sourc
       await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(rows) });
     });
     await page.goto(source ? `${url}?source=${source}` : url);
-    await text(page, '어디로 가시나요?').waitFor();
+    await text(page, '가장 가까운 화장실').waitFor();
     await run(page);
     assert.deepEqual(errors, []);
     results.push({ name, passed: true }); console.log('PASS', name);
@@ -123,7 +123,7 @@ try {
     await tab(p, '내정보').click(); await button(p, '휠체어 보행을 기본으로 설정').click();
     await tab(p, '지도·길찾기').click(); await button(p, '길찾기').click();
     assert.equal(await button(p, '휠체어').getAttribute('aria-selected'), 'true');
-    await button(p, '길찾기 닫기').click(); await text(p, '어디로 가시나요?').waitFor();
+    await button(p, '길찾기 닫기').click(); await text(p, '가장 가까운 화장실').waitFor();
     await button(p, '내 위치로 이동').click(); await text(p, '위치 권한이 없어도 출발지와 목적지를 직접 선택').waitFor();
     await button(p, '길찾기').click(); await button(p, '출발: 검색해서 선택해 주세요').click();
     await button(p, '현재 위치를 출발지로').click(); await text(p, '위치 권한이 없어도 출발지와 목적지를 직접 선택').waitFor();
@@ -154,7 +154,7 @@ try {
     assert.equal(await text(p, '검사 경로 좌표').count(), 0);
     await button(p, '출발·도착 바꾸기').click(); await text(p, '검사 경로 좌표').waitFor();
     await button(p, '출발·도착 수정').click(); await button(p, '출발: 가상 시험 지점 3').waitFor();
-    await p.evaluate(() => window.__campoBack()); await text(p, '어디로 가시나요?').waitFor();
+    await p.evaluate(() => window.__campoBack()); await text(p, '가장 가까운 화장실').waitFor();
     await button(p, '길찾기').click(); await button(p, '출발: 검색해서 선택해 주세요').waitFor();
   });
   await scenario('manual demo route, map selection cancel and map point start', async (p) => {

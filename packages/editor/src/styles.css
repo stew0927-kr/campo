@@ -316,6 +316,29 @@ button.check-item:hover { background: var(--chrome); }
 .nearest { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .nearest button { padding: 6px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; text-align: left; }
 .nearest button:disabled { opacity: 0.5; cursor: default; }
+.nearest-gender { display: flex; gap: 0; }
+.nearest .nearest-gender button { flex: 1 1 0; text-align: center; border-radius: 0; }
+.nearest .nearest-gender button + button { border-left: 0; }
+.nearest .nearest-gender button:first-child { border-radius: 6px 0 0 6px; }
+.nearest .nearest-gender button:last-child { border-radius: 0 6px 6px 0; }
+.nearest .nearest-gender button[aria-checked="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+/* ---- 경로 테스트 → 찾아보기 (건물 → 층 → 장소) ---- */
+.route-browse { padding: 4px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; white-space: nowrap; }
+.route-browse[aria-expanded="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.route-tree-wrap { grid-column: 1 / -1; }
+.route-tree { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); max-height: 320px; overflow: auto; }
+.tree-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: var(--text-s); color: var(--muted); }
+.tree-crumb { padding: 0; border: 0; background: none; color: inherit; text-decoration: underline; cursor: pointer; }
+.tree-crumb[aria-current="location"], .tree-crumb-here { color: var(--ink); font-weight: 600; text-decoration: none; }
+.tree-up { margin-left: auto; padding: 2px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.tree-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.tree-row, .tree-more { width: 100%; padding: 5px 8px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--ink); text-align: left; cursor: pointer; }
+.tree-row:hover, .tree-row:focus-visible { border-color: var(--rule); }
+.tree-current { border-color: var(--ink); font-weight: 600; }
+.tree-more { color: var(--muted); text-decoration: underline; }
+.tree-tag { margin-left: 6px; color: var(--muted); font-size: var(--text-s); }
+.tree-section h4 { margin: 4px 0 2px; font-size: var(--text-s); color: var(--muted); }
 .route-warnings { margin-top: 8px; padding: 8px; border-left: 3px solid var(--warning); background: var(--chrome); }
 .route-warnings h3 { margin: 0 0 4px; font-size: var(--text-m); }
 .route-warnings ul, .attach-failed { margin: 0; padding-left: 18px; }
@@ -506,8 +529,8 @@ button.check-item:hover { background: var(--chrome); }
 :root { --route-elevator: #e67700; --route-wheelchair: #5f3dc4; }
 .route-elevator { --route: var(--route-elevator); }
 .route-wheelchair { --route: var(--route-wheelchair); }
-.route-end { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 6px; }
-.route-end .field { margin: 0; }
+.route-end { display: grid; grid-template-columns: max-content max-content; justify-content: start; align-items: end; gap: 6px; }
+.route-end .field { margin: 0; grid-column: 1 / -1; }
 .route-direct {
   height: 30px; padding: 0 10px; border: 1px solid var(--rule); border-radius: 15px; background: var(--surface);
   font-size: var(--text-s); white-space: nowrap; cursor: pointer;

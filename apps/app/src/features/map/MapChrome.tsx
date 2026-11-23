@@ -7,7 +7,8 @@ import type { CampusBuilding, CampusPlace, TravelMode } from '../../contracts.ts
 import { floating, theme as t } from '../../ui/theme.ts';
 import { Empty, Notice } from '../../ui/kit.tsx';
 import { TRAVEL_MODES } from './model.ts';
-import { OUTDOOR_GROUP, TREE_ROOT, buildingGroups, facilityGroups, floorText, levelGroups, treeUp, type TreePath } from './placeTree.ts';
+import { OUTDOOR_GROUP, TREE_ROOT, UNKNOWN_LEVEL, buildingGroups, facilityGroups, floorText, levelGroups, treeUp, type TreePath } from './placeTree.ts';
+import { RESTROOM_WANTED, genderLabel, restroomCandidates, type RestroomWanted } from './restroomGender.ts';
 import { SHEET_COLLAPSED_HEIGHT, SHEET_TAP_SLOP, dragHeight, releaseSnap, tapSnap, toggleLabel, type SheetHeights, type SheetSnap } from './sheetModel.ts';
 
 export const SEARCH_PLACEHOLDER = '건물 이름, 동 번호, 강의실 검색';
@@ -211,16 +212,21 @@ const SEARCH_TITLE: Record<SearchTarget, string> = { place: '장소 검색', fro
  * Search sheet. With a query: a flat filtered list. Without one: a drill-down list
  * (building → floor → facilities such as restrooms, classrooms and entrances).
  */
-export function PlaceSearch({ target, query, onQuery, results, places, buildings, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy }: {
+export function PlaceSearch({ target, query, onQuery, results: allResults, places: allPlaces, buildings, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy, restroomGender = 'any', onRestroomGender }: {
   target: SearchTarget | null; query: string; onQuery: (value: string) => void; results: readonly CampusPlace[]; detail: (place: CampusPlace) => string;
   places: readonly CampusPlace[]; buildings: readonly CampusBuilding[];
   emptyMessage: string; demoNotice: boolean; maxWidth: number; padding: number; busy: boolean;
   onClose: () => void; onChoose: (place: CampusPlace) => void; onCurrent: (() => void) | null; onMapPick: () => void;
+  /** 화장실 찾기(target 'restroom')의 전체/남자/여자. 그 목록의 화장실만 거른다(출발·도착 검색은 줄이지 않는다). */
+  restroomGender?: RestroomWanted; onRestroomGender?: (value: RestroomWanted) => void;
 }) {
   const word = target === 'to' ? '도착' : '출발';
   const [path, setPath] = useState<TreePath>(TREE_ROOT);
   useEffect(() => setPath(TREE_ROOT), [target]);
   const browsing = query.trim() === '';
+  const gendered = target === 'restroom' && restroomGender !== 'any';
+  const places = useMemo(() => (gendered ? restroomCandidates(allPlaces, restroomGender) : allPlaces), [gendered, allPlaces, restroomGender]);
+  const results = useMemo(() => (gendered ? restroomCandidates(allResults, restroomGender) : allResults), [gendered, allResults, restroomGender]);
   return <Modal visible={target !== null} animationType="slide" onRequestClose={onClose}><SafeAreaView style={{ flex: 1, backgroundColor: t.color.surface }}>
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, width: '100%', maxWidth, alignSelf: 'center', paddingHorizontal: padding, paddingTop: 8, gap: 12 }}>
       <View style={c.searchHeader}>
@@ -240,7 +246,12 @@ export function PlaceSearch({ target, query, onQuery, results, places, buildings
           <View style={c.pinGlyph}><View style={c.pinGlyphDot} /></View><Text style={c.quickText}>지도에서 선택</Text>
         </Pressable>
       </View>}
+      {target === 'restroom' && <View style={{ gap: 6 }}>
+        <Text style={c.genderCaption}>찾을 화장실</Text>
+        <GenderChips value={restroomGender} onChange={(value) => onRestroomGender?.(value)} />
+      </View>}
       {demoNotice && <Notice>가상 시험 데이터입니다. 실제 장소가 아닙니다.</Notice>}
+      {!browsing && places.length > 0 && <TextButton title="건물·층으로 찾아보기" onPress={() => onQuery('')} />}
       {browsing && places.length > 0
         ? <PlaceTree places={places} buildings={buildings} path={path} onPath={setPath} onChoose={onChoose} detail={detail} />
         : <FlatList data={results} keyboardShouldPersistTaps="handled" keyExtractor={(item) => item.id} ListEmptyComponent={<Empty message={emptyMessage} />}
@@ -248,10 +259,21 @@ export function PlaceSearch({ target, query, onQuery, results, places, buildings
     </KeyboardAvoidingView>
   </SafeAreaView></Modal>;
 }
+/** 전체 / 남자 / 여자 (화장실 찾기). */
+export function GenderChips({ value, onChange }: { value: RestroomWanted; onChange: (value: RestroomWanted) => void }) {
+  return <View accessibilityRole="radiogroup" accessibilityLabel="화장실 성별" style={c.segment}>{RESTROOM_WANTED.map((item) => {
+    const on = item.value === value;
+    return <Pressable key={item.value} accessibilityRole="radio" accessibilityLabel={`${item.label} 화장실`} accessibilityState={{ selected: on, checked: on }} onPress={() => onChange(item.value)} style={[c.segmentItem, { flex: 1 }, on && c.segmentOn]}>
+      <Text style={[c.segmentText, on && c.segmentTextOn]}>{item.label}</Text>
+    </Pressable>;
+  })}</View>;
+}
 function PlaceRow({ place, detail, onPress }: { place: CampusPlace; detail: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [c.result, pressed && { backgroundColor: t.color.sunken }]}>
+  // 화장실은 성별 라벨을 함께 보인다(같은 건물의 남/여 화장실이 같은 이름일 수 있다).
+  const line = place.nodeType === 'restroom' ? `${genderLabel(place)} · ${detail}` : detail;
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${place.name}, ${line}`} onPress={onPress} style={({ pressed }) => [c.result, pressed && { backgroundColor: t.color.sunken }]}>
     <View style={c.resultPin}><View style={c.resultPinDot} /></View>
-    <View style={{ flex: 1, gap: 2 }}><Text style={c.resultName}>{place.name}</Text><Text style={c.resultDetail}>{detail}</Text></View>
+    <View style={{ flex: 1, gap: 2 }}><Text style={c.resultName}>{place.name}</Text><Text style={c.resultDetail}>{line}</Text></View>
   </Pressable>;
 }
 function TreeRow({ title, detail, onPress, label }: { title: string; detail: string; onPress: () => void; label?: string }) {
@@ -267,7 +289,8 @@ export function PlaceTree({ places, buildings, path, onPath, onChoose, detail }:
 }) {
   const building = path.building === OUTDOOR_GROUP ? { name: '야외 장소' } : buildings.find((b) => b.id === path.building);
   const atFacilities = path.building !== null && (path.building === OUTDOOR_GROUP || path.level !== null);
-  const crumb = path.building === null ? '건물을 골라 주세요' : atFacilities && path.level !== null ? `${building?.name ?? ''} · ${floorText(path.level)}` : building?.name ?? '';
+  const levelText = (level: number) => (level === UNKNOWN_LEVEL ? '층 미확인' : floorText(level));
+  const crumb = path.building === null ? '건물을 골라 주세요' : atFacilities && path.level !== null ? `${building?.name ?? ''} · ${levelText(path.level)}` : building?.name ?? '';
   return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
     <View style={c.treeHeader}>
       {path.building !== null && <Pressable accessibilityRole="button" accessibilityLabel="위 단계로" onPress={() => onPath(treeUp(path))} style={c.iconButton}><BackIcon color={t.color.muted} /></Pressable>}
@@ -327,6 +350,7 @@ const c = StyleSheet.create({
   mode: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 20, backgroundColor: t.color.sunken, borderWidth: 1, borderColor: t.color.border },
   modeOn: { backgroundColor: t.color.primary, borderColor: t.color.primary },
   modeText: { fontSize: 14, fontWeight: '600', color: t.color.text }, modeTextOn: { color: 'white', fontWeight: '800' },
+  genderCaption: { fontSize: 13, fontWeight: '800', color: t.color.muted },
   segment: { flexDirection: 'row', backgroundColor: '#EDF0F5', borderRadius: 12, padding: 3 },
   segmentItem: { minHeight: 38, minWidth: 54, paddingHorizontal: 12, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   segmentOn: { backgroundColor: t.color.surface, shadowColor: '#0B1F3A', shadowOpacity: 0.1, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },

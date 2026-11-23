@@ -6,7 +6,7 @@
 // - 앞으로 늘어날 수 있는 필드는 반드시 optional(`?`)로 연다. 필수 필드를 더하는 변경은 하위 호환이 깨지는 변경이라
 //   프론트 화면을 같이 고쳐야 한다.
 // - 화면에 보여 줄 문구는 여기 있는 message/label을 그대로 쓰면 한국어 존댓말이 된다. 화면에서 새로 만들지 않는다.
-import type { ArrowModel, CampusGraph, MatchNetwork, NavEvent, NavMode, PhotoMeta, Profile, RouteStep, SensorFix } from '@campo/core';
+import type { ArrowModel, CampusGraph, MatchNetwork, NavEvent, NavMode, PhotoMeta, Profile, RestroomGender, RouteStep, SensorFix } from '@campo/core';
 import type { CampusRuntime } from './campus/types.ts';
 
 /** 지도 위의 한 점. 화면 좌표가 아니라 WGS84 위경도다. */
@@ -119,6 +119,11 @@ export interface CampusPlace {
    * 데이터의 `room_ref` → `ref` → `space_name` 순서로 고른다(space_name만 있는 예전 문은 그 값이 들어온다).
    */
   roomRef?: string;
+  /**
+   * 화장실일 때 데이터의 `restroom_gender` 그대로('male'·'female'·'unisex'·'family'). 기록이 없거나 화장실이 아니면 없다.
+   * 남자/여자 화장실 찾기는 'male'을 여자 목록에서만, 'female'을 남자 목록에서만 뺀다(features/map/restroomGender.ts).
+   */
+  restroomGender?: RestroomGender;
 }
 
 export interface CampusBuilding {

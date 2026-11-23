@@ -102,8 +102,29 @@ describe('routePlaces', () => {
     expect(places.find((p) => p.id === 'd_ctr_302')?.label).toBe('302호 (공업센터 3층)');
   });
 
-  it('returns only { id, label }', () => {
-    for (const p of routePlaces(state())) expect(Object.keys(p).sort()).toEqual(['id', 'label']);
+  it('carries where each place stands, for the 건물 → 층 → 장소 browser', () => {
+    const places = routePlaces(state());
+    expect(places.find((p) => p.id === 'd_ctr_302')).toEqual({
+      id: 'd_ctr_302', label: '302호 (공업센터 3층)', buildingId: 'bldg_ENGCTR', buildingName: '공업센터', level: 3, kind: 'door', nodeType: 'door',
+    });
+    expect(places.find((p) => p.id === 'p_main')).toEqual({
+      id: 'p_main', label: '정문', buildingId: null, buildingName: '', level: null, kind: 'poi', nodeType: 'poi',
+    });
+  });
+
+  it('adds restrooms (named by gender when they have no name) and named entrances, with the gender kept', () => {
+    const h = createHistory(emptyState());
+    h.perform(addBuilding({ code: 'ENGCTR', name: '공업센터', levels: [1], polygon: square(127.0, 37.5) }));
+    const node = (id: string, props: Record<string, unknown>) =>
+      h.perform(addNode({ id, coord: [127.0002, 37.5002], props: { kind: 'node', building_id: 'bldg_ENGCTR', level: 1, source: 'test', ...props } as never }));
+    node('wc_m', { node_type: 'restroom', restroom_gender: 'male' });
+    node('wc_x', { node_type: 'restroom' });
+    node('ent', { node_type: 'entrance', name: '공업센터 정문' });
+    node('ent_unnamed', { node_type: 'entrance' });
+    const places = routePlaces(h.current());
+    expect(places.map((p) => p.label)).toEqual(['공업센터 정문 (공업센터 1층)', '남자 화장실 (공업센터 1층)', '화장실 (공업센터 1층)']);
+    expect(places.find((p) => p.id === 'wc_m')).toMatchObject({ kind: 'other', nodeType: 'restroom', gender: 'male' });
+    expect(places.find((p) => p.id === 'wc_x')).not.toHaveProperty('gender');
   });
 
   it('leaves out points that are not departure / arrival candidates', () => {

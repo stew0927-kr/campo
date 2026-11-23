@@ -1,0 +1,772 @@
+{
+  "format": "campo-survey",
+  "version": 1,
+  "id": "sv-20261114-osmw187181237-172613",
+  "campus": "hanyang-seoul",
+  "surveyed_at": "2026-11-18T17:26:13+09:00",
+  "changeset": {
+    "id": "cs-20261114-osmw187181237-172613",
+    "campus": "hanyang-seoul",
+    "source": "editor",
+    "report_ids": [],
+    "changes": [
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "e_OSMw187181261_1_l929s1",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [
+                127.04563333049133,
+                37.55743205332072
+              ],
+              [
+                127.04578340891264,
+                37.55726845716078
+              ]
+            ]
+          },
+          "properties": {
+            "kind": "edge",
+            "highway": "steps",
+            "edge_type": "indoor",
+            "from": "n_OSMw187181261_1_corridor_jgyh5s",
+            "to": "n_OSMw187181261_2_corridor_5snngc",
+            "bidirectional": false,
+            "step_free": false,
+            "conveying": "forward",
+            "level_from": 1,
+            "level_to": 2,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "e_OSMw187181261_4_7hcqyz",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [
+                127.0457591300658,
+                37.55733506992948
+              ],
+              [
+                127.04590470593419,
+                37.55716907062314
+              ]
+            ]
+          },
+          "properties": {
+            "kind": "edge",
+            "highway": "corridor",
+            "edge_type": "indoor",
+            "from": "n_OSMw187181261_4_corridor_eorppc",
+            "to": "n_OSMw187181261_4_corridor_8vlz8x",
+            "bidirectional": true,
+            "step_free": null,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "e_OSMw187181261_4_n25r6v",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [
+                127.0455435776859,
+                37.55749096257399
+              ],
+              [
+                127.0455435776859,
+                37.55749096257399
+              ]
+            ]
+          },
+          "properties": {
+            "kind": "edge",
+            "highway": "steps",
+            "edge_type": "indoor",
+            "from": "n_OSMw187181261_5_stair_landing_tve3g9",
+            "to": "n_OSMw187181261_4_stair_landing_k6h9r0",
+            "bidirectional": true,
+            "step_free": false,
+            "level_from": 5,
+            "level_to": 4,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "e_OSMw187181261_4_osduiq",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [
+                127.0457591300658,
+                37.55733506992948
+              ],
+              [
+                127.0456030983919,
+                37.55738045952541
+              ]
+            ]
+          },
+          "properties": {
+            "kind": "edge",
+            "highway": "corridor",
+            "edge_type": "indoor",
+            "from": "n_OSMw187181261_4_corridor_eorppc",
+            "to": "n_OSMw187181261_4_corridor_2b1lr7",
+            "bidirectional": true,
+            "step_free": null,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "e_OSMw187181261_4_u9xuws",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [
+                127.04559513357033,
+                37.55742235065734
+              ],
+              [
+                127.04550272075171,
+                37.557562444917146
+              ]
+            ]
+          },
+          "properties": {
+            "kind": "edge",
+            "highway": "steps",
+            "edge_type": "indoor",
+            "from": "n_OSMw187181261_4_corridor_mnjnlb",
+            "to": "n_OSMw187181261_5_corridor_agtjrt",
+            "bidirectional": false,
+            "step_free": false,
+            "conveying": "forward",
+            "level_from": 4,
+            "level_to": 5,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "e_OSMw187181261_4_yk1sg2",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [
+                127.04578456281536,
+                37.55741533752829
+              ],
+              [
+                127.04559513357033,
+                37.55742235065734
+              ]
+            ]
+          },
+          "properties": {
+            "kind": "edge",
+            "highway": "corridor",
+            "edge_type": "indoor",
+            "from": "n_OSMw187181261_4_corridor_nynm49",
+            "to": "n_OSMw187181261_4_corridor_mnjnlb",
+            "bidirectional": true,
+            "step_free": null,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "e_OSMw187181261_5_qn4vgq",
+          "geometry": {
+            "type": "LineString",
+            "coordinates": [
+              [
+                127.04550272075171,
+                37.557562444917146
+              ],
+              [
+                127.0455435776859,
+                37.55749096257399
+              ]
+            ]
+          },
+          "properties": {
+            "kind": "edge",
+            "highway": "corridor",
+            "edge_type": "indoor",
+            "from": "n_OSMw187181261_5_corridor_agtjrt",
+            "to": "n_OSMw187181261_5_stair_landing_tve3g9",
+            "bidirectional": true,
+            "step_free": null,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_1_corridor_jgyh5s",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04563333049133,
+              37.55743205332072
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 1,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_1_door_0n5oz7",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.0456932,
+              37.557343849999995
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "door",
+            "building_id": "bldg_OSMw187181261",
+            "level": 1,
+            "room_ref": "55",
+            "door_role": "front",
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_1_elevator_stop_kti8r2",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04589740189279,
+              37.557211344060235
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "elevator_stop",
+            "building_id": "bldg_OSMw187181261",
+            "level": 1,
+            "elevator_id": "OSMw187181261_elevA",
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_1_entrance_mn99jn",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04554090107341,
+              37.55727057725335
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "entrance",
+            "building_id": "bldg_OSMw187181261",
+            "level": 1,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_1_stair_landing_p03v72",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04552867208419,
+              37.5575353992047
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "stair_landing",
+            "building_id": "bldg_OSMw187181261",
+            "level": 1,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_2_corridor_5snngc",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04578340891264,
+              37.55726845716078
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 2,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_4_corridor_2b1lr7",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.0456030983919,
+              37.55738045952541
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 4,
+            "source": "field-survey-2026-11",
+            "sync_group": "sg_o1cp5s",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_4_corridor_8vlz8x",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04590470593419,
+              37.55716907062314
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 4,
+            "source": "field-survey-2026-11",
+            "sync_group": "sg_u031bd",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_4_corridor_eorppc",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.0457591300658,
+              37.55733506992948
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 4,
+            "source": "field-survey-2026-11",
+            "sync_group": "sg_874n32",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_4_corridor_mnjnlb",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04559513357033,
+              37.55742235065734
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 4,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_4_corridor_nynm49",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04578456281536,
+              37.55741533752829
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 4,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_4_door_za292n",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04577415404414,
+              37.55744111809186
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "door",
+            "building_id": "bldg_OSMw187181261",
+            "level": 4,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_4_restroom_ayk77c",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04572943670847,
+              37.557443104788966
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "restroom",
+            "building_id": "bldg_OSMw187181261",
+            "level": 4,
+            "restroom_gender": "unisex",
+            "wheelchair": "unknown",
+            "changing_table": null,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_4_stair_landing_k6h9r0",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.0455435776859,
+              37.55749096257399
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "stair_landing",
+            "building_id": "bldg_OSMw187181261",
+            "level": 4,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_5_corridor_760vs0",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.0457591300658,
+              37.55733506992948
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 5,
+            "source": "field-survey-2026-11",
+            "sync_group": "sg_874n32",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_5_corridor_agtjrt",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.04550272075171,
+              37.557562444917146
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "corridor",
+            "building_id": "bldg_OSMw187181261",
+            "level": 5,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "op": "create",
+        "feature": {
+          "type": "Feature",
+          "id": "n_OSMw187181261_5_stair_landing_tve3g9",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              127.0455435776859,
+              37.55749096257399
+            ]
+          },
+          "properties": {
+            "kind": "node",
+            "node_type": "stair_landing",
+            "building_id": "bldg_OSMw187181261",
+            "level": 5,
+            "source": "field-survey-2026-11",
+            "rev": 1
+          }
+        }
+      }
+    ],
+    "summary": "현장 조사 OSMw187181237-172613"
+  },
+  "attachments": {
+    "n_OSMw187181237_4_corridor_rd2xnn": {
+      "recorded_at": "2026-11-18T17:06:29+09:00",
+      "photos": [
+        "photos/n_OSMw187181237_4_corridor_rd2xnn-7.jpg",
+        "photos/n_OSMw187181237_4_corridor_rd2xnn-8.jpg",
+        "photos/n_OSMw187181237_4_corridor_rd2xnn-9.jpg"
+      ],
+      "photo_meta": {
+        "photos/n_OSMw187181237_4_corridor_rd2xnn-7.jpg": {
+          "heading_deg": 128,
+          "captured_at": "2026-11-18T17:04:30+09:00",
+          "focal_length_mm": 5.4,
+          "focal_length_35mm": 26,
+          "width_px": 3024,
+          "height_px": 4032,
+          "hfov_deg": 53.1,
+          "heading_sensor_deg": 32.9,
+          "heading_accuracy": 0,
+          "heading_ref": "magnetic",
+          "heading_source": "dial"
+        },
+        "photos/n_OSMw187181237_4_corridor_rd2xnn-8.jpg": {
+          "heading_deg": 302,
+          "captured_at": "2026-11-18T17:04:47+09:00",
+          "focal_length_mm": 5.4,
+          "focal_length_35mm": 26,
+          "width_px": 3024,
+          "height_px": 4032,
+          "hfov_deg": 53.1,
+          "heading_sensor_deg": 27.1,
+          "heading_accuracy": 0,
+          "heading_ref": "magnetic",
+          "heading_source": "dial"
+        },
+        "photos/n_OSMw187181237_4_corridor_rd2xnn-9.jpg": {
+          "heading_deg": 50,
+          "captured_at": "2026-11-18T17:05:38+09:00",
+          "focal_length_mm": 5.4,
+          "focal_length_35mm": 26,
+          "width_px": 3024,
+          "height_px": 4032,
+          "hfov_deg": 53.1,
+          "heading_sensor_deg": 86.3,
+          "heading_accuracy": 1,
+          "heading_ref": "magnetic",
+          "heading_source": "dial"
+        }
+      }
+    },
+    "n_OSMw187181261_1_corridor_jgyh5s": {
+      "heading_mag_deg": 237.1,
+      "pressure_hpa": 1014.22,
+      "recorded_at": "2026-11-16T17:37:14+09:00"
+    },
+    "n_OSMw187181261_1_door_0n5oz7": {
+      "heading_mag_deg": 87,
+      "pressure_hpa": 1014.46,
+      "recorded_at": "2026-11-17T18:42:34+09:00",
+      "photos": [
+        "photos/n_OSMw187181261_1_door_0n5oz7-5.jpg"
+      ],
+      "photo_meta": {
+        "photos/n_OSMw187181261_1_door_0n5oz7-5.jpg": {
+          "heading_deg": 159
+        }
+      }
+    },
+    "n_OSMw187181261_1_elevator_stop_kti8r2": {
+      "heading_mag_deg": 226.2,
+      "pressure_hpa": 1014.25,
+      "recorded_at": "2026-11-16T17:35:56+09:00"
+    },
+    "n_OSMw187181261_1_entrance_mn99jn": {
+      "heading_mag_deg": 133.9,
+      "pressure_hpa": 1014.15,
+      "recorded_at": "2026-11-16T17:28:13+09:00"
+    },
+    "n_OSMw187181261_1_stair_landing_p03v72": {
+      "heading_mag_deg": 219.1,
+      "pressure_hpa": 1014.27,
+      "recorded_at": "2026-11-16T17:35:32+09:00"
+    },
+    "n_OSMw187181261_2_corridor_5snngc": {
+      "pressure_hpa": 1014.3,
+      "recorded_at": "2026-11-16T17:37:14+09:00"
+    },
+    "n_OSMw187181261_4_corridor_mnjnlb": {
+      "heading_mag_deg": 217.1,
+      "pressure_hpa": 1007.65,
+      "recorded_at": "2026-11-15T01:10:43+09:00"
+    },
+    "n_OSMw187181261_4_corridor_nynm49": {
+      "heading_mag_deg": 310.3,
+      "pressure_hpa": 1007.65,
+      "recorded_at": "2026-11-15T01:09:16+09:00"
+    },
+    "n_OSMw187181261_4_door_za292n": {
+      "heading_mag_deg": 311.7,
+      "pressure_hpa": 1007.66,
+      "recorded_at": "2026-11-15T01:09:13+09:00"
+    },
+    "n_OSMw187181261_4_restroom_ayk77c": {
+      "heading_mag_deg": 296.7,
+      "pressure_hpa": 1007.64,
+      "recorded_at": "2026-11-15T01:09:32+09:00"
+    },
+    "n_OSMw187181261_4_stair_landing_k6h9r0": {
+      "pressure_hpa": 1007.61,
+      "recorded_at": "2026-11-15T01:10:52+09:00"
+    },
+    "n_OSMw187181261_5_corridor_agtjrt": {
+      "pressure_hpa": 1007.63,
+      "recorded_at": "2026-11-15T01:10:43+09:00"
+    },
+    "n_OSMw187181261_5_stair_landing_tve3g9": {
+      "heading_mag_deg": 215,
+      "pressure_hpa": 1007.58,
+      "recorded_at": "2026-11-15T01:10:52+09:00"
+    }
+  },
+  "vertical": [
+    {
+      "edge_id": "e_OSMw187181261_4_u9xuws",
+      "pressure_start_hpa": 1007.65,
+      "pressure_end_hpa": 1007.63,
+      "height_m": 0.17,
+      "method": "barometer",
+      "measured_at": "2026-11-15T01:10:43+09:00"
+    },
+    {
+      "edge_id": "e_OSMw187181261_4_n25r6v",
+      "pressure_start_hpa": 1007.58,
+      "pressure_end_hpa": 1007.61,
+      "height_m": -0.19,
+      "method": "barometer",
+      "measured_at": "2026-11-15T01:10:52+09:00"
+    },
+    {
+      "edge_id": "e_OSMw187181261_1_l929s1",
+      "pressure_start_hpa": 1014.22,
+      "pressure_end_hpa": 1014.3,
+      "height_m": -0.64,
+      "method": "barometer",
+      "measured_at": "2026-11-16T17:37:14+09:00"
+    }
+  ]
+}

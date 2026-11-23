@@ -1,1 +1,4 @@
-{"type":"FeatureCollection","features":[]}
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"e_conn_n43cmr","geometry":{"type":"LineString","coordinates":[[127.0453114586241,37.55680834741658],[127.0452924100273,37.55681879375257]]},"properties":{"kind":"edge","highway":"footway","edge_type":"portal","step_free":null,"from":"n_OSMw187181237_1_entrance_pvzs6b","to":"n_out_ixhsum","bidirectional":true,"source":"estimate","rev":1}},
+{"type":"Feature","id":"e_conn_tow7ga","geometry":{"type":"LineString","coordinates":[[127.04587566975596,37.556266507950426],[127.04586007338742,37.55624655172331]]},"properties":{"kind":"edge","highway":"footway","edge_type":"portal","step_free":null,"from":"n_OSMw187181237_1_entrance_6uq9lg","to":"n_out_8a85o6","bidirectional":true,"source":"estimate","rev":1}}
+]}

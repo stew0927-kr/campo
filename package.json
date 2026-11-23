@@ -11,14 +11,15 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "npm run typecheck --workspaces",
+    "typecheck": "npm run typecheck --workspaces && tsc -p tools/osm-campus-map/tsconfig.json",
     "validate": "npm run validate -w @campo/tools",
     "migrate": "npm run migrate -w @campo/tools --",
     "calibrate": "npm run calibrate -w @campo/tools --",
     "apply": "npm run apply -w @campo/tools --",
     "editor": "npm run dev -w @campo/editor",
     "mobile": "npm run start -w @campo/mobile",
-    "app": "npm run start -w @campo/app"
+    "app": "npm run start -w @campo/app",
+    "osm-campus-map": "tsx tools/osm-campus-map/src/cli.ts"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

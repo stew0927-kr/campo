@@ -84,6 +84,14 @@ export interface CampusRouteView {
   /** 출발·도착이 지도 위 임의의 점이었을 때, 가장 가까운 길까지 걸어 내려간 거리(m). */
   snappedStartM?: number;
   snappedEndM?: number;
+  /**
+   * nodeIds[i]가 polyline에서 차지하는 자리(index). 평지(plaza) 위 걷는 선이 앞뒤·중간에 끼면 지점과 선의 자리가 어긋나므로
+   * 지점 좌표를 polyline에서 읽을 때는 이 값을 쓴다. 좌표를 찾지 못한 지점은 -1. 없을 수 있다(옛 경로).
+   */
+  nodeIndex?: number[];
+  /** 출발·도착이 평지(plaza) 안의 점이라 평지 안을 걸어 길에 닿을 때, 그 평지 id. */
+  startPlazaId?: string;
+  endPlazaId?: string;
 }
 
 export type CampusRouteStatus = 'idle' | 'ok' | 'not-found' | 'error';

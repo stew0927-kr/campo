@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { MapProps } from '../../src/features/map/mapTypes.ts';
 import { Button, Body } from '../../src/ui/kit.tsx';
 import { View } from './native.tsx';
@@ -5,6 +6,8 @@ import { View } from './native.tsx';
 // It reports the props the real CampusMap would draw (camera requests, selection, buildings, route, roadview bubble)
 // as text and exposes the map taps as buttons. Native gestures, tiles and marker layout are not simulated.
 export function MapCanvas(p: MapProps) {
+  // The real map reports its centre once loaded and whenever the camera settles (centre-pin picking reads it).
+  useEffect(() => { p.onCenter?.({ lat: p.center.lat, lng: p.center.lng }); }, []);
   return <View style={{ flex: 1, minHeight: 0, backgroundColor: '#E8EEE9', overflow: 'auto', paddingTop: 150, paddingLeft: 12, paddingRight: 76, paddingBottom: 40, gap: 8 }}>
     <Body>검사용 지도 대체 화면 · 실제 지도·타일은 미검증입니다.</Body><Body>{p.label}</Body>
     {p.focus && <Body>{`검사 카메라 이동 ${p.focus.key}회`}</Body>}
@@ -19,6 +22,9 @@ export function MapCanvas(p: MapProps) {
     {p.buildingId && <Body>{`검사 실내: ${p.buildingId} ${p.level}층`}</Body>}
     {p.highlightBuildings && p.mappedBuildingIds?.map((id) => <Button key={id} title={`검사 건물 누르기: ${id}`} onPress={() => p.onBuildingPress?.(id)} />)}
     {p.route && <Body>검사 경로 좌표 {p.route.polyline.length}개 · {Math.round(p.route.distanceM)}m</Body>}
+    {p.onCenter && <Button title="검사: 지도를 움직여 가운데 맞추기" onPress={() => p.onCenter!({ lat: p.center.lat + 0.00001, lng: p.center.lng + 0.00001 })} />}
+    {p.onCenter && <Button title="검사: 지도를 캠퍼스 밖으로 움직이기" onPress={() => p.onCenter!({ lat: 0, lng: 0 })} />}
+    {p.stepFocus && <Body>{`검사 안내 구간 ${p.stepFocus.key.split(':')[0]} · 좌표 ${p.stepFocus.coordinates.length}개`}</Body>}
     {(p.photoSpots ?? []).map((spot) => <Button key={spot.nodeId} title={`검사 사진 지점: ${spot.nodeId}`} onPress={() => p.onPhotoSpot?.(spot)} />)}
     {(p.stepGroups ?? []).map((group) => <Button key={group.key} title={`검사 경로 사진 묶음: ${group.entries.map((e) => e.label).join(' / ')}`} onPress={() => p.onStepGroup?.(group)} />)}
     {p.preview && <View accessibilityLabel="검사 로드뷰 말풍선" style={{ gap: 4, padding: 8, backgroundColor: 'white' }}>

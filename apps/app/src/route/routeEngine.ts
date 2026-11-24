@@ -2,11 +2,14 @@
 // 코어의 findRouteBetween을 그대로 쓰고, 화면이 필요로 하는 모양(예상 시간·층 이동·경사 경고·선)으로만 감싼다.
 import {
   STEEP_NOTE,
+  WALK_SPEED_MPS,
   findRouteBetween,
   isClosedFor,
+  plazaAt,
   snapToRoutes,
   type EdgeFeature,
   type PointRoute,
+  type PointRouteResult,
   type Position,
   type Profile,
   type RouteEnd,
@@ -44,21 +47,55 @@ function walkableFor(runtime: CampusRuntime, profile: Profile): (edge: EdgeFeatu
     !closed.has(edge.properties.to);
 }
 
-/** 요청한 출발·도착을 코어의 경로 끝(지점 또는 이 방식이 지날 수 있는 가장 가까운 걷는 구간 위의 점)으로 바꾼다. */
-function endOf(runtime: CampusRuntime, endpoint: RouteEndpoint, profile: Profile): { end: RouteEnd; snapM: number | null } | { message: string } {
+/** 경로 끝 후보 하나. snapM: 걷는 길까지 내려간 거리(평지·지점이면 null). plazaId: 평지 안의 점이면 그 평지. */
+interface EndChoice {
+  end: RouteEnd;
+  snapM: number | null;
+  plazaId: string | null;
+}
+
+/**
+ * 계단 최소(fewest_steps)에서 가장 가까운 구간이 계단이면, 이 거리(m) 안의 계단 아닌 구간도 출발 후보로 본다.
+ * 그래야 고른 점이 계단에 붙어 계단 끝까지 갔다가 되돌아오는 길이 나오지 않는다.
+ */
+export const STAIR_FREE_SNAP_SLACK_M = 25;
+
+const isSteps = (edge: EdgeFeature): boolean => edge.properties.highway === 'steps';
+
+/**
+ * 요청한 출발·도착을 코어의 경로 끝 후보로 바꾼다(편집기 경로 테스트의 직접 선택과 같은 규칙: core endAtPoint).
+ * - 지점: 그 지점 하나.
+ * - 평지(plaza)의 단단한 면 안의 점: 평지 안을 곧게(구멍은 돌아서) 걸어 길에 닿는 평지 끝. 평지 밖으로 나가지 않는다.
+ * - 그 밖(평지의 구멍 포함): 이 방식이 지날 수 있는 가장 가까운 걷는 구간 위의 점. 계단 최소는 계단 아닌 구간도 후보로 둔다.
+ */
+function endsOf(runtime: CampusRuntime, endpoint: RouteEndpoint, profile: Profile, usePlaza = true): EndChoice[] | { message: string } {
   if (endpoint.kind === 'node') {
     if (!runtime.graph.nodes.has(endpoint.nodeId)) {
       return { message: '고른 지점을 캠퍼스 데이터에서 찾지 못했습니다.' };
     }
-    return { end: { nodeId: endpoint.nodeId }, snapM: null };
+    return [{ end: { nodeId: endpoint.nodeId }, snapM: null, plazaId: null }];
   }
   const { lat, lng } = endpoint;
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
     return { message: '고른 위치의 좌표가 올바르지 않습니다. 지도에서 다시 골라 주세요.' };
   }
-  const snap = snapToRoutes(runtime.graph, [lng, lat], walkableFor(runtime, profile));
-  if (snap === null || !(snap.distanceM < MAX_SNAP_DISTANCE_M)) return { message: NO_WALKWAY };
-  return { end: { snap }, snapM: snap.distanceM };
+  const point: Position = [lng, lat];
+  const choices: EndChoice[] = [];
+  // 평지 안의 점은 평지 안에서만 걷는다: 평지 밖 길에 공중으로 붙이는 후보는 두지 않는다(평지가 길과 닿지 않을 때만 usePlaza=false로 다시).
+  const on = usePlaza ? plazaAt(runtime.graph, point) : null;
+  if (on?.hit === 'solid') return [{ end: { plaza: { plazaId: on.plaza.id, point } }, snapM: null, plazaId: on.plaza.id }];
+  const walkable = walkableFor(runtime, profile);
+  const snap = snapToRoutes(runtime.graph, point, walkable);
+  if (snap !== null && snap.distanceM < MAX_SNAP_DISTANCE_M) {
+    choices.push({ end: { snap }, snapM: snap.distanceM, plazaId: null });
+    if (profile === 'fewest_steps') {
+      const flat = snapToRoutes(runtime.graph, point, (e) => walkable(e) && !isSteps(e));
+      if (flat !== null && flat.edgeId !== snap.edgeId && flat.distanceM < Math.min(MAX_SNAP_DISTANCE_M, snap.distanceM + STAIR_FREE_SNAP_SLACK_M)) {
+        choices.push({ end: { snap: flat }, snapM: flat.distanceM, plazaId: null });
+      }
+    }
+  }
+  return choices.length > 0 ? choices : { message: NO_WALKWAY };
 }
 
 /**
@@ -72,13 +109,19 @@ interface PolylineLeg {
   end: number;
 }
 
-function polylineOf(runtime: CampusRuntime, route: PointRoute): { points: RoutePoint[]; legs: PolylineLeg[] } {
+function polylineOf(runtime: CampusRuntime, route: PointRoute): { points: RoutePoint[]; legs: PolylineLeg[]; nodeIndex: number[] } {
   const points: RoutePoint[] = [];
   const nodeIndex: (number | undefined)[] = [];
+  // 바로 앞 점과 같은 점(평지 걷는 선이 길과 닿는 지점)은 한 번만 넣는다(편집기 routeStops와 같다).
   const push = (position: Position): void => {
+    const last = points[points.length - 1];
+    if (last !== undefined && last.lng === position[0] && last.lat === position[1]) return;
     points.push({ lat: position[1], lng: position[0] });
   };
-  if (route.startFoot !== null) push(route.startFoot);
+  // 출발: 평지 안의 점이면 평지 안을 걷는 선(고른 점 → 길과 닿는 곳), 아니면 걷는 길 위의 발.
+  const startPath = route.startPlaza?.path ?? (route.startFoot !== null ? [route.startFoot] : []);
+  for (const p of startPath) push(p);
+  const hasStart = startPath.length > 0;
   // 평지를 건너는 구간(길 A → 평지 → 길 B)은 두 지점 사이에 평지 위 걷는 선을 끼워 넣는다(구멍을 돌아가는 꺾임 포함).
   const vias = route.viaPlazas ?? [];
   let next = 0;
@@ -92,29 +135,32 @@ function polylineOf(runtime: CampusRuntime, route: PointRoute): { points: RouteP
       next++;
     }
   });
-  if (route.endFoot !== null) push(route.endFoot);
-  const legs = legsOf(route, nodeIndex, points.length - 1);
+  // 도착: 길과 닿는 곳 → 평지 안의 고른 점, 아니면 발.
+  const endPath = route.endPlaza?.path ?? (route.endFoot !== null ? [route.endFoot] : []);
+  for (const p of endPath) push(p);
+  const hasEnd = endPath.length > 0;
+  const legs = legsOf(route, nodeIndex, points.length - 1, hasStart, hasEnd);
   // 출발과 도착이 같은 자리면 점이 하나뿐이다. 한 점짜리 LineString은 지도에 그릴 수 없으므로 같은 점을 한 번 더 둔다.
   const only = points.length === 1 ? points[0] : undefined;
   if (only !== undefined) points.push({ lat: only.lat, lng: only.lng });
-  return { points, legs };
+  return { points, legs, nodeIndex: nodeIndex.map((i) => i ?? -1) };
 }
 
-/** 경로선을 진행 순서대로 구간(발 → 첫 지점, 지점 → 지점, 마지막 지점 → 발)으로 나눈다. 좌표를 찾지 못한 지점 옆 구간은 뺀다. */
-function legsOf(route: PointRoute, nodeIndex: readonly (number | undefined)[], last: number): PolylineLeg[] {
+/** 경로선을 진행 순서대로 구간(출발 쪽 → 첫 지점, 지점 → 지점, 마지막 지점 → 도착 쪽)으로 나눈다. 좌표를 찾지 못한 지점 옆 구간은 뺀다. */
+function legsOf(route: PointRoute, nodeIndex: readonly (number | undefined)[], last: number, hasStart: boolean, hasEnd: boolean): PolylineLeg[] {
   const legs: PolylineLeg[] = [];
   const add = (from: string | null, to: string | null, start: number | undefined, end: number | undefined): void => {
     if (start !== undefined && end !== undefined && start <= end) legs.push({ from, to, start, end });
   };
   const ids = route.nodes;
   if (ids.length === 0) {
-    // 한 구간 위에서 발에서 발로 바로 걷는 경로.
-    if (route.startFoot !== null && route.endFoot !== null) add(null, null, 0, last);
+    // 한 구간 위(또는 한 평지 안)에서 출발 점에서 도착 점으로 바로 걷는 경로.
+    if (hasStart && hasEnd) add(null, null, 0, last);
     return legs;
   }
-  if (route.startFoot !== null) add(null, ids[0]!, 0, nodeIndex[0]);
+  if (hasStart) add(null, ids[0]!, 0, nodeIndex[0]);
   for (let i = 0; i + 1 < ids.length; i++) add(ids[i]!, ids[i + 1]!, nodeIndex[i], nodeIndex[i + 1]);
-  if (route.endFoot !== null) add(ids[ids.length - 1]!, null, nodeIndex[ids.length - 1], last);
+  if (hasEnd) add(ids[ids.length - 1]!, null, nodeIndex[ids.length - 1], last);
   return legs;
 }
 
@@ -188,8 +234,36 @@ function viewOf(runtime: CampusRuntime, route: PointRoute): CampusRouteView {
     fallbackMessage: route.fallback !== null ? route.fallback.message : null,
     polyline: line.points,
     nodeIds: [...route.nodes],
+    nodeIndex: line.nodeIndex,
   };
+  if (route.startPlaza) view.startPlazaId = route.startPlaza.plazaId;
+  if (route.endPlaza) view.endPlazaId = route.endPlaza.plazaId;
   return view;
+}
+
+type Best = { result: PointRoute; from: EndChoice; to: EndChoice; score: number };
+
+/** 출발·도착 후보마다 코어로 경로를 찾고, 비용 + 길까지 내려가는 걸음(초)이 가장 작은 것을 고른다. */
+function bestRoute(runtime: CampusRuntime, fromEndpoint: RouteEndpoint, toEndpoint: RouteEndpoint, profile: Profile, usePlaza: boolean): Best | { message: string; plaza: boolean } {
+  const froms = endsOf(runtime, fromEndpoint, profile, usePlaza);
+  const tos = endsOf(runtime, toEndpoint, profile, usePlaza);
+  const plaza = (!('message' in froms) && froms.some((c) => c.plazaId !== null)) || (!('message' in tos) && tos.some((c) => c.plazaId !== null));
+  if ('message' in froms) return { message: froms.message, plaza };
+  if ('message' in tos) return { message: tos.message, plaza };
+  let best: Best | null = null;
+  let firstMiss: Exclude<PointRouteResult, PointRoute> | null = null;
+  for (const from of froms) {
+    for (const to of tos) {
+      const result = findRouteBetween(runtime.graph, from.end, to.end, profile);
+      if (!result.found) {
+        firstMiss ??= result;
+        continue;
+      }
+      const score = result.cost + ((from.snapM ?? 0) + (to.snapM ?? 0)) / WALK_SPEED_MPS;
+      if (best === null || score < best.score) best = { result, from, to, score };
+    }
+  }
+  return best ?? { message: firstMiss?.message ?? NO_WALKWAY, plaza };
 }
 
 /**
@@ -205,16 +279,14 @@ export function computeRoute(runtime: CampusRuntime | null, request: CampusRoute
     return { status: 'error', route: null, message: '캠퍼스 데이터를 아직 읽지 못했습니다.' };
   }
   const profile = request.mode ?? DEFAULT_MODE;
-  const from = endOf(runtime, request.from, profile);
-  if ('message' in from) return { status: 'not-found', route: null, message: from.message };
-  const to = endOf(runtime, request.to, profile);
-  if ('message' in to) return { status: 'not-found', route: null, message: to.message };
+  let found = bestRoute(runtime, request.from, request.to, profile, true);
+  // 평지가 이 방식으로 길에 닿지 않으면(접점이 없는 평지) 예전처럼 가장 가까운 길에 붙여 다시 찾는다.
+  if ('message' in found && found.plaza) found = bestRoute(runtime, request.from, request.to, profile, false);
+  if ('message' in found) return { status: 'not-found', route: null, message: found.message };
+  const best = found;
 
-  const result = findRouteBetween(runtime.graph, from.end, to.end, profile);
-  if (!result.found) return { status: 'not-found', route: null, message: result.message };
-
-  const route = viewOf(runtime, result);
-  if (from.snapM !== null) route.snappedStartM = from.snapM;
-  if (to.snapM !== null) route.snappedEndM = to.snapM;
+  const route = viewOf(runtime, best.result);
+  if (best.from.snapM !== null) route.snappedStartM = best.from.snapM;
+  if (best.to.snapM !== null) route.snappedEndM = best.to.snapM;
   return { status: 'ok', route, message: null };
 }

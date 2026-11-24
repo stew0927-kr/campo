@@ -32,7 +32,7 @@ function LayoutView(p: Props) {
   }, []);
   return <div ref={ref} {...aria(p)} style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0, position: 'relative', ...css(p.style) }}>{p.children}</div>;
 }
-export function View(p: Props) { if (p.onLayout && (window as any).__campoLayoutEvents) return <LayoutView {...p} />; return <div {...aria(p)} style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0, position: 'relative', pointerEvents: p.pointerEvents === 'box-none' ? 'none' : undefined, ...css(p.style) }}>{p.children}</div>; }
+export function View(p: Props) { if (p.onLayout && (window as any).__campoLayoutEvents) return <LayoutView {...p} />; return <div {...aria(p)} style={{ display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0, position: 'relative', pointerEvents: p.pointerEvents === 'box-none' || p.pointerEvents === 'none' ? 'none' : undefined, ...css(p.style) }}>{p.children}</div>; }
 export function Text(p: Props) {
   const scale = useWindowDimensions().fontScale;
   const style = css(p.style);

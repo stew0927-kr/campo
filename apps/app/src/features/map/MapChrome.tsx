@@ -6,7 +6,7 @@ import type { CampusBuilding, CampusPlace, TravelMode } from '../../contracts.ts
 import { floating, theme as t } from '../../ui/theme.ts';
 import { Empty, Notice } from '../../ui/kit.tsx';
 import { TRAVEL_MODES } from './model.ts';
-import { OUTDOOR_GROUP, TREE_ROOT, UNKNOWN_LEVEL, buildingGroups, facilityGroups, floorText, levelGroups, treeUp, type TreePath } from './placeTree.ts';
+import { OUTDOOR_GROUP, TREE_ROOT, UNKNOWN_LEVEL, buildingGroups, facilityGroups, floorText, levelGroups, type TreePath } from './placeTree.ts';
 import { RESTROOM_WANTED, genderLabel, restroomCandidates, type RestroomWanted } from './restroomGender.ts';
 import { SHEET_COLLAPSED_HEIGHT, SHEET_TAP_SLOP, dragHeight, releaseSnap, searchSheetHeights, tapSnap, toggleLabel, type SheetHeights, type SheetSnap } from './sheetModel.ts';
 import { BuildingIcon } from './MapGlyphs.tsx';
@@ -104,15 +104,28 @@ export function FloorPicker({ name, detail, levels, current, onLevel, onClose }:
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel="층 선택 닫기" onPress={onClose} style={c.iconButton}><CloseIcon color={t.color.muted} /></Pressable>
     </View>
-    <View style={c.floorChips}>{levels.map((level) => {
-      const on = level === current;
-      return <Pressable key={level} accessibilityRole="button" accessibilityLabel={`${name} ${levelName(level)}${on ? ', 지금 보는 층' : ''}`} accessibilityState={{ selected: on }} onPress={() => onLevel(level)}
-        style={({ pressed }) => [c.floorChip, on && c.floorChipOn, pressed && !on && { backgroundColor: t.color.soft }]}>
-        <Text style={[c.floorChipText, on && c.floorChipTextOn]}>{levelChip(level)}</Text>
-      </Pressable>;
-    })}</View>
+    <FloorChips name={name} levels={levels} current={current} onLevel={onLevel} />
     <TextButton title="지도에서 계속 보기" onPress={onClose} />
   </View>;
+}
+/**
+ * One line of floor chips that scrolls sideways (B2 · B1 · 1F · 2F …), so a tall building never pushes the sheet up.
+ * `chip`/`spoken`: the chip text and the spoken floor name (default B1 / 지하 1층).
+ */
+export function FloorChips({ name, levels, current, onLevel, chip = levelChip, spoken = levelName }: {
+  name: string; levels: readonly number[]; current: number | null; onLevel: (level: number) => void;
+  chip?: (level: number) => string; spoken?: (level: number) => string;
+}) {
+  return <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" accessibilityLabel={`${name} 층 목록`}
+    style={c.floorChipsScroll} contentContainerStyle={c.floorChips}>
+    {levels.map((level) => {
+      const on = level === current;
+      return <Pressable key={level} accessibilityRole="button" accessibilityLabel={`${name} ${spoken(level)}${on ? ', 지금 보는 층' : ''}`} accessibilityState={{ selected: on }} onPress={() => onLevel(level)}
+        style={({ pressed }) => [c.floorChip, on && c.floorChipOn, pressed && !on && { backgroundColor: t.color.soft }]}>
+        <Text style={[c.floorChipText, on && c.floorChipTextOn]}>{chip(level)}</Text>
+      </Pressable>;
+    })}
+  </ScrollView>;
 }
 
 /* ---------- Start / end card (route input) ---------- */
@@ -253,6 +266,8 @@ export type SearchTarget = 'from' | 'to' | 'place' | 'restroom';
  * a one-line caption, because there the field picks the start of the walk, not the place being looked for.
  */
 const SEARCH_CAPTION: Partial<Record<SearchTarget, string>> = { restroom: '화장실 찾기 · 출발 위치' };
+/** Extra height of the compact (floor chips only) search sheet per optional row: quick chips, restroom gender, caption. */
+const SEARCH_QUICK_ROW = 44, SEARCH_RESTROOM_ROWS = 72, SEARCH_CAPTION_ROW = 26;
 /** Screen readers still hear what the field is for (the visible title row is gone). */
 const SEARCH_HINT: Record<SearchTarget, string> = { place: '장소 검색', from: '출발지 검색', to: '목적지 검색', restroom: '화장실 찾기 출발 위치 검색' };
 /**
@@ -262,7 +277,7 @@ const SEARCH_HINT: Record<SearchTarget, string> = { place: '장소 검색', from
  * readers the handle is an adjustable control (increment: expand, decrement: shrink, then close).
  * Opening a building in the list calls `onBuilding` so the map can move there while the sheet stays open.
  */
-export function PlaceSearch({ target, query, onQuery, results: allResults, places: allPlaces, buildings, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy, restroomGender = 'any', onRestroomGender, areaHeight = 720, onBuilding }: {
+export function PlaceSearch({ target, query, onQuery, results: allResults, places: allPlaces, buildings, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy, restroomGender = 'any', onRestroomGender, areaHeight = 720, onBuilding, onFloor }: {
   target: SearchTarget | null; query: string; onQuery: (value: string) => void; results: readonly CampusPlace[]; detail: (place: CampusPlace) => string;
   places: readonly CampusPlace[]; buildings: readonly CampusBuilding[];
   emptyMessage: string; demoNotice: boolean; maxWidth: number; padding: number; busy: boolean;
@@ -273,6 +288,8 @@ export function PlaceSearch({ target, query, onQuery, results: allResults, place
   areaHeight?: number;
   /** 건물·층 목록에서 건물을 열었을 때(지도를 그 건물로 옮긴다). */
   onBuilding?: (buildingId: string) => void;
+  /** 건물·층 목록에서 층을 골랐을 때(지도가 그 층의 복도·지점을 보인다). 층 목록·건물 목록으로 돌아가면 null. */
+  onFloor?: (buildingId: string | null, level: number | null) => void;
 }) {
   const word = target === 'to' ? '도착' : '출발';
   const [path, setPath] = useState<TreePath>(TREE_ROOT);
@@ -281,7 +298,10 @@ export function PlaceSearch({ target, query, onQuery, results: allResults, place
   const gendered = target === 'restroom' && restroomGender !== 'any';
   const places = useMemo(() => (gendered ? restroomCandidates(allPlaces, restroomGender) : allPlaces), [gendered, allPlaces, restroomGender]);
   const results = useMemo(() => (gendered ? restroomCandidates(allResults, restroomGender) : allResults), [gendered, allResults, restroomGender]);
-  const heights = useMemo(() => searchSheetHeights(areaHeight), [areaHeight]);
+  // 건물만 고른 상태(층 칩 한 줄)에서는 시트를 낮춰 지도를 넓게 보인다. 층을 고르면 시설 목록이 들어갈 기본 높이로.
+  const compact = browsing && path.building !== null && path.building !== OUTDOOR_GROUP && path.level === null;
+  const extra = (target !== null && target !== 'place' ? SEARCH_QUICK_ROW : 0) + (target === 'restroom' ? SEARCH_RESTROOM_ROWS : 0) + (target && SEARCH_CAPTION[target] ? SEARCH_CAPTION_ROW : 0);
+  const heights = useMemo(() => searchSheetHeights(areaHeight, compact ? extra : null), [areaHeight, compact, extra]);
   const [snap, setSnap] = useState<SheetSnap>('default');
   const height = useRef(new Animated.Value(heights.default)).current;
   const state = useRef({ snap, heights, onClose });
@@ -293,7 +313,9 @@ export function PlaceSearch({ target, query, onQuery, results: allResults, place
   };
   // A new search always opens at the default height; window or keyboard changes keep the current state.
   useEffect(() => { if (target !== null) { setSnap('default'); height.setValue(state.current.heights.default); } }, [target, height]);
-  useEffect(() => { height.setValue(heights[state.current.snap]); }, [heights, height]);
+  useEffect(() => {
+    Animated.spring(height, { toValue: heights[state.current.snap], useNativeDriver: false, bounciness: 0, speed: 18 }).start();
+  }, [heights, height]);
   const pan = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 4,
@@ -307,7 +329,14 @@ export function PlaceSearch({ target, query, onQuery, results: allResults, place
   }), []);
   const openPath = (next: TreePath) => {
     setPath(next);
+    // 건물을 처음 열면 지도를 그 건물로, 층 기본 보기는 compact 시트. 층을 고르면 지도가 그 층을 보인다.
     if (next.building !== null && next.building !== OUTDOOR_GROUP && next.building !== path.building) onBuilding?.(next.building);
+    const indoor = next.building !== null && next.building !== OUTDOOR_GROUP && next.level !== null && next.level !== UNKNOWN_LEVEL;
+    if (indoor) {
+      // 층을 고르면 시트를 기본 높이로 돌린다(목록을 보이게).
+      if (state.current.snap !== 'default') setSnap('default');
+      onFloor?.(next.building, next.level);
+    } else if (path.level !== null && path.level !== UNKNOWN_LEVEL && path.building !== OUTDOOR_GROUP) onFloor?.(null, null);
   };
   if (target === null) return null;
   return <Animated.View accessibilityLabel="장소 검색 시트" style={[c.sheet, { height }]}>
@@ -325,7 +354,7 @@ export function PlaceSearch({ target, query, onQuery, results: allResults, place
         <Pressable accessibilityRole="button" accessibilityLabel="검색 닫기" hitSlop={4} onPress={onClose} style={c.searchBack}><BackIcon /></Pressable>
         <View style={c.searchField}>
           <SearchIcon color={t.color.faint} />
-          <TextInput autoFocus value={query} onChangeText={onQuery} placeholder={SEARCH_PLACEHOLDER} placeholderTextColor={t.color.faint} accessibilityLabel="장소 검색어" accessibilityHint={SEARCH_HINT[target]} style={c.searchInput} autoCorrect={false} returnKeyType="search" />
+          <TextInput value={query} onChangeText={onQuery} placeholder={SEARCH_PLACEHOLDER} placeholderTextColor={t.color.faint} accessibilityLabel="장소 검색어" accessibilityHint={SEARCH_HINT[target]} style={c.searchInput} autoCorrect={false} returnKeyType="search" />
           {query.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="검색어 지우기" hitSlop={11} onPress={() => onQuery('')} style={c.clear}><CloseIcon color="white" /></Pressable>}
         </View>
       </View>
@@ -380,21 +409,28 @@ export function PlaceTree({ places, buildings, path, onPath, onChoose, detail }:
   places: readonly CampusPlace[]; buildings: readonly CampusBuilding[]; path: TreePath; onPath: (path: TreePath) => void;
   onChoose: (place: CampusPlace) => void; detail: (place: CampusPlace) => string;
 }) {
-  const building = path.building === OUTDOOR_GROUP ? { name: '야외 장소' } : buildings.find((b) => b.id === path.building);
-  const atFacilities = path.building !== null && (path.building === OUTDOOR_GROUP || path.level !== null);
-  const levelText = (level: number) => (level === UNKNOWN_LEVEL ? '층 미확인' : floorText(level));
-  // The building list needs no caption (the rows say what they are); deeper levels show where you are and a way up.
-  const crumb = path.building === null ? null : atFacilities && path.level !== null ? `${building?.name ?? ''} · ${levelText(path.level)}` : building?.name ?? '';
+  const outdoor = path.building === OUTDOOR_GROUP;
+  const building = outdoor ? { name: '야외 장소' } : buildings.find((b) => b.id === path.building);
+  const levels = useMemo(() => (path.building !== null && !outdoor ? levelGroups(places, path.building) : []), [places, path.building, outdoor]);
+  const showFacilities = path.building !== null && (outdoor || path.level !== null);
+  // A building shows its floors as one sideways line of chips under its name; picking one lists that floor's facilities below.
+  const name = building?.name ?? '';
+  const chip = (level: number) => (level === UNKNOWN_LEVEL ? '층 미확인' : levelChip(level));
+  const spoken = (level: number) => {
+    const group = levels.find((l) => l.level === level);
+    return `${group?.label ?? floorText(level)}, 시설 ${group?.count ?? 0}곳`;
+  };
   return <ScrollView accessibilityLabel={path.building === null ? '건물 목록' : undefined} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
-    {crumb !== null && <View style={c.treeHeader}>
-      <Pressable accessibilityRole="button" accessibilityLabel="위 단계로" onPress={() => onPath(treeUp(path))} style={c.iconButton}><BackIcon color={t.color.muted} /></Pressable>
-      <Text accessibilityRole="header" style={c.treeTitle}>{crumb}</Text>
+    {path.building !== null && <View style={c.treeHeader}>
+      <Pressable accessibilityRole="button" accessibilityLabel={outdoor ? '건물 목록으로' : '건물 목록으로 돌아가기'} onPress={() => onPath(TREE_ROOT)} style={c.iconButton}><BackIcon color={t.color.muted} /></Pressable>
+      <Text accessibilityRole="header" numberOfLines={1} style={c.treeTitle}>{name}</Text>
+      {!outdoor && path.level === null && <Text style={c.treeHint}>층을 골라 주세요</Text>}
     </View>}
+    {path.building !== null && !outdoor && <FloorChips name={name} levels={levels.map((l) => l.level)} current={path.level} chip={chip} spoken={spoken}
+      onLevel={(level) => onPath({ building: path.building, level })} />}
     {path.building === null && buildingGroups(places, buildings).map((g) => <TreeRow key={g.id} title={g.name} detail={g.id === OUTDOOR_GROUP ? `장소 ${g.count}곳` : `${g.levelCount}개 층 · 장소 ${g.count}곳`}
       onPress={() => onPath({ building: g.id, level: null })} />)}
-    {path.building !== null && !atFacilities && levelGroups(places, path.building).map((l) => <TreeRow key={l.level} title={l.label} detail={`시설 ${l.count}곳`}
-      label={`${building?.name ?? ''} ${l.label}, 시설 ${l.count}곳`} onPress={() => onPath({ building: path.building, level: l.level })} />)}
-    {atFacilities && facilityGroups(places, path.building!, path.level).map((group) => <View key={group.kind}>
+    {showFacilities && facilityGroups(places, path.building!, path.level).map((group) => <View key={group.kind}>
       <Text style={c.treeSection}>{group.label} {group.places.length}</Text>
       {group.places.map((place) => <PlaceRow key={place.id} place={place} detail={detail(place)} onPress={() => onChoose(place)} />)}
     </View>)}
@@ -416,7 +452,8 @@ const c = StyleSheet.create({
   floorBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: t.color.soft, alignItems: 'center', justifyContent: 'center' },
   floorTitle: { fontSize: t.type.heading, fontWeight: '800', color: t.color.text, letterSpacing: -0.2 },
   floorDetail: { fontSize: t.type.micro, color: t.color.muted },
-  floorChips: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.sm },
+  floorChipsScroll: { flexGrow: 0 },
+  floorChips: { flexDirection: 'row', gap: t.space.sm, paddingVertical: 2, paddingRight: 8 },
   floorChip: { minWidth: 52, minHeight: 44, paddingHorizontal: 12, borderRadius: t.radii.button, borderWidth: 1, borderColor: t.color.border, alignItems: 'center', justifyContent: 'center', backgroundColor: t.color.surface },
   floorChipOn: { backgroundColor: t.color.primary, borderColor: t.color.primary },
   floorChipText: { fontSize: 14, fontWeight: '800', color: t.color.text }, floorChipTextOn: { color: t.color.surface },
@@ -456,6 +493,7 @@ const c = StyleSheet.create({
   knobOn: { alignSelf: 'flex-end' },
   treeHeader: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 44 },
   treeTitle: { fontSize: 15, fontWeight: '800', color: t.color.muted, flexShrink: 1 },
+  treeHint: { marginLeft: 'auto', fontSize: 12, fontWeight: '700', color: t.color.faint },
   treeArrow: { fontSize: 22, color: t.color.faint, fontWeight: '600' },
   treeSection: { marginTop: 14, marginBottom: 2, fontSize: 13, fontWeight: '800', color: t.color.primary },
   sheetContent: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16, gap: 14 },

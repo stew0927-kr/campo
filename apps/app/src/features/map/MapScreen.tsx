@@ -23,13 +23,15 @@ import { endpointFor, insideOutline, placeDetail, placesInScope, pointPlace, req
 import { slopeSections } from '../../route/slopeSections.ts';
 import { getBuildingOutlineForLevel } from '@campo/core';
 import { useSensorFixes } from './useSensorFixes.ts';
-import { BuildingToggle, EndpointCard, EndpointDot, FloatChip, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
+import { BackIcon, BuildingToggle, EndpointCard, EndpointDot, FloatChip, FloorChips, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
 import { buildingCenter, floorChoice, mappedBuildings } from './buildings.ts';
 import { RoadviewScreen } from './RoadviewScreen.tsx';
 import { ROADVIEW_DEMO_CAMPUS, ROADVIEW_DEMO_CATALOG, RV } from './roadviewDemo.ts';
 import { nearestRestroom } from './restroom.ts';
 import { nearestRestroomTitle, type RestroomWanted } from './restroomGender.ts';
 import type { RoadviewPreview } from './mapTypes.ts';
+import { navCards, stepPhotoEntry } from './navModel.ts';
+import { centerPickInfo } from './centerPick.ts';
 
 type Field = 'from' | 'to';
 type PickTarget = Field | 'restroom';
@@ -96,7 +98,12 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const [level, setLevel] = useState<number | null>(null);
   const [gpsBusy, setGpsBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [tracking, setTracking] = useState(false);
+  /** 위치 안내(네비게이션) 중이면 지금 보는 단계 카드. GPS 위치 추적과 경로 마그넷(매칭)은 이 동안만 켠다. */
+  const [nav, setNav] = useState<{ index: number } | null>(null);
+  /** 지도 가운데 핀으로 고르는 동안 핀 아래 좌표(카메라가 멈출 때마다 바뀐다). */
+  const [pickCenter, setPickCenter] = useState<RoutePoint | null>(null);
+  /** 마지막으로 멈춘 지도 가운데. 핀 고르기를 시작할 때 첫 좌표로 쓴다(평소에는 화면을 다시 그리지 않는다). */
+  const mapCenter = useRef<RoutePoint | null>(null);
   const [flow, setFlow] = useState<'enter' | 'queue' | 'exit' | null>(null);
   const [devOpen, setDevOpen] = useState(false);
   const [placesOpen, setPlacesOpen] = useState(false);
@@ -128,14 +135,28 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const stepGroups = useMemo(() => stepMarkerGroups(stepPhotos, shownRoute?.steps.length ?? 0, trip?.backFrom ?? null), [stepPhotos, shownRoute, trip]);
   const spots = useMemo(() => spotsOf(data.graph, effectiveCatalog, buildingId, level), [data.graph, effectiveCatalog, buildingId, level]);
   useEffect(() => { setRoadview(null); setPreview(null); }, [shownRoute]);
-  const gps = useGpsMatcher(data.network, { routeNodeIds: route?.nodeIds ?? null });
-  const stopTracking = useCallback(() => setTracking(false), []);
-  const sensors = useSensorFixes(tracking && active && demo === 'none', gps.pushFix, stopTracking);
+  // GPS 매칭 세션은 위치 안내를 켰을 때만 만든다(상시 추적·마그넷 없음). 끄면 세션도 버린다.
+  const navOn = nav !== null && route !== null;
+  const gps = useGpsMatcher(navOn ? data.network : null, { routeNodeIds: route?.nodeIds ?? null });
+  const sensors = useSensorFixes(navOn && active && demo === 'none', gps.pushFix);
+  const cards = useMemo(() => (shownRoute ? navCards(shownRoute, data.graph) : []), [shownRoute, data.graph]);
+  const navIndex = nav ? Math.min(nav.index, Math.max(0, cards.length - 1)) : 0;
+  const card = navOn ? cards[navIndex] ?? null : null;
+  // 다시 찾은 경로(경로 이탈)는 첫 단계부터 다시 보인다.
+  useEffect(() => setNav((old) => (old && old.index !== 0 ? { index: 0 } : old)), [shownRoute]);
+  // 단계 시작 지점이 실내면 지도가 그 건물·층을 보인다(층 번호는 표시에만 쓴다).
+  useEffect(() => {
+    if (!card) return;
+    setBuildingId(card.buildingId); setLevel(card.level);
+  }, [card?.index, card?.buildingId, card?.level, navOn]);
+  const stepFocus = useMemo(() => (card && card.coordinates.length >= 2 ? { key: `${navIndex}:${shownRoute?.nodeIds.join(',') ?? ''}:${shownRoute?.distanceM ?? 0}`, coordinates: card.coordinates } : null), [card, navIndex, shownRoute]);
   const matches = useMemo(() => searchPlaces(data.places, data.buildings, query), [data.places, data.buildings, query]);
   const scopePlaces = useMemo(() => placesInScope(data.places, buildingId, level), [data.places, buildingId, level]);
   const visiblePlaces = placesExpanded ? scopePlaces : scopePlaces.slice(0, 20);
   useEffect(() => setPlacesExpanded(false), [buildingId, level, demo]);
-  const screen = mapPick ? 'pick' : request ? 'route' : view;
+  // 건물·층을 고르면 그 층의 시설·호실 목록을 바로 펼친다(지도에는 그 층의 복도·지점 아이콘이 보인다).
+  useEffect(() => { if (buildingId !== null) setPlacesOpen(true); }, [buildingId, level]);
+  const screen = mapPick ? 'pick' : request && nav && route ? 'nav' : request ? 'route' : view;
   const mapped = useMemo(() => mappedBuildings(data.places, data.buildings), [data.places, data.buildings]);
   const mappedIds = useMemo(() => mapped.map((b) => b.id), [mapped]);
   const buildingsOn = buildingMode || buildingId !== null;
@@ -148,11 +169,12 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     else if (devOpen) setDevOpen(false);
     else if (floorPicker !== null) setFloorPicker(null);
     else if (mapPick !== null) setMapPick(null);
-    else if (request !== null) { setTracking(false); setRequest(null); }
+    else if (nav !== null) stopNav();
+    else if (request !== null) { setRequest(null); }
     else if (view === 'plan') closePlan();
     else clearSelection();
-  }, [roadview, preview, search, devOpen, floorPicker, mapPick, request, view, selectQuery]);
-  useScreenBack(active && (roadview !== null || preview !== null || search !== null || devOpen || floorPicker !== null || mapPick !== null || request !== null || view === 'plan' || selected !== null), back);
+  }, [roadview, preview, search, devOpen, floorPicker, mapPick, nav, request, view, selectQuery]);
+  useScreenBack(active && (roadview !== null || preview !== null || search !== null || devOpen || floorPicker !== null || mapPick !== null || nav !== null || request !== null || view === 'plan' || selected !== null), back);
   const building = data.buildings.find((item) => item.id === buildingId);
   const indoorFeature = buildingId ? data.graph?.buildings.get(buildingId) : undefined;
   const indoorOutline = useMemo(() => (indoorFeature ? getBuildingOutlineForLevel(indoorFeature, level) : null), [indoorFeature, level]);
@@ -160,7 +182,8 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const outsideIndoor = (point: RoutePoint) => indoorOutline !== null && !insideOutline(point, indoorOutline);
   useEffect(() => () => { gpsGeneration.current++; }, []);
   useEffect(() => { setMode(defaultMode); setRequest(null); }, [defaultMode]);
-  useEffect(() => { if (!active) { setTracking(false); gpsGeneration.current++; setGpsBusy(false); } }, [active]);
+  // 다른 탭으로 가면 GPS를 끈다(센서는 active일 때만 켜진다). 안내 카드는 그대로 두어 돌아오면 이어서 본다.
+  useEffect(() => { if (!active) { gpsGeneration.current++; setGpsBusy(false); } }, [active]);
   useEffect(() => { if (!route) dispatch({ type: 'clearEstimate' }); }, [route, dispatch]);
   useEffect(() => {
     if (demo === 'none' && route && to && data.graph?.nodes.has(to.id)) dispatch({ type: 'estimate', nodeId: to.id, timeSec: route.timeSec });
@@ -177,7 +200,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (!intent) return;
     // An event's real destination must never resolve against the developer fixture.
     if (demo !== 'none') { switchData('none'); return; }
-    clearGps(); setTracking(false); setRequest(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null); setSelected(null); setSelectQuery(null); setDevOpen(false);
+    clearGps(); setNav(null); setRequest(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null); setSelected(null); setSelectQuery(null); setDevOpen(false);
     setBuildingMode(false); setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
     setView('plan');
     const target = intent.destination;
@@ -261,9 +284,9 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       setMessage((old) => (old === INDOOR_PICK_HINT || old === INDOOR_OUTSIDE_HINT ? null : old));
     }
   }
-  function closePlan() { clearGps(); setTracking(false); setFrom(null); setTo(null); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null); setRestroomGender('any'); setRoundTrip(false); setView('home'); }
+  function closePlan() { clearGps(); setNav(null); setFrom(null); setTo(null); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null); setRestroomGender('any'); setRoundTrip(false); setView('home'); }
   function swap() {
-    clearGps(); setTracking(false); setFrom(to); setTo(from); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null);
+    clearGps(); setNav(null); setFrom(to); setTo(from); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null);
     findRoute(to, from);
   }
   function changeMode(next: TravelMode) {
@@ -281,7 +304,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
    * `gender`: 전체 / 남자 / 여자 (restrooms with no gender limit count for both).
    */
   function findRestroom(start: CampusPlace, wheelchair: boolean, gender: RestroomWanted) {
-    clearGps(); setTracking(false); setSearch(null); setMapPick(null); setFlow(null); setSelected(null); setSelectQuery(null); setSearchBuilding(null); setView('plan');
+    clearGps(); setNav(null); setSearch(null); setMapPick(null); setFlow(null); setSelected(null); setSelectQuery(null); setSearchBuilding(null); setView('plan');
     setFrom(start); setRestroom({ start, wheelchair, gender }); setRestroomGender(gender);
     const found = nearestRestroom(data.runtime, endpointFor(start), wheelchair, mode, gender);
     if (!found.found) { setTo(null); setRequest(null); setMessage(found.message); return; }
@@ -326,7 +349,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (group) showStepGroup({ ...group, entries: group.entries.filter((e) => e.index === index) });
   }
   function switchData(next: DemoData) {
-    clearGps(); setTracking(false); setDemo(next); setFrom(null); setTo(null); setRequest(null); setQuery(''); setSearch(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null);
+    clearGps(); setNav(null); setDemo(next); setFrom(null); setTo(null); setRequest(null); setQuery(''); setSearch(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null);
     setRestroom(null); setRestroomGender('any'); setRoundTrip(false); setPreview(null); setRoadview(null);
     setSelected(null); setSelectQuery(null); setView('home'); setDevOpen(false); setMyLocation(null); gps.reset();
     setBuildingMode(false); setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
@@ -374,7 +397,24 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     setBuildingId(null); setLevel(null);
     if (run) findRoute(start, end);
   }
-  function toggleTracking() { gps.reset(); lastReroute.current = -1; setTracking((old) => !old); }
+  /** 위치 안내 시작: 사진·GPS가 없어도 단계 카드와 지도로 안내한다. GPS는 이때부터 켠다. */
+  function startNav() { gps.reset(); lastReroute.current = -1; setPreview(null); setSlopeKey(null); setNav({ index: 0 }); }
+  /** 위치 안내 끝: GPS를 끄고 경로 결과(실외 지도)로 돌아간다. */
+  function stopNav() { setNav(null); setPreview(null); setBuildingId(null); setLevel(null); }
+  function moveStep(delta: number) { setPreview(null); setNav((old) => (old ? { index: Math.min(Math.max(0, old.index + delta), Math.max(0, cards.length - 1)) } : old)); }
+  /** '지도에서 선택': 지도 가운데 핀을 움직여 고른다. 실외 지도에서, 이미 고른 그 끝이 있으면 그 자리에서 시작한다. */
+  function startMapPick(target: PickTarget) {
+    setSearch(null); setView('plan'); setMapPick(target); setFloorPicker(null); setPreview(null);
+    setBuildingId(null); setLevel(null);
+    setPickCenter(mapCenter.current);
+    const existing = target === 'from' ? from : target === 'to' ? to : null;
+    if (existing && existing.buildingId === null) focusOn(existing);
+  }
+  function confirmPick() {
+    if (!mapPick || !pickCenter) return;
+    const info = centerPickInfo(data.graph, data.places, pickCenter);
+    pickFor(mapPick, info.place ?? pointPlace(pickCenter, info.title));
+  }
 
   const sheetMax = (share: number) => Math.round(Math.max(220, (window.height - layout.tabMinHeight) * share));
   const notices = [
@@ -401,9 +441,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       <Text style={st.listDetail}>{item.levels.length}개 층 · 장소 {data.places.filter((p) => p.buildingId === item.id).length}곳{item.id === buildingId ? ' · 지금 보는 건물' : ''}</Text>
     </Pressable>)}</View>}
     {buildingId !== null && !buildingList && <>
-      <View style={st.floorRow}>{(building?.levels ?? []).map((item) => <Pressable key={item} accessibilityRole="button" accessibilityLabel={floorLabel(item)} accessibilityState={{ selected: item === level }} onPress={() => setLevel(item)} style={[st.floor, item === level && st.floorOn]}>
-        <Text style={[st.floorText, item === level && st.floorTextOn]}>{item < 0 ? `B${-item}` : `${item}F`}</Text>
-      </Pressable>)}</View>
+      <FloorChips name={building?.name ?? ''} levels={building?.levels ?? []} current={level} onLevel={setLevel} />
       <TextButton title="실외 지도로 나가기" onPress={() => setBuildingsOn(false)} />
     </>}
   </View>;
@@ -473,14 +511,11 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       {shownRoute.floorChanges.length > 0 && <View style={{ gap: 6 }}>{shownRoute.floorChanges.map((item, i) => <View key={i} style={st.floorChange}><Text style={st.floorChangeText}>{item.label}</Text></View>)}</View>}
       {route.distanceM === 0 && <Text style={st.caption}>출발지와 목적지가 같습니다.</Text>}
       <ActionRow>
-        {demo === 'none' && <View style={{ flex: 1 }}><Button disabled={data.counts.edges === 0} title={tracking ? '위치 안내 중지' : '위치 안내 시작'} onPress={toggleTracking} /></View>}
+        <View style={{ flex: 1 }}><Button disabled={demo === 'none' && data.counts.edges === 0} title="위치 안내 시작" onPress={startNav} /></View>
         {hasPhotos && <View style={{ flex: 1 }}><Button secondary title="로드뷰로 보기" onPress={() => openRoadview(0)} /></View>}
       </ActionRow>
       {!hasPhotos && <Text style={st.caption}>{demo === 'none' ? photoNotice : '이 가상 데이터에는 로드뷰 사진이 없습니다.'} 현재는 문구와 지도로 안내합니다.</Text>}
-      {demo === 'none' && <View style={{ gap: 6 }}>
-        <Text style={st.caption}>{sensors.running ? `위치 수신 중 · ${GPS_MODE_LABEL[gps.mode]}${gps.level === null ? ' · 층 미확인' : ` · ${gps.level}층`}` : '위치는 안내를 시작한 동안만 사용하며 앱에서 저장하지 않습니다. 실내 층 추정은 부정확할 수 있으니 실내 재탐색은 정확한 지점을 직접 선택해 주세요.'}</Text>
-        {sensors.message && <Notice>{sensors.message}</Notice>}{gps.messages.map((text, i) => <Notice key={i}>{text}</Notice>)}
-      </View>}
+      {demo === 'none' && <Text style={st.caption}>위치(GPS)는 위치 안내를 켠 동안만 사용하며 앱에서 저장하지 않습니다. 실내 층 추정은 부정확할 수 있으니 실내 재탐색은 정확한 지점을 직접 선택해 주세요.</Text>}
       {indoorControls}
       <View style={{ gap: 0 }}>
         <Text accessibilityRole="header" style={st.sectionTitle}>단계별 안내</Text>
@@ -499,14 +534,64 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     </> : result.status === 'idle' && <Text style={st.caption}>출발지와 목적지를 선택하고 길찾기를 눌러 주세요.</Text>}
   </Sheet>;
 
-  const pickSheet = <Sheet key={sheetKey} maxHeight={sheetMax(0.4)} footer={<Button secondary title="지도 선택 취소" onPress={() => setMapPick(null)} />}>
-    <View style={st.rowStart}><EndpointDot kind={mapPick === 'to' ? 'to' : 'from'} /><Text style={st.sheetTitle}>{mapPick === 'to' ? '도착' : '출발'} 지점을 눌러 주세요.</Text></View>
-    <Text style={st.caption}>{buildingId ? '실내에서는 등록된 초록 지점을 선택해 주세요.' : '길 근처의 점을 누르면 기존 엔진이 보행 경로에 연결합니다. 초록 점을 누르면 등록된 지점으로 선택합니다.'}</Text>
+  const pickInfo = useMemo(() => (screen === 'pick' && pickCenter ? centerPickInfo(data.graph, data.places, pickCenter) : null), [screen, pickCenter, data.graph, data.places]);
+  const pickWord = mapPick === 'to' ? '도착' : '출발';
+  const pickSheet = <Sheet key={sheetKey} maxHeight={sheetMax(0.4)} defaultHeight={sheetMax(0.3)}
+    footer={<Button title="이 위치로 설정" disabled={!pickCenter || data.status !== 'ready'} onPress={confirmPick} />}>
+    <View style={{ gap: 4 }} accessibilityLiveRegion="polite">
+      <Text accessibilityRole="header" numberOfLines={2} style={st.pickTitle}>{pickInfo?.title ?? '지도를 움직여 위치를 맞춰 주세요.'}</Text>
+      <Text style={st.caption}>{pickInfo ? pickInfo.detail : `가운데 핀 아래가 ${pickWord}지가 됩니다.`}</Text>
+    </View>
     {messageBlock}
-    {buildingId !== null && <TextButton title="실외 지도로 나가기" onPress={() => setBuildingsOn(false)} />}
   </Sheet>;
+  // Naver-style pick: a pin fixed at the middle of the map with a small + exactly on the spot; the map moves under it.
+  const pickColor = mapPick === 'to' ? '#F2473F' : '#10A85E';
+  const centerPin = <View pointerEvents="none" style={st.pinLayer}>
+    <View style={st.pinAnchor}>
+      <View style={st.pinBody}>
+        <View style={[st.pinHead, { backgroundColor: pickColor }]}><View style={st.pinHole} /></View>
+        <View style={[st.pinTip, { borderTopColor: pickColor }]} />
+      </View>
+      <View style={st.pinCrossH} /><View style={st.pinCrossV} />
+    </View>
+  </View>;
 
-  const fitTop = screen === 'plan' ? 150 : 90;
+  // Step-by-step guidance: one card at a time with ← →; the map fits the step's stretch, and a photo at that point shows as a pin.
+  const navPreview: RoadviewPreview | null = useMemo(() => {
+    if (!card) return null;
+    const entry = stepPhotoEntry(stepPhotos, card.index, card.index === cards.length - 1);
+    const frame = entry === null ? undefined : frames[entry];
+    const photo = frame?.step.photo ?? null;
+    if (entry === null || !frame || !frame.lngLat || !photo) return null;
+    return { key: `nav:${entry}`, lngLat: frame.lngLat, thumbUrl: photo.thumbUrl ?? null, title: frame.place.name, subtitle: headingLabel(photo.heading_deg ?? null), entries: [{ index: entry, label: `${card.index + 1}단계` }] };
+  }, [card, cards.length, stepPhotos, frames]);
+  const gpsLine = demo !== 'none'
+    ? '가상 데이터에서는 위치(GPS)를 쓰지 않고 단계별 안내만 보여 드립니다.'
+    : sensors.running ? `위치 수신 중 · ${GPS_MODE_LABEL[gps.mode]}${gps.level === null ? '' : ` · ${gps.level}층`}` : sensors.message ? null : '현재 위치를 확인하고 있습니다…';
+  const navPanel = card ? <View style={[st.navPanel, { paddingHorizontal: layout.padding }]} accessibilityLabel="단계별 위치 안내">
+    <View style={[st.navInner, { maxWidth: layout.modalMaxWidth }]}>
+      <View style={st.navCard}>
+        <Pressable accessibilityRole="button" accessibilityLabel="이전 안내" accessibilityState={{ disabled: navIndex === 0 }} disabled={navIndex === 0} onPress={() => moveStep(-1)} hitSlop={6} style={({ pressed }) => [st.navArrow, navIndex === 0 && st.navArrowOff, pressed && st.navArrowPressed]}>
+          <Arrow left />
+        </Pressable>
+        <View style={st.navBody} accessible accessibilityLiveRegion="polite" accessibilityLabel={`${navIndex + 1}단계, 전체 ${cards.length}단계 중. ${card.text}`}>
+          <Text style={st.navCounter}>{navIndex + 1} / {cards.length}{card.distanceM > 0 ? ` · ${Math.round(card.distanceM)}m` : ''}{card.level !== null ? ` · ${floorLabel(card.level)}` : ''}</Text>
+          <Text style={st.navText}>{card.text}</Text>
+          {navPreview && <Text style={st.navPhotoHint}>지도의 사진을 누르면 크게 볼 수 있어요.</Text>}
+        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel="다음 안내" accessibilityState={{ disabled: navIndex >= cards.length - 1 }} disabled={navIndex >= cards.length - 1} onPress={() => moveStep(1)} hitSlop={6} style={({ pressed }) => [st.navArrow, navIndex >= cards.length - 1 && st.navArrowOff, pressed && st.navArrowPressed]}>
+          <Arrow />
+        </Pressable>
+      </View>
+      {gpsLine && <Text style={st.caption}>{gpsLine}</Text>}
+      {sensors.message && <StatusLine>{sensors.message}</StatusLine>}
+      {gps.messages.map((text, i) => <StatusLine key={i}>{text}</StatusLine>)}
+      {message && <Notice>{message}</Notice>}
+      <Button secondary title="위치 안내 종료" onPress={stopNav} />
+    </View>
+  </View> : null;
+
+  const fitTop = screen === 'plan' ? 150 : screen === 'pick' ? 120 : 90;
   const picker = floorPicker ? data.buildings.find((item) => item.id === floorPicker) : undefined;
   const pickerChoice = picker ? floorChoice(picker) : null;
   const searchSheet = <PlaceSearch target={search} query={query} onQuery={setQuery} results={matches} places={data.places} buildings={data.buildings} detail={(place) => placeDetail(place, data.buildings)}
@@ -515,22 +600,44 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     restroomGender={restroomGender} onRestroomGender={setRestroomGender} areaHeight={areaHeight || window.height - layout.tabMinHeight} onBuilding={searchedBuilding}
     onClose={() => setSearch(null)} onChoose={(place) => search === 'place' ? showPlace(place, query.trim() || null) : pickFor(search ?? 'to', place)}
     onCurrent={demo === 'none' ? () => { if (search && search !== 'place') void pickCurrentAs(search); } : null}
-    onMapPick={() => { if (search && search !== 'place') { const target = search; setSearch(null); setView('plan'); setMapPick(target); } }} />;
+    onMapPick={() => { if (search && search !== 'place') startMapPick(search); }}
+    onFloor={(id, floor) => {
+      if (id === null) { setBuildingId(null); setLevel(null); return; }
+      setBuildingMode(true); setSearchBuilding(null); setBuildingId(id); setLevel(floor);
+    }} />;
+  // A building tapped on the map: the bottom sheet shrinks to the building's name and one sideways line of floor chips.
+  const floorSheet = picker && pickerChoice?.kind === 'pick' && (screen === 'home' || screen === 'plan' || screen === 'route') ? <View style={[st.floorSheet, { paddingHorizontal: layout.padding }]}>
+    <View style={{ width: '100%', maxWidth: layout.modalMaxWidth, alignSelf: 'center' }}>
+      <FloorPicker name={picker.name} detail={`${pickerChoice.levels.length}개 층 · 장소 ${data.places.filter((p) => p.buildingId === picker.id).length}곳`} levels={pickerChoice.levels} current={picker.id === buildingId ? level : null}
+        onLevel={(floor) => enterBuilding(picker.id, floor)} onClose={() => setFloorPicker(null)} />
+    </View>
+  </View> : null;
   return <View style={st.root} onLayout={(event) => setAreaHeight(event.nativeEvent.layout.height)}>
     <View style={st.mapArea}>
       <MapCanvas center={data.campus?.center ?? { lat: 37.5572, lng: 127.045 }} label={demo !== 'none' ? '가상 시험 캠퍼스' : building?.name ?? '한양대학교 서울캠퍼스'} route={shownRoute} from={from} to={to} places={scopePlaces} graph={data.graph} buildingId={buildingId} level={level}
-        position={sensors.running ? gps.position : myLocation} flow={flow}
+        position={navOn && sensors.running ? gps.position : myLocation} flow={flow}
         focus={focus} selected={screen === 'home' ? selected : null} fitPadding={{ top: fitTop, bottom: 48, left: 36, right: 36 }}
         photoSpots={screen === 'home' ? spots : []} onPhotoSpot={showSpot} stepGroups={screen === 'route' ? stepGroups : []} onStepGroup={showStepGroup}
-        preview={screen === 'pick' ? null : preview} onOpenPreview={openRoadview}
+        preview={screen === 'pick' ? null : screen === 'nav' ? navPreview : preview} onOpenPreview={openRoadview}
+        stepFocus={screen === 'nav' ? stepFocus : null}
+        onCenter={(point) => { mapCenter.current = point; if (mapPick) setPickCenter(point); }}
         highlightBuildings={buildingsOn && screen !== 'pick'} mappedBuildingIds={mappedIds} onBuildingPress={pressBuilding} markedBuildingId={search === null && buildingsOn ? null : searchBuilding}
         onPoint={(point) => {
-          if (!mapPick) { setPreview(null); if (buildingId && outsideIndoor(point)) setMessage(INDOOR_OUTSIDE_HINT); return; }
-          if (buildingId) { setMessage(outsideIndoor(point) ? INDOOR_OUTSIDE_HINT : INDOOR_PICK_HINT); return; }
-          pickFor(mapPick, pointPlace(point, '지도에서 선택한 위치'));
+          // Picking moves the map under the fixed centre pin; a tap does not pick.
+          if (mapPick || screen === 'nav') return;
+          setPreview(null); if (buildingId && outsideIndoor(point)) setMessage(INDOOR_OUTSIDE_HINT);
         }}
         highlight={screen === 'route' ? slopeFocus : null}
-        onPlace={(place) => { if (mapPick) pickFor(mapPick, place); else if (screen === 'home') { setSelected(place); setSelectQuery(null); setDevOpen(false); setFloorPicker(null); } }} />
+        onPlace={(place) => { if (mapPick) focusOn(place); else if (screen === 'home') { setSelected(place); setSelectQuery(null); setDevOpen(false); setFloorPicker(null); } }} />
+      {screen === 'pick' && centerPin}
+      {screen === 'pick' && <View style={[st.top, { paddingHorizontal: layout.padding }]} pointerEvents="box-none">
+        <View style={[st.topInner, { maxWidth: layout.modalMaxWidth }]} pointerEvents="box-none">
+          <View style={st.pickHeader}>
+            <RoundButton label="지도 선택 취소" onPress={() => setMapPick(null)}><BackIcon /></RoundButton>
+            <View style={st.pickBanner}><Text style={st.pickBannerText}>{pickWord}지 선택 · 지도를 움직여 위치를 지정하세요.</Text></View>
+          </View>
+        </View>
+      </View>}
       {screen !== 'pick' && search === null && <View style={[st.top, { paddingHorizontal: layout.padding }]} pointerEvents="box-none">
         <View style={[st.topInner, { maxWidth: layout.modalMaxWidth }]} pointerEvents="box-none">
           {screen === 'home' && <>
@@ -553,7 +660,11 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
             </View>}
           </>}
           {screen === 'plan' && <EndpointCard from={from} to={to} onField={openSearch} onSwap={swap} onClose={closePlan} />}
-          {screen === 'route' && <RoutePill from={from} to={to} onBack={() => { setTracking(false); setRequest(null); }} />}
+          {screen === 'route' && <RoutePill from={from} to={to} onBack={() => { setNav(null); setRequest(null); }} />}
+          {screen === 'nav' && <View style={st.pickHeader}>
+            <RoundButton label="위치 안내 종료" onPress={stopNav}><BackIcon /></RoundButton>
+            <View style={st.pickBanner}><Text numberOfLines={1} style={st.pickBannerText}>위치 안내 중 · {to?.name ?? '도착지'}</Text></View>
+          </View>}
         </View>
       </View>}
       {screen !== 'pick' && search === null && <View style={st.bottomStack} pointerEvents="box-none">
@@ -561,15 +672,17 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
           <BuildingToggle value={buildingsOn} onChange={setBuildingsOn} />
           {demo === 'none' && <RoundButton label="내 위치로 이동" busy={gpsBusy} onPress={() => void locateMe()}><LocateIcon color={myLocation ? t.color.primary : t.color.text} /></RoundButton>}
         </View>
-        {picker && pickerChoice?.kind === 'pick' && <View style={{ width: '100%', maxWidth: layout.modalMaxWidth, alignSelf: 'center' }}>
-          <FloorPicker name={picker.name} detail={`${pickerChoice.levels.length}개 층 · 장소 ${data.places.filter((p) => p.buildingId === picker.id).length}곳`} levels={pickerChoice.levels} current={picker.id === buildingId ? level : null}
-            onLevel={(floor) => enterBuilding(picker.id, floor)} onClose={() => setFloorPicker(null)} />
-        </View>}
       </View>}
     </View>
-    {search !== null ? searchSheet : screen === 'home' ? homeSheet : screen === 'plan' ? planSheet : screen === 'route' ? routeSheet : pickSheet}
+    {search !== null ? searchSheet : floorSheet ?? (screen === 'home' ? homeSheet : screen === 'plan' ? planSheet : screen === 'route' ? routeSheet : screen === 'nav' ? navPanel : pickSheet)}
     <RoadviewScreen visible={roadview !== null} frames={roadview?.frames ?? []} initialIndex={roadview?.index ?? 0} route={roadview?.route ? shownRoute?.polyline ?? null : null} onClose={() => setRoadview(null)} />
   </View>;
+}
+
+const PIN = 40;
+/** ← / → chevron for the step cards. */
+function Arrow({ left = false }: { left?: boolean }) {
+  return <View style={{ width: 12, height: 12, marginLeft: left ? 4 : -4, borderLeftWidth: 2.6, borderTopWidth: 2.6, borderColor: t.color.text, transform: [{ rotate: left ? '-45deg' : '135deg' }] }} />;
 }
 
 /** A slope card in the route sheet: tap to fit the map to the section and highlight it; tap again to clear. */
@@ -600,10 +713,29 @@ const st = StyleSheet.create({
   placeCard: { gap: 12 },
   placeName: { fontSize: 21, lineHeight: 28, fontWeight: '800', color: t.color.text, letterSpacing: -0.3 },
   placeDetail: { fontSize: 14, color: t.color.muted },
-  floorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  floor: { minWidth: 48, minHeight: 44, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: t.color.border, alignItems: 'center', justifyContent: 'center', backgroundColor: t.color.surface },
-  floorOn: { backgroundColor: t.color.text, borderColor: t.color.text },
-  floorText: { fontSize: 14, fontWeight: '700', color: t.color.text }, floorTextOn: { color: 'white' },
+  floorSheet: { flexShrink: 0, marginTop: -18, paddingTop: 10, paddingBottom: 10, borderTopLeftRadius: t.radii.sheet, borderTopRightRadius: t.radii.sheet, backgroundColor: t.color.surface, ...floating },
+  pickTitle: { fontSize: 20, lineHeight: 27, fontWeight: '800', color: t.color.primary, letterSpacing: -0.3 },
+  pickHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pickBanner: { flex: 1, minWidth: 0, minHeight: 44, borderRadius: 22, paddingHorizontal: 16, justifyContent: 'center', backgroundColor: '#142A44E6' },
+  pickBannerText: { color: 'white', fontSize: 14, fontWeight: '700' },
+  pinLayer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
+  pinAnchor: { width: 0, height: 0, alignItems: 'center', justifyContent: 'center', overflow: 'visible' },
+  pinBody: { position: 'absolute', bottom: 6, left: -PIN / 2, width: PIN, alignItems: 'center' },
+  pinHead: { width: PIN, height: PIN, borderRadius: PIN / 2, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: 'white', elevation: 6, shadowColor: '#0B1F3A', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 2 } },
+  pinHole: { width: 12, height: 12, borderRadius: 6, backgroundColor: 'white' },
+  pinTip: { width: 0, height: 0, marginTop: -3, borderLeftWidth: 8, borderRightWidth: 8, borderTopWidth: 12, borderLeftColor: 'transparent', borderRightColor: 'transparent' },
+  pinCrossH: { position: 'absolute', left: -6, top: -1, width: 12, height: 2, backgroundColor: '#142A44' },
+  pinCrossV: { position: 'absolute', left: -1, top: -6, width: 2, height: 12, backgroundColor: '#142A44' },
+  navPanel: { flexShrink: 0, marginTop: -18, paddingTop: 14, paddingBottom: 12, borderTopLeftRadius: t.radii.sheet, borderTopRightRadius: t.radii.sheet, backgroundColor: t.color.surface, ...floating },
+  navInner: { width: '100%', alignSelf: 'center', gap: 10 },
+  navCard: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 96, padding: 10, borderRadius: 16, backgroundColor: t.color.soft },
+  navArrow: { width: 44, height: 44, borderRadius: 22, backgroundColor: t.color.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: t.color.border },
+  navArrowOff: { opacity: 0.35 },
+  navArrowPressed: { backgroundColor: t.color.sunken },
+  navBody: { flex: 1, minWidth: 0, gap: 4 },
+  navCounter: { fontSize: 12, fontWeight: '800', color: t.color.primary },
+  navText: { fontSize: 17, lineHeight: 24, fontWeight: '800', color: t.color.text },
+  navPhotoHint: { fontSize: 12, color: t.color.muted },
   listRow: { paddingVertical: 12, paddingHorizontal: 4, gap: 2, borderBottomWidth: 1, borderColor: t.color.divider },
   listName: { fontSize: 15, fontWeight: '700', color: t.color.text }, listDetail: { fontSize: 13, color: t.color.muted },
   summary: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },

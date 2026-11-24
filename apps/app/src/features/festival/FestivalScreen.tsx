@@ -10,7 +10,7 @@ import { DestinationActions } from '../content/DestinationActions.tsx';
 import { useAppActions } from '../../state/AppState.tsx';
 import { Body, Button, Card, Chips, Empty, Heading, Notice, Page, s } from '../../ui/kit.tsx';
 import { BoothMap } from './BoothMap.tsx';
-import { flowDestination, hasFlowNodes, type StallFlow } from './flow.ts';
+import { flowDestination, type StallFlow } from './flow.ts';
 const FLOW_LABEL: Record<StallFlow, string> = { enter: '입장 동선', queue: '대기 동선', exit: '퇴장 동선' };
 export function FestivalScreen({ data, active = true, sourceMode = 'demo', sourceNotice = null, onReload }: { data: ContentData; active?: boolean } & SourceProps) {
   const { dispatch } = useAppActions();
@@ -28,17 +28,16 @@ export function FestivalScreen({ data, active = true, sourceMode = 'demo', sourc
   const selected = data.stalls.find((row) => row.id === selectedId);
   const selectedPerformance = performances.find((row) => row.id === performanceId);
   return <Page resetKey={`${active}:${selectedId ?? performanceId}`} title="축제" subtitle={festival?.name ?? '공개된 축제가 없습니다.'}>
-    <SourceNotice sourceMode={sourceMode} sourceNotice={sourceNotice} onReload={onReload} demoText={`${CONTENT_NOTICE} 지도 핀·동선은 실제 지점이 연결된 경우에만 표시합니다.`} />
+    <SourceNotice sourceMode={sourceMode} sourceNotice={sourceNotice} onReload={onReload} demoText={CONTENT_NOTICE} />
     {festival ? <>
       <Card><Heading>{festival.name}</Heading><Body>{festival.startsOn}–{festival.endsOn}</Body><Body>{festival.summary}</Body></Card>
       <Chips values={days.map((day) => day.dayDate)} value={currentDay?.dayDate ?? ''} onChange={(value) => { setDayId(days.find((day) => day.dayDate === value)?.id ?? ''); setSelectedId(null); setPerformanceId(null); }} />
-      <Body>운영 {currentDay?.opensAt ?? '미정'}–{currentDay?.closesAt ?? '미정'}{sourceMode === 'demo' ? ' · 시연용' : ''}</Body>
+      <Body>운영 {currentDay?.opensAt ?? '미정'}–{currentDay?.closesAt ?? '미정'}</Body>
       {selected ? <>
         <Button secondary title="부스 목록으로" onPress={() => setSelectedId(null)} />
         <Card><Heading>{selected.name}</Heading><Body>{selected.category} · {selected.buildingCode ?? '위치 미정'}</Body><Body>운영 {selected.opensAt ?? '미정'}–{selected.closesAt ?? '미정'}</Body><Body>{selected.description}</Body><Notice>{selected.queueNote ?? '대기 정보가 없습니다.'}</Notice><DestinationActions destination={stallDestination(selected, sourceMode === 'demo')} /></Card>
-        <Card><Heading>{sourceMode === 'demo' ? '시연용 동선 안내' : '동선 안내'}</Heading><Body>입장=파랑 · 대기=주황 · 퇴장=회색. 실제 대기열의 모양·혼잡도는 제공하지 않습니다.</Body>
-          {(['enter', 'queue', 'exit'] as const).map((flow) => <Button key={flow} secondary title={`${FLOW_LABEL[flow]}${hasFlowNodes(selected, flow) ? '' : ' · 지도 연결 대기'}`} onPress={() => dispatch({ type: 'navigate', destination: flowDestination(selected, flow, sourceMode === 'demo') })} />)}
-          <Body>입장: 입구 → 부스 / 대기: 선택한 출발지 → 부스 / 퇴장: 부스 → 출구. 지도 ID가 없으면 장소 검색으로 이어집니다.</Body>
+        <Card><Heading>동선 안내</Heading><Body>입장=파랑 · 대기=주황 · 퇴장=회색</Body>
+          {(['enter', 'queue', 'exit'] as const).map((flow) => <Button key={flow} secondary title={FLOW_LABEL[flow]} onPress={() => dispatch({ type: 'navigate', destination: flowDestination(selected, flow, sourceMode === 'demo') })} />)}
         </Card>
         <BoothMap stalls={[selected]} onSelect={(row) => setSelectedId(row.id)} />
       </> : <>

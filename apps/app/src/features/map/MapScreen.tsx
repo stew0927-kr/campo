@@ -54,7 +54,7 @@ const INDOOR_OUTSIDE_HINT = "지금은 이 건물 실내만 선택할 수 있습
  * home (search + my location), plan (start/end input) and route (result with travel modes in the bottom sheet).
  * Picking a point on the map temporarily hides the overlays.
  */
-export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, photoNotice = '현장 사진은 공급 데이터 연결 대기 중입니다.' }: { active?: boolean; photoCatalog?: PhotoCatalog; photoNotice?: string }) {
+export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, photoNotice = '' }: { active?: boolean; photoCatalog?: PhotoCatalog; photoNotice?: string }) {
   const window = useWindowDimensions();
   const layout = screenLayout(window.width, window.height, window.fontScale);
   const { dispatch } = useAppActions();
@@ -419,9 +419,8 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const sheetMax = (share: number) => Math.round(Math.max(220, (window.height - layout.tabMinHeight) * share));
   const notices = [
     demo !== 'none' ? '개발용 가상 경로입니다. 실제 한양대 길이나 건물이 아닙니다.' : null,
-    data.status === 'ready' && data.counts.edges === 0 ? '실제 캠퍼스 길 데이터가 아직 없습니다. C조원 데이터 연결 후 실제 길찾기를 이용할 수 있습니다.' : null,
+    data.status === 'ready' && data.counts.edges === 0 ? '길찾기 데이터를 준비하고 있습니다.' : null,
     ...data.issues,
-    demo === 'none' ? photoNotice : null,
   ].filter((item): item is string => Boolean(item));
   const messageBlock = <>
     {message && <Notice>{message}</Notice>}
@@ -478,7 +477,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     {restroom && <GenderChips value={restroom.gender} onChange={changeRestroomGender} />}
     {!restroom && <ModeChips value={mode} onChange={changeMode} />}
     {demo !== 'none' && <StatusLine>개발용 가상 경로입니다. 실제 한양대 길이나 건물이 아닙니다.</StatusLine>}
-    {data.status === 'ready' && data.counts.edges === 0 && <StatusLine>실제 캠퍼스 길 데이터가 아직 없습니다. C조원 데이터 연결 후 실제 길찾기를 이용할 수 있습니다.</StatusLine>}
+    {data.status === 'ready' && data.counts.edges === 0 && <StatusLine>길찾기 데이터를 준비하고 있습니다.</StatusLine>}
     {buildingId !== null && <TextButton title="실외 지도로 나가기" onPress={() => setBuildingsOn(false)} />}
     <Text style={st.caption}>{!from || !to ? '출발지와 도착지를 정하면 바로 경로를 찾아 드립니다. 입력란을 눌러 현재 위치, 지도, 검색 중에서 골라 주세요.' : '이동 방식을 고른 뒤 길찾기를 눌러 주세요.'}</Text>
   </Sheet>;
@@ -514,8 +513,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
         <View style={{ flex: 1 }}><Button disabled={demo === 'none' && data.counts.edges === 0} title="위치 안내 시작" onPress={startNav} /></View>
         {hasPhotos && <View style={{ flex: 1 }}><Button secondary title="로드뷰로 보기" onPress={() => openRoadview(0)} /></View>}
       </ActionRow>
-      {!hasPhotos && <Text style={st.caption}>{demo === 'none' ? photoNotice : '이 가상 데이터에는 로드뷰 사진이 없습니다.'} 현재는 문구와 지도로 안내합니다.</Text>}
-      {demo === 'none' && <Text style={st.caption}>위치(GPS)는 위치 안내를 켠 동안만 사용하며 앱에서 저장하지 않습니다. 실내 층 추정은 부정확할 수 있으니 실내 재탐색은 정확한 지점을 직접 선택해 주세요.</Text>}
+      {demo === 'none' && <Text style={st.caption}>위치(GPS)는 위치 안내를 켠 동안만 사용하며 앱에서 저장하지 않습니다.</Text>}
       {indoorControls}
       <View style={{ gap: 0 }}>
         <Text accessibilityRole="header" style={st.sectionTitle}>단계별 안내</Text>
@@ -595,7 +593,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const picker = floorPicker ? data.buildings.find((item) => item.id === floorPicker) : undefined;
   const pickerChoice = picker ? floorChoice(picker) : null;
   const searchSheet = <PlaceSearch target={search} query={query} onQuery={setQuery} results={matches} places={data.places} buildings={data.buildings} detail={(place) => placeDetail(place, data.buildings)}
-    emptyMessage={data.places.length ? '검색 결과가 없습니다. 다른 이름으로 찾아 주세요.' : '아직 등록된 장소가 없습니다. C조원의 데이터 연결을 기다리고 있습니다.'}
+    emptyMessage={data.places.length ? '검색 결과가 없습니다. 다른 이름으로 찾아 주세요.' : '등록된 장소가 아직 없습니다.'}
     demoNotice={demo !== 'none'} maxWidth={layout.modalMaxWidth} padding={layout.padding} busy={gpsBusy}
     restroomGender={restroomGender} onRestroomGender={setRestroomGender} areaHeight={areaHeight || window.height - layout.tabMinHeight} onBuilding={searchedBuilding}
     onClose={() => setSearch(null)} onChoose={(place) => search === 'place' ? showPlace(place, query.trim() || null) : pickFor(search ?? 'to', place)}

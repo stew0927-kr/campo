@@ -23,7 +23,7 @@ describe('optional public read-only source with mocked HTTP, not an actual serve
   it('aborts a slow request and falls back to explicitly marked demo content', async () => {
     const stalled = vi.fn(async (_input, init) => new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))))) as typeof fetch;
     const result = await loadWithDemoFallback(createReadOnlySource({ ...config, timeoutMs: 5 }, stalled));
-    expect(result.mode).toBe('demo'); expect(result.notice).toContain('시연용'); expect(result.data).toEqual(DEMO_CONTENT);
+    expect(result.mode).toBe('demo'); expect(result.notice).toContain('예시 정보'); expect(result.data).toEqual(DEMO_CONTENT);
     expect((await loadWithDemoFallback(null)).mode).toBe('demo');
   });
   it('rejects service keys and non-HTTPS URLs without making requests', () => {

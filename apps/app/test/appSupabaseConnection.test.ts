@@ -41,12 +41,12 @@ describe('Supabase public read connection (mocked transport)', () => {
   it('does not call the server with absent or admin credentials and keeps fallback explicitly demo', async () => {
     const fetcher = vi.fn() as unknown as typeof fetch;
     const missing = connectionFromValues(undefined, undefined, fetcher);
-    expect(missing.source).toBeNull(); expect(missing.notice).toContain('시연용');
+    expect(missing.source).toBeNull(); expect(missing.notice).toContain('예시 정보');
     const invalid = connectionFromValues(config.url, 'sb_secret_test_only', fetcher);
     expect(invalid.source).toBeNull(); expect(fetcher).not.toHaveBeenCalled();
     const failed = connectionFromValues(config.url, config.publicKey, vi.fn(async () => { throw Error('offline'); }) as typeof fetch);
     const fallback = await loadWithDemoFallback(failed.source);
-    expect(fallback.mode).toBe('demo'); expect(fallback.notice).toContain('시연용');
+    expect(fallback.mode).toBe('demo'); expect(fallback.notice).toContain('예시 정보');
   });
   it('preserves server destination ids without falsely marking live rows as local demo', () => {
     for (const target of [essayDestination({ ...DEMO_CONTENT.essays[0]!, destinationNodeId: 'real-node' }, false), stallDestination({ ...DEMO_CONTENT.stalls[0]!, nodeId: 'real-node' }, false), eventDestination({ ...DEMO_CONTENT.events[0]!, nodeId: 'real-node' }, false)]) {

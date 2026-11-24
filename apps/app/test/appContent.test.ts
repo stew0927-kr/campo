@@ -7,7 +7,7 @@ import { flowDestination, hasFlowNodes } from '../src/features/festival/flow.ts'
 
 describe('demo content and published data contracts', () => {
   it('labels the 2027 season as a demo and never invents real campus node ids', () => {
-    expect(ESSAY_NOTICE).toContain('2027학년도'); expect(ESSAY_NOTICE).toContain('실제'); expect(ESSAY_NOTICE).toContain('시연용');
+    expect(ESSAY_NOTICE).toContain('예시 정보'); expect(ESSAY_NOTICE).toContain('공식 공지'); expect(ESSAY_NOTICE).not.toMatch(/시연|조원/);
     expect([...new Set(DEMO_CONTENT.essays.map((row) => row.examDate))]).toEqual(['2026-11-28', '2026-11-29']);
     expect(DEMO_CONTENT.essays.every((row) => row.destinationNodeId === null && row.checkInNodeId === null)).toBe(true);
     expect(DEMO_CONTENT.stalls.every((row) => row.nodeId === null && row.entranceNodeId === null && row.exitNodeId === null)).toBe(true);

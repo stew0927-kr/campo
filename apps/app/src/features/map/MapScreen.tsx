@@ -19,7 +19,9 @@ import { ActionRow, Button, Notice } from '../../ui/kit.tsx';
 import { MapCanvas } from './MapCanvas.tsx';
 import { DEMO_CAMPUS } from './demoCampus.ts';
 import indoorFixture from './indoorFixture.json';
-import { endpointFor, placeDetail, placesInScope, pointPlace, requestFor, searchPlaces } from './model.ts';
+import { endpointFor, insideOutline, placeDetail, placesInScope, pointPlace, requestFor, searchPlaces } from './model.ts';
+import { slopeSections } from '../../route/slopeSections.ts';
+import { getBuildingOutlineForLevel } from '@campo/core';
 import { useSensorFixes } from './useSensorFixes.ts';
 import { BuildingToggle, EndpointCard, EndpointDot, FloatChip, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
 import { buildingCenter, floorChoice, mappedBuildings } from './buildings.ts';
@@ -41,6 +43,9 @@ const floorLabel = (level: number | null) => level === null ? '층 미확인' : 
 const minutes = (sec: number) => sec === 0 ? 0 : Math.max(1, Math.ceil(sec / 60));
 /** Camera zoom used when the map moves to a whole building (search list, building list). */
 const BUILDING_ZOOM = 18;
+/** Indoor tap on a spot that is not a registered place / outside the building. */
+const INDOOR_PICK_HINT = '실내에서는 등록된 지점을 선택해 주세요.';
+const INDOOR_OUTSIDE_HINT = "지금은 이 건물 실내만 선택할 수 있습니다. 건물 밖은 '실외 지도로 나가기'를 누른 뒤 골라 주세요.";
 
 /**
  * Full-screen map tab. Three views share one map:
@@ -103,6 +108,14 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const backResult = useCampusRoute(data.runtime, backRequest);
   const trip = useMemo(() => (backRequest ? combineRoundTrip(route, backResult.route) : null), [backRequest, route, backResult.route]);
   const shownRoute = trip?.route ?? route;
+  // One card per run of connected slope edges with the same class and direction; tapping it highlights the run on the map.
+  const sections = useMemo(() => slopeSections(route?.slopeWarnings ?? []), [route]);
+  const [slopeKey, setSlopeKey] = useState<string | null>(null);
+  useEffect(() => setSlopeKey(null), [route]);
+  const slopeFocus = useMemo(() => {
+    const section = sections.find((item) => item.key === slopeKey);
+    return section && section.coordinates.length >= 2 ? { key: section.key, coordinates: section.coordinates } : null;
+  }, [sections, slopeKey]);
   // Demo data uses the virtual roadview photos (no network); the real campus uses the provider's catalog.
   const effectiveCatalog = demo === 'none' ? photoCatalog : demo === 'roadview' ? ROADVIEW_DEMO_CATALOG : EMPTY_PHOTO_CATALOG;
   const stepPhotos = useRoutePhotos(shownRoute, effectiveCatalog);
@@ -137,6 +150,10 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   }, [roadview, preview, search, devOpen, floorPicker, mapPick, request, view, selectQuery]);
   useScreenBack(active && (roadview !== null || preview !== null || search !== null || devOpen || floorPicker !== null || mapPick !== null || request !== null || view === 'plan' || selected !== null), back);
   const building = data.buildings.find((item) => item.id === buildingId);
+  const indoorFeature = buildingId ? data.graph?.buildings.get(buildingId) : undefined;
+  const indoorOutline = useMemo(() => (indoorFeature ? getBuildingOutlineForLevel(indoorFeature, level) : null), [indoorFeature, level]);
+  /** A tap outside the open building's outline (unknown outline: not outside). */
+  const outsideIndoor = (point: RoutePoint) => indoorOutline !== null && !insideOutline(point, indoorOutline);
   useEffect(() => () => { gpsGeneration.current++; }, []);
   useEffect(() => { setMode(state.defaultMode); setRequest(null); }, [state.defaultMode]);
   useEffect(() => { if (!active) { setTracking(false); gpsGeneration.current++; setGpsBusy(false); } }, [active]);
@@ -164,7 +181,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (resolved.kind === 'selected' && !missingFlow) {
       setTo(resolved.place);
       if (start) setFrom(start);
-      setBuildingId(resolved.place.buildingId); setLevel(resolved.place.level);
+      // Route planning starts on the outdoor map even for a room: the user opens the building themselves.
       setSearch(null); setFlow(target.flow ?? null);
       setMessage(`${target.demo ? '시연용 정보에서 선택했습니다. ' : ''}목적지가 선택됐습니다. 출발지를 확인하고 길찾기를 눌러 주세요.${target.flow === 'queue' ? ' 대기 경로는 보행길 기준이며 실제 대기열의 모양은 아닙니다.' : ''}`);
     } else {
@@ -189,6 +206,8 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     const end = target === 'to' ? place : to;
     setFrom(start); setTo(end);
     setRequest(null); setSearch(null); setMapPick(null); setFlow(null); setSelected(null); setSelectQuery(null); setSearchBuilding(null); setView('plan');
+    // Route planning is always on the outdoor map, so any spot can be tapped; a room stays the route's end.
+    setBuildingId(null); setLevel(null); setFloorPicker(null);
     findRoute(start, end);
   }
   function openPlan() { setSelected(null); setSelectQuery(null); setDevOpen(false); setFloorPicker(null); setView('plan'); }
@@ -233,7 +252,10 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (on) {
       setBuildingMode(true);
       if (mapped.length === 0) setMessage('등록된 실내 건물·층 데이터가 없습니다. 임의의 실내 경로는 만들지 않습니다.');
-    } else { setBuildingMode(false); setBuildingId(null); setLevel(null); }
+    } else {
+      setBuildingMode(false); setBuildingId(null); setLevel(null);
+      setMessage((old) => (old === INDOOR_PICK_HINT || old === INDOOR_OUTSIDE_HINT ? null : old));
+    }
   }
   function closePlan() { clearGps(); setTracking(false); setFrom(null); setTo(null); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null); setRestroomGender('any'); setRoundTrip(false); setView('home'); }
   function swap() {
@@ -336,6 +358,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   /** Select a place and move the map to it. `fromQuery`: the search words that found it, reopened by ←. */
   function showPlace(place: CampusPlace, fromQuery: string | null = null) {
     setSearch(null); setSelected(place); setSelectQuery(fromQuery); setView('home'); setFloorPicker(null); setSearchBuilding(null);
+    // Browsing (home search) still opens the room's floor; once it becomes a start or end, choose() returns outdoors.
     if (place.buildingId !== buildingId || (place.buildingId !== null && place.level !== level)) { setBuildingId(place.buildingId); setLevel(place.level); }
     focusOn(place);
   }
@@ -344,7 +367,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     const end = data.places.find((p) => p.id === endId);
     if (!start || !end) return;
     setFrom(start); setTo(end); setRequest(null); setRestroom(null); setView('plan'); setDevOpen(false); setFloorPicker(null);
-    if (end.buildingId) { setBuildingId(end.buildingId); setLevel(end.level); }
+    setBuildingId(null); setLevel(null);
     if (run) findRoute(start, end);
   }
   function toggleTracking() { gps.reset(); lastReroute.current = -1; setTracking((old) => !old); }
@@ -414,6 +437,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     {!restroom && <ModeChips value={mode} onChange={changeMode} />}
     {demo !== 'none' && <StatusLine>개발용 가상 경로입니다. 실제 한양대 길이나 건물이 아닙니다.</StatusLine>}
     {data.status === 'ready' && data.counts.edges === 0 && <StatusLine>실제 캠퍼스 길 데이터가 아직 없습니다. C조원 데이터 연결 후 실제 길찾기를 이용할 수 있습니다.</StatusLine>}
+    {buildingId !== null && <TextButton title="실외 지도로 나가기" onPress={() => setBuildingsOn(false)} />}
     <Text style={st.caption}>{!from || !to ? '출발지와 도착지를 정하면 바로 경로를 찾아 드립니다. 입력란을 눌러 현재 위치, 지도, 검색 중에서 골라 주세요.' : '이동 방식을 고른 뒤 길찾기를 눌러 주세요.'}</Text>
   </Sheet>;
 
@@ -437,7 +461,9 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
         <Stat value={`${shownRoute.floorChanges.length}번`} label="층 이동" />
       </View>
       {route.fallbackMessage && <Notice>{route.fallbackMessage}</Notice>}
-      {route.slopeWarnings.map((item, i) => <Notice key={`${item.edgeId}-${i}`}>{item.message}</Notice>)}
+      {sections.map((item) => item.coordinates.length >= 2 && buildingId === null
+        ? <SlopeCard key={item.key} message={item.message} steep={item.gradeClass === 'steep'} on={item.key === slopeKey} onPress={() => setSlopeKey((old) => (old === item.key ? null : item.key))} />
+        : <Notice key={item.key}>{item.message}</Notice>)}
       {canRoundTrip && <SwitchRow label="왕복 보기(돌아오는 길 포함)" value={roundTrip} onChange={setRoundTrip} />}
       {roundTrip && backResult.message && <Notice>{backResult.message}</Notice>}
       {shownRoute.floorChanges.length > 0 && <View style={{ gap: 6 }}>{shownRoute.floorChanges.map((item, i) => <View key={i} style={st.floorChange}><Text style={st.floorChangeText}>{item.label}</Text></View>)}</View>}
@@ -473,6 +499,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     <View style={st.rowStart}><EndpointDot kind={mapPick === 'to' ? 'to' : 'from'} /><Text style={st.sheetTitle}>{mapPick === 'to' ? '도착' : '출발'} 지점을 눌러 주세요.</Text></View>
     <Text style={st.caption}>{buildingId ? '실내에서는 등록된 초록 지점을 선택해 주세요.' : '길 근처의 점을 누르면 기존 엔진이 보행 경로에 연결합니다. 초록 점을 누르면 등록된 지점으로 선택합니다.'}</Text>
     {messageBlock}
+    {buildingId !== null && <TextButton title="실외 지도로 나가기" onPress={() => setBuildingsOn(false)} />}
   </Sheet>;
 
   const fitTop = screen === 'plan' ? 150 : 90;
@@ -493,7 +520,12 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
         photoSpots={screen === 'home' ? spots : []} onPhotoSpot={showSpot} stepGroups={screen === 'route' ? stepGroups : []} onStepGroup={showStepGroup}
         preview={screen === 'pick' ? null : preview} onOpenPreview={openRoadview}
         highlightBuildings={buildingsOn && screen !== 'pick'} mappedBuildingIds={mappedIds} onBuildingPress={pressBuilding} markedBuildingId={search === null && buildingsOn ? null : searchBuilding}
-        onPoint={(point) => { if (!mapPick) { setPreview(null); return; } if (buildingId) { setMessage('실내에서는 등록된 지점을 선택해 주세요.'); return; } pickFor(mapPick, pointPlace(point, '지도에서 선택한 위치')); }}
+        onPoint={(point) => {
+          if (!mapPick) { setPreview(null); if (buildingId && outsideIndoor(point)) setMessage(INDOOR_OUTSIDE_HINT); return; }
+          if (buildingId) { setMessage(outsideIndoor(point) ? INDOOR_OUTSIDE_HINT : INDOOR_PICK_HINT); return; }
+          pickFor(mapPick, pointPlace(point, '지도에서 선택한 위치'));
+        }}
+        highlight={screen === 'route' ? slopeFocus : null}
         onPlace={(place) => { if (mapPick) pickFor(mapPick, place); else if (screen === 'home') { setSelected(place); setSelectQuery(null); setDevOpen(false); setFloorPicker(null); } }} />
       {screen !== 'pick' && search === null && <View style={[st.top, { paddingHorizontal: layout.padding }]} pointerEvents="box-none">
         <View style={[st.topInner, { maxWidth: layout.modalMaxWidth }]} pointerEvents="box-none">
@@ -536,6 +568,16 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   </View>;
 }
 
+/** A slope card in the route sheet: tap to fit the map to the section and highlight it; tap again to clear. */
+function SlopeCard({ message, steep, on, onPress }: { message: string; steep: boolean; on: boolean; onPress: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${message}. ${on ? '지도 강조를 끄려면 누르세요' : '눌러서 지도에서 구간 보기'}`} accessibilityState={{ selected: on }}
+    onPress={onPress} style={({ pressed }) => [st.slopeCard, on && st.slopeCardOn, pressed && { opacity: 0.85 }]}>
+    <View style={[st.slopeBar, { backgroundColor: steep ? '#E68A00' : '#C9A227' }]} />
+    <Text style={st.slopeText}>{message}</Text>
+    <Text style={[st.slopeAction, on && { color: '#B36A00' }]}>{on ? '강조 끄기' : '지도에서 보기'}</Text>
+  </Pressable>;
+}
+
 const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: t.color.bg, overflow: 'hidden' },
   mapArea: { flex: 1, minHeight: 0 },
@@ -576,4 +618,9 @@ const st = StyleSheet.create({
   stepPhoto: { fontSize: 11, fontWeight: '800', color: '#119A5E', borderWidth: 1, borderColor: '#119A5E', borderRadius: 6, paddingHorizontal: 5, paddingVertical: 1, overflow: 'hidden' },
   legTitle: { marginTop: 10, fontSize: 13, fontWeight: '800', color: '#7A4FD6' },
   peekText: { fontSize: 15, fontWeight: '800', color: t.color.text },
+  slopeCard: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#FFF5DF', borderWidth: 1, borderColor: '#FFF5DF' },
+  slopeCardOn: { borderColor: '#E68A00', backgroundColor: '#FFEBC7' },
+  slopeBar: { width: 4, alignSelf: 'stretch', borderRadius: 2 },
+  slopeText: { flex: 1, fontSize: 13, lineHeight: 19, color: '#8A5200', fontWeight: '600' },
+  slopeAction: { fontSize: 12, fontWeight: '800', color: '#8A5200' },
 });

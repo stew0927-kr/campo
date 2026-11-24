@@ -51,10 +51,19 @@ export const SEARCH_SHEET_DEFAULT_SHARE = 0.52;
 export const SEARCH_SHEET_EXPANDED_SHARE = 0.88;
 
 /**
+ * 건물만 고르고 층은 아직 안 고른 검색 시트(층 칩 한 줄)의 기본 높이: 핸들 20 + 검색칸 44 + 간격 8 + 건물 이름 줄 44
+ * + 층 칩 한 줄 52 + 아래 여백 20. 현재 위치·지도에서 선택 줄, 화장실 성별 줄이 있으면 그만큼 더한다.
+ */
+export const SEARCH_SHEET_COMPACT_BASE = 188;
+
+/**
  * 검색 시트의 세 높이. 접힘은 0이며, 끝까지 접으면 검색을 끝낸다(releaseSnap이 'collapsed'를 주면 닫는다).
  * areaHeight: 지도 화면(탭 바 제외) 높이.
+ * compactExtra: 건물만 고른 상태면 기본 높이를 층 칩 한 줄이 들어갈 만큼(SEARCH_SHEET_COMPACT_BASE + compactExtra)으로 낮춘다.
  */
-export function searchSheetHeights(areaHeight: number): SheetHeights {
+export function searchSheetHeights(areaHeight: number, compactExtra: number | null = null): SheetHeights {
   const area = Math.max(320, areaHeight);
-  return { expanded: Math.round(area * SEARCH_SHEET_EXPANDED_SHARE), default: Math.round(area * SEARCH_SHEET_DEFAULT_SHARE), collapsed: 0 };
+  const normal = Math.round(area * SEARCH_SHEET_DEFAULT_SHARE);
+  const compact = compactExtra === null ? normal : Math.min(normal, SEARCH_SHEET_COMPACT_BASE + compactExtra);
+  return { expanded: Math.round(area * SEARCH_SHEET_EXPANDED_SHARE), default: compact, collapsed: 0 };
 }

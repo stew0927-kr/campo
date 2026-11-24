@@ -262,4 +262,69 @@ describe('computeRoute', () => {
     expect(state.route!.polyline).toHaveLength(6);
     expect(state.route!.steps.some((s) => s.text.startsWith("평지 '분수 광장'을 가로질러"))).toBe(true);
   });
+
+  describe('평지(plaza) 안에서 고른 출발·도착', () => {
+    const m = 1 / 111_320;
+    const kx = m / Math.cos((37 * Math.PI) / 180);
+    const at = (x: number, y: number): [number, number] => [127 + x * kx, 37 + y * m];
+    const toPoint = ([lng, lat]: [number, number]) => ({ kind: 'point' as const, lng, lat });
+    // 30 m × 20 m 평지. 동쪽 모서리(30, 10)에서 보도가 나가고, 서쪽 바깥 3 m에는 계단(남북 방향)이 붙어 있다.
+    // 계단은 평지 안의 점에서 가장 가까운 걷는 구간이지만, 평지와 닿지 않는다.
+    const runtime = () => loadBundledCampus(bundleFrom(META, [
+      { type: 'Feature', id: 'plaza_q', geometry: { type: 'Polygon', coordinates: [[at(0, 0), at(30, 0), at(30, 20), at(0, 20), at(0, 0)]] }, properties: { kind: 'plaza', source: 'estimate', rev: 1, name: '앞마당' } },
+      nodeFeature('p_e', ...at(30, 10)), nodeFeature('p_far', ...at(80, 10)), edgeFeature('e_out', 'p_e', 'p_far', [at(30, 10), at(80, 10)]),
+      nodeFeature('s_n', ...at(-3, 30)), nodeFeature('s_s', ...at(-3, -10)),
+      edgeFeature('e_stairs', 's_n', 's_s', [at(-3, 30), at(-3, -10)], { highway: 'steps', step_free: false }),
+      edgeFeature('e_back', 's_s', 'p_far', [at(-3, -10), at(80, -10), at(80, 10)]),
+    ]));
+    const inside = (x: number, y: number) => x >= -1e-6 && x <= 30 + 1e-6 && y >= -1e-6 && y <= 20 + 1e-6;
+    const local = (p: { lng: number; lat: number }): [number, number] => [(p.lng - 127) / kx, (p.lat - 37) / m];
+
+    for (const mode of ['shortest', 'step_free', 'fewest_steps', 'wheelchair'] as const) {
+      it(`${mode}: 고른 점에서 바로 시작해 평지 안을 걸어 평지가 길과 닿는 곳까지 가고, 바깥 계단에 붙지 않는다`, () => {
+        const picked = at(4, 10);
+        const state = computeRoute(runtime(), { from: toPoint(picked), to: { kind: 'node', nodeId: 'p_far' }, mode });
+        expect(state.status).toBe('ok');
+        const route = state.route!;
+        expect(route.startPlazaId).toBe('plaza_q');
+        expect(route.snappedStartM).toBeUndefined();
+        // 선은 고른 점 그 자리에서 시작한다(평지 밖 길로 이어지는 공중 점선이 없다).
+        expect(local(route.polyline[0]!)[0]).toBeCloseTo(4, 3);
+        expect(local(route.polyline[0]!)[1]).toBeCloseTo(10, 3);
+        // 평지 접점(p_e)까지의 걷는 선은 평지 안에만 있다.
+        const contact = route.nodeIndex![0]!;
+        expect(route.nodeIds[0]).toBe('p_e');
+        for (const p of route.polyline.slice(0, contact + 1)) expect(inside(...local(p))).toBe(true);
+        expect(route.stairsCount).toBe(0);
+        expect(route.distanceM).toBeCloseTo(26 + 50, 0);
+      });
+    }
+
+    it('도착이 평지 안이면 길에서 평지로 들어와 고른 점에서 끝난다', () => {
+      const picked = at(10, 15);
+      const state = computeRoute(runtime(), { from: { kind: 'node', nodeId: 'p_far' }, to: toPoint(picked), mode: 'fewest_steps' });
+      expect(state.status).toBe('ok');
+      const route = state.route!;
+      expect(route.endPlazaId).toBe('plaza_q');
+      const last = local(route.polyline[route.polyline.length - 1]!);
+      expect(last[0]).toBeCloseTo(10, 3);
+      expect(last[1]).toBeCloseTo(15, 3);
+      expect(route.stairsCount).toBe(0);
+    });
+
+    it('출발·도착이 모두 같은 평지 안이면 길로 나가지 않고 평지 안을 곧게 걷는다', () => {
+      const state = computeRoute(runtime(), { from: toPoint(at(2, 2)), to: toPoint(at(28, 18)), mode: 'fewest_steps' });
+      expect(state.status).toBe('ok');
+      expect(state.route!.nodeIds).toEqual([]);
+      expect(state.route!.distanceM).toBeCloseTo(Math.hypot(26, 16), 0);
+      for (const p of state.route!.polyline) expect(inside(...local(p))).toBe(true);
+    });
+
+    it('평지 밖에서 고른 점은 예전처럼 가장 가까운 길에 붙는다(계단 최소는 가까운 계단 대신 계단 아닌 길도 견준다)', () => {
+      const state = computeRoute(runtime(), { from: toPoint(at(-6, 25)), to: { kind: 'node', nodeId: 'p_far' }, mode: 'fewest_steps' });
+      expect(state.status).toBe('ok');
+      expect(state.route!.startPlazaId).toBeUndefined();
+      expect(state.route!.snappedStartM).toBeGreaterThan(0);
+    });
+  });
 });

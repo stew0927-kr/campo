@@ -34,6 +34,7 @@ export function CampusMap(props: MapProps) {
     onStepGroup: (group: MarkerGroup) => latest.current.onStepGroup?.(group),
     onOpenPreview: (entry: number | null) => latest.current.onOpenPreview?.(entry),
     onBuildingPress: (id: string) => latest.current.onBuildingPress?.(id),
+    onCenter: (point: RoutePoint) => latest.current.onCenter?.(point),
   }), []);
   const { lng, lat } = props.center;
   const center = useMemo(() => ({ lng, lat }), [lng, lat]);
@@ -44,16 +45,16 @@ export function CampusMap(props: MapProps) {
 }
 const NO_SPOTS: readonly PhotoSpot[] = [];
 const NO_GROUPS: readonly MarkerGroup[] = [];
-type ViewProps = Omit<MapProps, 'fitPadding' | 'photoSpots' | 'stepGroups' | 'onPhotoSpot' | 'onStepGroup' | 'onOpenPreview' | 'onBuildingPress'> & {
+type ViewProps = Omit<MapProps, 'fitPadding' | 'photoSpots' | 'stepGroups' | 'onPhotoSpot' | 'onStepGroup' | 'onOpenPreview' | 'onBuildingPress' | 'onCenter'> & {
   fitPadding: NonNullable<MapProps['fitPadding']>; photoSpots: readonly PhotoSpot[]; stepGroups: readonly MarkerGroup[];
   onPhotoSpot: (spot: PhotoSpot) => void; onStepGroup: (group: MarkerGroup) => void; onOpenPreview: (entry: number | null) => void;
-  onBuildingPress: (id: string) => void; hasBuildingPress: boolean;
+  onBuildingPress: (id: string) => void; hasBuildingPress: boolean; onCenter: (point: RoutePoint) => void;
 };
 /** Region events from the native map, fanned out to the parts that follow the camera without re-rendering the map. */
 interface ViewSink { moving: (view: MapView) => void; settled: (view: MapView) => void }
 const CampusMapView = memo(function CampusMapView({ center, label, route, from, to, places, graph, buildingId, level, position, flow, onPoint, onPlace, focus = null, selected = null, fitPadding,
   photoSpots, onPhotoSpot, stepGroups, onStepGroup, preview = null, onOpenPreview,
-  highlightBuildings = false, mappedBuildingIds = NO_IDS, onBuildingPress, hasBuildingPress, markedBuildingId = null, highlight = null }: ViewProps) {
+  highlightBuildings = false, mappedBuildingIds = NO_IDS, onBuildingPress, hasBuildingPress, markedBuildingId = null, highlight = null, stepFocus = null, onCenter }: ViewProps) {
   const camera = useRef<CameraRef>(null);
   const [loaded, setLoaded] = useState(false);
   // Current viewport (center, zoom, bearing, size). Kept in a ref: a region event must not re-render the map. The marker
@@ -70,6 +71,8 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
     [route, fromPoint?.lng, fromPoint?.lat, toPoint?.lng, toPoint?.lat]);
   const highlightLine: Feature<LineString> | null = useMemo(() => (highlight && highlight.coordinates.length >= 2
     ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: highlight.coordinates } } : null), [highlight]);
+  const stepLine: Feature<LineString> | null = useMemo(() => (stepFocus && stepFocus.coordinates.length >= 2
+    ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: stepFocus.coordinates } } : null), [stepFocus]);
   const indoor = useMemo(() => floorLines(graph, buildingId, level, route), [graph, buildingId, level, route]);
   const wayAreas = useMemo(() => outdoorPlazas(graph), [graph]);
   const wayLines = useMemo(() => outdoorLines(graph), [graph]);
@@ -90,13 +93,20 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
     return (viewRef.current = { ...viewRef.current, lng: lng!, lat: lat!, zoom: z, bearing });
   }, []);
   const onMoving = useCallback((event: RegionEvent) => markerSink.current?.moving(regionView(event, false)), [regionView]);
-  const onSettled = useCallback((event: RegionEvent) => markerSink.current?.settled(regionView(event, true)), [regionView]);
+  const onSettled = useCallback((event: RegionEvent) => {
+    const view = regionView(event, true);
+    markerSink.current?.settled(view);
+    onCenter({ lng: view.lng, lat: view.lat });
+  }, [regionView, onCenter]);
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     markerSink.current?.settled((viewRef.current = { ...viewRef.current, width, height }));
   }, []);
   const onMapPress = useCallback((event: { nativeEvent: { lngLat: [number, number] | number[] } }) => { const [lng, lat] = event.nativeEvent.lngLat; onPoint({ lng: lng!, lat: lat! }); }, [onPoint]);
-  const onLoaded = useCallback(() => { setLoaded(true); setFailed(false); }, []);
+  const onLoaded = useCallback(() => {
+    setLoaded(true); setFailed(false);
+    onCenter({ lng: viewRef.current.lng, lat: viewRef.current.lat });
+  }, [onCenter]);
   const onFailed = useCallback(() => setFailed(true), []);
   const shapes = useMemo(() => buildingShapes(graph, highlightBuildings ? mappedBuildingIds : [], buildingId), [graph, highlightBuildings, mappedBuildingIds, buildingId]);
   const marked = useMemo(() => buildingShapes(graph, markedBuildingId ? [markedBuildingId] : []), [graph, markedBuildingId]);
@@ -141,6 +151,11 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
     const bounds = highlight ? coordinateBounds(highlight.coordinates) : null;
     if (loaded && bounds) camera.current?.fitBounds(bounds, { padding: { top: fitPadding.top + 24, bottom: fitPadding.bottom + 24, left: fitPadding.left + 24, right: fitPadding.right + 24 }, duration: 500 });
   }, [highlight?.key, loaded]);
+  useEffect(() => {
+    // 위치 안내의 단계가 바뀌면 그 구간을 화면에 맞춰 부드럽게 이동한다(실내 층 맞춤 effect보다 뒤라 이 맞춤이 이긴다).
+    const bounds = stepFocus ? coordinateBounds(stepFocus.coordinates) : null;
+    if (loaded && bounds) camera.current?.fitBounds(bounds, { padding: { top: fitPadding.top + 16, bottom: fitPadding.bottom + 16, left: fitPadding.left + 16, right: fitPadding.right + 16 }, duration: 800 });
+  }, [stepFocus?.key, loaded, buildingId, level]);
   // easeTo needs a center: keep the current one (last region event) so only bearing and pitch change.
   const northUp = useCallback(() => camera.current?.easeTo({ center: [viewRef.current.lng, viewRef.current.lat], bearing: 0, pitch: 0, duration: 400 }), []);
   const building = buildingId ? graph?.buildings.get(buildingId) : null;
@@ -191,6 +206,10 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
       {buildingId !== null && <GeoJSONSource id="app-indoor" data={indoor}>
         <Layer id="app-floor-network" type="line" filter={F.offRoute} paint={P.floorNetwork} />
         <Layer id="app-floor-route" type="line" filter={F.onRoute} paint={floorRoutePaint} />
+      </GeoJSONSource>}
+      {stepLine && <GeoJSONSource id="app-nav-step" data={stepLine}>
+        <Layer id="app-nav-step-outline" type="line" paint={P.stepOutline} layout={ROUND} />
+        <Layer id="app-nav-step-line" type="line" paint={P.stepLine} layout={ROUND} />
       </GeoJSONSource>}
       <GeoJSONSource id="app-places" data={dots} onPress={onPlaceDot}>
         {/* Indoors the facility icons carry the meaning; the dots stay small as tap targets for places the icons leave out. */}
@@ -287,6 +306,7 @@ const P = {
   connector: { 'line-color': '#1F5EFF', 'line-width': 3, 'line-opacity': 0.65, 'line-dasharray': [1.5, 1.5] },
   routeOutline: { 'line-color': '#FFFFFF', 'line-width': 9 },
   highlightOutline: { 'line-color': '#FFFFFF', 'line-width': 11 }, highlightLine: { 'line-color': HIGHLIGHT_COLOR, 'line-width': 7 },
+  stepOutline: { 'line-color': '#FFFFFF', 'line-width': 12 }, stepLine: { 'line-color': '#0B3FC4', 'line-width': 8 },
   floorNetwork: { 'line-color': '#708397', 'line-width': 3 },
   placeDotIndoor: { 'circle-radius': 3.5, 'circle-color': '#8A97A8', 'circle-stroke-color': 'white', 'circle-stroke-width': 1.5 },
   placeDotOutdoor: { 'circle-radius': 6, 'circle-color': '#18744D', 'circle-stroke-color': 'white', 'circle-stroke-width': 2 },

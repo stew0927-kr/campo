@@ -53,4 +53,11 @@ export interface MapProps {
   markedBuildingId?: string | null;
   /** 경로의 한 구간(급경사 카드)을 주황 선으로 강조한다. `key`가 바뀌면 카메라가 그 구간으로 맞춰 이동한다. */
   highlight?: { key: string; coordinates: [number, number][] } | null;
+  /**
+   * 위치 안내의 지금 단계 구간. 진하게 그리고, `key`가 바뀌면 카메라가 그 구간을 화면에 맞춰 부드럽게 이동한다
+   * (실내 층 맞춤보다 나중에 적용된다).
+   */
+  stepFocus?: { key: string; coordinates: [number, number][] } | null;
+  /** 지도 가운데 핀으로 위치 고르기: 카메라가 멈출 때마다(그리고 처음 한 번) 화면 가운데 좌표를 알린다. */
+  onCenter?: (point: RoutePoint) => void;
 }

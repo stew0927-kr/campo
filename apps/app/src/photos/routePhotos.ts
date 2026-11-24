@@ -20,14 +20,17 @@ const headed = (p: RoutePhoto): HeadedPhoto => ({
 });
 
 /**
- * 경로가 지나는 지점의 좌표. polyline은 [출발 발끝?] + nodeIds의 좌표 + [도착 발끝?] 순서라(routeEngine polylineOf),
- * 출발이 지도 위 점이었으면(snappedStartM) 한 칸 밀어서 읽는다.
+ * 경로가 지나는 지점의 좌표. nodeIndex(각 지점의 polyline 자리)가 있으면 그것을 쓴다(평지 걷는 선이 끼어도 맞다).
+ * 없으면(옛 경로) polyline이 [출발 발끝?] + nodeIds의 좌표 + [도착 발끝?] 순서라고 보고, 출발이 지도 위 점이었으면
+ * (snappedStartM) 한 칸 밀어서 읽는다.
  */
-export function nodePositions(route: Pick<CampusRouteView, 'polyline' | 'nodeIds' | 'snappedStartM'>): Map<string, [number, number]> {
+export function nodePositions(route: Pick<CampusRouteView, 'polyline' | 'nodeIds' | 'snappedStartM' | 'nodeIndex'>): Map<string, [number, number]> {
   const offset = route.snappedStartM !== undefined ? 1 : 0;
+  const index = route.nodeIndex?.length === route.nodeIds.length ? route.nodeIndex : null;
   const out = new Map<string, [number, number]>();
   route.nodeIds.forEach((id, i) => {
-    const p = route.polyline[i + offset];
+    const at = index ? index[i]! : i + offset;
+    const p = at >= 0 ? route.polyline[at] : undefined;
     if (p !== undefined && !out.has(id)) out.set(id, [p.lng, p.lat]);
   });
   return out;

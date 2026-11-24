@@ -2,17 +2,18 @@
   "name": "@campo/admin",
   "version": "0.1.0",
   "private": true,
-  "description": "CAMPO admin web: sign in and add, edit and publish essay, festival and school-event content in Supabase. Owner: D.",
+  "description": "CAMPO admin web: sign in and add, edit and publish essay, festival and school-event content, and edit/upload the campus map, in Supabase. Owner: D.",
   "type": "module",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.json && vite build",
+    "build": "tsc -p tsconfig.json && vite build && node scripts/build-map.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "build:admin": "tsc -p tsconfig.json && vite build"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.119.2",

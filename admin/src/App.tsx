@@ -3,6 +3,7 @@
 import type { Session } from '@supabase/supabase-js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FestivalPage } from './components/FestivalPage.tsx';
+import { MapEditorFrame } from './components/MapEditorFrame.tsx';
 import { MapFilesPanel } from './components/MapFilesPanel.tsx';
 import { ResourcePanel } from './components/ResourcePanel.tsx';
 import { koreanError } from './lib/convert.ts';
@@ -12,6 +13,8 @@ import { essaySessions, essayTracks, schoolEvents } from './tables.ts';
 
 type Tab = 'essay' | 'festival' | 'events' | 'map';
 type Role = 'checking' | 'admin' | 'not-admin';
+/** 매핑 tab: the editor (full width) or the file upload/download screen. */
+type MapView = 'edit' | 'files';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -20,6 +23,10 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('essay');
   /** Changing this number rebuilds the tab from scratch (closes forms, clears festival/day selection). */
   const [resetCount, setResetCount] = useState(0);
+  const [mapView, setMapView] = useState<MapView>('edit');
+  /** The editor frame stays mounted once opened, so switching tabs never throws away unsaved map edits. */
+  const [mapOpened, setMapOpened] = useState(false);
+  const [mapReload, setMapReload] = useState(0);
   const openForms = useRef(new Set<string>());
   const tracker = useMemo<EditingTracker>(
     () => ({ report: (id, open) => (open ? openForms.current.add(id) : openForms.current.delete(id)) }),
@@ -31,6 +38,10 @@ export default function App() {
     if (openForms.current.size > 0 && !window.confirm('저장하지 않은 입력 내용이 사라집니다. 처음 화면으로 갈까요?')) return;
     openForms.current.clear();
     setTab(next);
+    if (next === 'map') {
+      setMapView('edit');
+      setMapOpened(true);
+    }
     setResetCount((n) => n + 1);
     window.scrollTo({ top: 0 });
   };
@@ -45,16 +56,20 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
+  // Keyed on the user, not the session object: a token refresh (hourly) or the map editor's own client in the 매핑 iframe
+  // hands over a new session object for the same user, and re-checking then would unmount every screen (open forms, the
+  // editor with its unsaved edits) behind "권한을 확인하는 중…".
+  const userId = session?.user.id ?? null;
   useEffect(() => {
-    if (!session) return;
+    if (!userId) return;
     setRole('checking');
     void supabase
       .from('profiles')
       .select('role')
-      .eq('id', session.user.id)
+      .eq('id', userId)
       .maybeSingle()
       .then(({ data }) => setRole((data as { role?: string } | null)?.role === 'admin' ? 'admin' : 'not-admin'));
-  }, [session]);
+  }, [userId]);
 
   if (configProblem) return <Centered title="설정이 필요합니다">{configProblem}</Centered>;
   if (!ready) return <Centered title="캠포 관리자">불러오는 중…</Centered>;
@@ -69,8 +84,10 @@ export default function App() {
     );
   }
 
+  const mapEditing = tab === 'map' && mapView === 'edit';
+
   return (
-    <div className="app">
+    <div className={mapEditing ? 'app app-full' : 'app'}>
       <header>
         <h1>캠포 관리자</h1>
         <nav>
@@ -85,8 +102,20 @@ export default function App() {
           <button onClick={() => void supabase.auth.signOut()}>로그아웃</button>
         </div>
       </header>
+      {tab === 'map' && (
+        <div className="subnav">
+          <button className={mapView === 'edit' ? 'sub active' : 'sub'} onClick={() => setMapView('edit')}>지도 편집</button>
+          <button className={mapView === 'files' ? 'sub active' : 'sub'} onClick={() => setMapView('files')}>파일 올리기·내려받기</button>
+          {mapView === 'edit' && (
+            <button className="sub reload" title="서버 지도를 다시 불러옵니다. 저장하지 않은 편집이 있으면 편집기가 먼저 묻습니다." onClick={() => setMapReload((n) => n + 1)}>
+              편집 화면 다시 불러오기
+            </button>
+          )}
+        </div>
+      )}
+      {mapOpened && <MapEditorFrame visible={mapEditing} reload={mapReload} />}
       <EditingContext.Provider value={tracker}>
-        <main key={`${tab}-${resetCount}`}>
+        <main key={`${tab}-${resetCount}`} hidden={mapEditing}>
           {tab !== 'map' && (
             <p className="hint">“공개 중”으로 둔 항목만 앱에 보입니다. 숨김으로 저장해 두고, 준비가 되면 공개 중으로 바꾸세요.</p>
           )}
@@ -99,7 +128,7 @@ export default function App() {
           )}
           {tab === 'festival' && <FestivalPage />}
           {tab === 'events' && <ResourcePanel config={schoolEvents} />}
-          {tab === 'map' && (
+          {tab === 'map' && mapView === 'files' && (
             <>
               <p className="hint">캠퍼스 지도(campus.json·*.geojson)는 서버에 있고, 앱은 실행할 때 서버 지도를 받습니다.</p>
               <MapFilesPanel />

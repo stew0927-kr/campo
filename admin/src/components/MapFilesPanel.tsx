@@ -123,7 +123,7 @@ export function MapFilesPanel() {
     setPrune(false);
     setStatus({
       kind: 'ok',
-      text: `서버에 올렸습니다: 저장 ${result.written.length}개${result.removed.length ? `, 삭제 ${result.removed.length}개` : ''}. 앱은 다음 실행 때 받아 갑니다.`,
+      text: `서버에 올렸습니다: 저장 ${result.written.length}개${result.removed.length ? `, 삭제 ${result.removed.length}개` : ''}. 앱은 다음 실행 때 받아 갑니다. 지도 편집 화면을 열어 두었다면 "편집 화면 다시 불러오기"를 눌러야 올린 지도가 보입니다.`,
     });
   };
 

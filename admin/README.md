@@ -8,6 +8,7 @@ Supabase 대시보드에 들어가지 않고 내용을 관리하기 위한 것�
 - 브라우저에는 **공개 키(publishable)만** 넣는다. 누가 무엇을 쓸 수 있는지는 DB의 RLS(`supabase/migrations/0001_content.sql`)가 정한다:
   `profiles.role = 'admin'`인 계정만 쓰기 가능, 앱은 `is_published = true`인 행만 읽음.
 - 루트 워크스페이스(`apps/*`, `packages/*`) 밖의 독립 패키지라, 루트 `npm install`·`npm test`·`npm run typecheck`와 앱(Expo)의 의존성에 영향을 주지 않는다.
+- 매핑 탭의 지도 편집 화면은 `packages/editor`를 서버 모드로 따로 빌드한 페이지(`/map/`)를 iframe으로 띄운 것이다(`scripts/build-map.mjs`). 편집기의 CSS·React가 관리자 화면과 섞이지 않고, 같은 주소라 로그인은 공유된다.
 
 ## 처음 한 번
 
@@ -15,6 +16,8 @@ Supabase 대시보드에 들어가지 않고 내용을 관리하기 위한 것�
 cd admin
 cp .env.example .env.local      # 그리고 .env.local에 URL과 공개 키를 적는다(커밋되지 않음)
 npm install
+cd ..
+npm install -w @campo/editor -w @campo/core --include-workspace-root   # 매핑 편집기 빌드용(저장소 맨 위에서 한 번)
 ```
 
 ## 실행
@@ -25,6 +28,13 @@ npm run dev        # http://localhost:5174 이 자동으로 열림. 끄려면 �
 
 관리자 계정(Supabase Authentication에서 만든 계정, `profiles.role = 'admin'`)으로 로그인한다.
 관리자가 아닌 계정은 "관리자 권한이 없습니다"만 보인다.
+
+`npm run dev`에서는 매핑 탭의 지도 편집 화면이 열리지 않는다(안내만 나옴). 편집 화면까지 보려면:
+
+```
+npm run build      # 관리자 웹 + 매핑 편집기(dist/map/)
+npm run preview    # http://localhost:4173
+```
 
 ## 화면
 
@@ -50,6 +60,11 @@ npm run dev        # http://localhost:5174 이 자동으로 열림. 끄려면 �
   - 서버에만 있는 파일은 체크했을 때만 지운다. 내용이 같은 파일은 다시 쓰지 않는다.
   - 저장은 DB 함수 `save_campus_map()` 한 번이다: 관리자만 되고, 비교 목록을 띄운 뒤 그 사이 다른 저장이 있으면 아무것도 바꾸지 않고 멈춘다(목록을 다시 비교함). 반쯤 저장되는 일은 없다.
   - Windows 줄바꿈(CRLF)과 BOM은 올리기 전에 없앤다(체크아웃 방식 때문에 "전부 바뀜"으로 보이지 않게).
+- **지도 편집**(매핑 탭의 기본 화면): 편집기(`packages/editor`)가 서버 지도를 불러와 고치고, 저장하면 같은 `save_campus_map()`으로 서버에 저장한다.
+  - 저장할 때 불러온 뒤 그 사이 다른 저장(다른 사람·폴더 올리기)이 있었으면 저장하지 않고 알린다. 이때는 "편집 화면 다시 불러오기"로 서버 지도를 다시 불러와 고친다(고치던 내용은 사라짐).
+  - 고도 다시 계산·높이 차·지형 3D의 실제 고도·제보 관리·현장 기록 불러오기는 PC 편집기(`npm run editor`) 전용이라 "이 기능은 PC 편집기에서만 됩니다"로 안내한다.
+  - `overrides.json`·측정 기록(`observations/`)은 서버에 두지 않는다(저장 안내에 표시).
+  - 한 번 연 편집 화면은 다른 탭에 다녀와도 그대로 있다(저장하지 않은 편집 유지).
 - **서버 지도 내려받기(zip)**: 압축을 풀면 `hanyang-seoul/` 폴더가 나온다. 서버는 무료 플랜이라 백업이 없으니 큰 작업 전에 받아 둔다.
 
 지도 작업 규칙:
@@ -59,14 +74,14 @@ npm run dev        # http://localhost:5174 이 자동으로 열림. 끄려면 �
 
 ## 그 밖의 명령
 
-`npm test`(값 변환 테스트), `npm run typecheck`, `npm run build`(배포용 `dist/` 생성).
+`npm test`(값 변환·지도 파일 테스트), `npm run typecheck`, `npm run build`(배포용 `dist/`, 매핑 편집기 `dist/map/` 포함), `npm run build:admin`(관리자 웹만).
 
 ## 배포 (팀이 쓰는 주소)
 
 https://campo-admin.pages.dev — Cloudflare Pages(Direct Upload). 빌드한 `dist/`를 대시보드에 올리는 방식이라 **push·병합해도 자동으로 바뀌지 않는다.**
 
 갱신 순서:
-1. 최신 코드에서 `npm run build` (`.env.local`의 URL·공개 키가 `dist/`에 들어간다. 비밀 키는 넣지 않는다)
+1. 최신 코드에서 `npm run build` (`.env.local`의 URL·공개 키가 `dist/`와 `dist/map/`에 들어간다. 비밀 키는 넣지 않는다. 처음이면 "처음 한 번"의 저장소 맨 위 `npm install`부터)
 2. Cloudflare → Workers & Pages → `campo-admin` → Create deployment → `dist` 폴더 업로드
 
 Direct Upload 프로젝트는 나중에 Git 연결로 바꿀 수 없다. 자동 배포가 필요하면 새 Pages 프로젝트를 만들어 저장소를 연결한다(저장소 주인 권한 필요).

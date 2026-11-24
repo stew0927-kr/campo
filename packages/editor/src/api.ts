@@ -2,15 +2,22 @@ import type { LoadedFile } from '@campo/core';
 import type { TerrainGrid, TerrainWall } from './model/terrain3d.ts';
 import type { TerrainTile } from './model/terrainFootprint.ts';
 import type { RoadSegmentJson } from './model/roadRibbon.ts';
+import { loadFromServer, PC_ONLY, saveToServer, SERVER_MODE } from './storage.ts';
+
+// In the server build (storage.ts SERVER_MODE) the campus comes from and goes to Supabase; every other call below needs
+// this PC's dev server (elevation solver, 제보, 현장 기록) and stops with PC_ONLY before any request is sent.
 
 export async function fetchCampusFiles(campusId: string): Promise<LoadedFile[]> {
+  if (SERVER_MODE) return loadFromServer(campusId);
   const res = await fetch(`/api/campuses/${encodeURIComponent(campusId)}`);
   const body = (await res.json()) as { files?: LoadedFile[]; error?: string };
   if (!res.ok || !body.files) throw new Error(body.error ?? `불러오지 못했습니다 (HTTP ${res.status}).`);
   return body.files;
 }
 
-export async function saveCampus(campusId: string, files: Record<string, string>): Promise<{ written: string[]; removed: string[] }> {
+/** `skipped` (server build only): files of the save the server does not keep, such as overrides.json. */
+export async function saveCampus(campusId: string, files: Record<string, string>): Promise<{ written: string[]; removed: string[]; skipped?: string[] }> {
+  if (SERVER_MODE) return saveToServer(campusId, files);
   const res = await fetch(`/api/campuses/${encodeURIComponent(campusId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -29,6 +36,7 @@ export interface ReportFileText {
 }
 
 export async function fetchReportFiles(): Promise<ReportFileText[]> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch('/api/reports');
   const body = (await res.json()) as { reports?: ReportFileText[]; error?: string };
   if (!res.ok || !body.reports) throw new Error(body.error ?? `제보를 불러오지 못했습니다 (HTTP ${res.status}).`);
@@ -37,6 +45,7 @@ export async function fetchReportFiles(): Promise<ReportFileText[]> {
 
 /** Rewrite report files that exist. */
 export async function saveReportFiles(files: Record<string, string>): Promise<string[]> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch('/api/reports', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -50,6 +59,7 @@ export async function saveReportFiles(files: Record<string, string>): Promise<st
 // ---- 현장 기록 (dev server only) ----
 
 export async function fetchSurveyFiles(): Promise<{ id: string; text: string }[]> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch('/api/surveys');
   const body = (await res.json()) as { surveys?: { id: string; text: string }[]; error?: string };
   if (!res.ok || !body.surveys) throw new Error(body.error ?? `현장 기록을 불러오지 못했습니다 (HTTP ${res.status}).`);
@@ -67,6 +77,7 @@ export async function saveSurvey(
   text: string,
   photos: { names: readonly string[]; read: (name: string) => Uint8Array } = { names: [], read: () => new Uint8Array() },
 ): Promise<string[]> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch(`/api/surveys/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -104,6 +115,7 @@ export async function saveSurvey(
 
 /** Write changesets/<fileName>. */
 export async function saveChangeset(fileName: string, text: string): Promise<{ written: boolean }> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch(`/api/changesets/${encodeURIComponent(fileName)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -132,6 +144,7 @@ export type { TerrainWall } from './model/terrain3d.ts';
 export async function fetchTerrain(campusId: string): Promise<{
   grid: TerrainGrid | null; walls: TerrainWall[]; plazaHeights: Record<string, number>; tiles: TerrainTile[]; roads: RoadSegmentJson[];
 }> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/terrain`);
   const body = (await res.json()) as {
     grid?: TerrainGrid | null; walls?: TerrainWall[]; plazaHeights?: Record<string, number>; tiles?: TerrainTile[]; roads?: RoadSegmentJson[];
@@ -146,6 +159,7 @@ export async function fetchTerrain(campusId: string): Promise<{
 }
 
 export async function fetchElevation(campusId: string): Promise<ElevationInfo> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}`);
   const body = (await res.json()) as Partial<ElevationInfo> & { error?: string };
   if (!res.ok || !body.solver) throw new Error(body.error ?? `고도 정보를 불러오지 못했습니다 (HTTP ${res.status}).`);
@@ -153,6 +167,7 @@ export async function fetchElevation(campusId: string): Promise<ElevationInfo> {
 }
 
 export async function saveElevationStore(campusId: string, text: string): Promise<void> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/store`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -164,6 +179,7 @@ export async function saveElevationStore(campusId: string, text: string): Promis
 
 /** One Δh edge out of the store on the server (DELETE). The updated store text comes back, with the edge's two ends. */
 export async function deleteElevationEdge(campusId: string, edgeId: string): Promise<{ store: string; removed: { edgeId: string; from: string; to: string } }> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/edges/${encodeURIComponent(edgeId)}`, { method: 'DELETE' });
   const body = (await res.json().catch(() => ({}))) as { written?: boolean; store?: string; removed?: { edgeId: string; from: string; to: string }; error?: string };
   if (!res.ok || !body.written || typeof body.store !== 'string' || !body.removed) throw new Error(body.error ?? `높이 차를 지우지 못했습니다 (HTTP ${res.status}).`);
@@ -172,6 +188,7 @@ export async function deleteElevationEdge(campusId: string, edgeId: string): Pro
 
 /** Send the recompute request and the campus as it would be saved; the solver's derived/elevation.json comes back. */
 export async function requestRecompute(campusId: string, request: unknown, files: Record<string, string>): Promise<{ derived: unknown; mode: 'solved' | 'existing'; log: string }> {
+  if (SERVER_MODE) throw new Error(PC_ONLY);
   const res = await fetch(`/api/elevation/${encodeURIComponent(campusId)}/recompute`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

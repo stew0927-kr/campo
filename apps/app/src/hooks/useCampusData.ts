@@ -1,58 +1,35 @@
-// useCampusData: 앱에 번들된 캠퍼스 데이터를 읽어 화면이 쓸 값으로 돌려준다.
-// 데이터는 앱 안에 들어 있으므로 첫 렌더에서 바로 읽는다(네트워크 없음). 그래서 status에 loading이 없다.
+// useCampusData: 캠퍼스 지도를 읽어 화면이 쓸 값으로 돌려준다.
+// 기본은 서버(Supabase campus_map_files)에서 받은 지도이고, 받기 전·실패·읽을 수 없는 지도면 앱에 들어 있는 지도다.
+// 앱 번들은 첫 렌더에서 바로 읽으므로(네트워크 없음) status에 loading이 없다. 서버 지도가 오면 그것으로 한 번 바뀐다.
 import { useCallback, useMemo, useState } from 'react';
 import { bundledCampus } from '../campus/bundled.ts';
-import { CampusDataError, loadBundledCampus } from '../campus/loadBundledCampus.ts';
+import { campusDataWithFallback } from '../campus/remote.ts';
+import { resolveCampusData } from '../campus/resolve.ts';
 import type { BundledCampus } from '../campus/types.ts';
-import type { CampusCounts, CampusData, CampusDataApi } from '../contracts.ts';
+import type { CampusDataApi } from '../contracts.ts';
 import { bundleKeyOf } from './memoKeys.ts';
+import { useCampusBundle } from './useCampusBundle.ts';
 
-const NO_COUNTS: CampusCounts = { nodes: 0, edges: 0, buildings: 0 };
-
-/** 번들을 읽어 CampusData로. 실패해도 던지지 않고 error 상태로 돌려준다(화면이 빈 화면으로 남지 않게). */
-export function resolveCampusData(bundle: BundledCampus): CampusData {
-  try {
-    const runtime = loadBundledCampus(bundle);
-    return {
-      status: 'ready',
-      runtime,
-      campus: runtime.info,
-      graph: runtime.graph,
-      network: runtime.network,
-      counts: runtime.counts,
-      places: runtime.places,
-      buildings: runtime.buildings,
-      issues: runtime.issues,
-      error: null,
-    };
-  } catch (error) {
-    const message = error instanceof CampusDataError ? error.message : `캠퍼스 데이터를 읽는 중 문제가 생겼습니다: ${(error as Error).message}`;
-    return {
-      status: 'error',
-      runtime: null,
-      campus: null,
-      graph: null,
-      network: null,
-      counts: NO_COUNTS,
-      places: [],
-      buildings: [],
-      issues: [],
-      error: message,
-    };
-  }
-}
+// resolveCampusData는 campus/resolve.ts로 옮겼다(React 없이 테스트하려고). 예전 import 경로도 그대로 쓸 수 있게 다시 내보낸다.
+export { resolveCampusData } from '../campus/resolve.ts';
 
 /**
- * 앱에 번들된 한양대 서울캠퍼스 데이터(기본값)를 읽는다.
- * @param bundle 다른 캠퍼스를 읽고 싶을 때만 넘긴다(테스트·추후 캠퍼스 선택).
+ * 한양대 서울캠퍼스 지도: 서버 지도, 없으면 앱 번들.
+ * @param bundle 넘기면 서버 지도 대신 이 번들만 읽는다(개발용 가상 경로·테스트·추후 캠퍼스 선택).
  */
-export function useCampusData(bundle: BundledCampus = bundledCampus): CampusDataApi {
+export function useCampusData(bundle?: BundledCampus): CampusDataApi {
+  // 훅은 늘 같은 순서로 부른다: 번들을 넘긴 화면도 서버 요청 훅을 부르지만 결과를 쓰지 않는다.
+  const remote = useCampusBundle();
   const [generation, setGeneration] = useState(0);
   const reload = useCallback(() => setGeneration((value) => value + 1), []);
   // 번들의 내용으로 메모한다: 화면이 매 렌더 새 번들 객체(인라인 bundleFrom(...))를 넘겨도 내용이 같으면 runtime·network가
-  // 그대로라서 useGpsMatcher 세션이 새로 만들어지지 않는다. 키가 바뀐 렌더의 bundle로 다시 읽는다.
-  const key = bundleKeyOf(bundle);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const data = useMemo(() => resolveCampusData(bundle), [key, generation]);
+  // 그대로라서 useGpsMatcher 세션이 새로 만들어지지 않는다. 서버 지도가 앱 번들과 내용이 같으면 키도 같아 다시 읽지 않는다.
+  const shown = bundle ?? remote?.bundle ?? bundledCampus;
+  const key = `${bundleKeyOf(shown)}|${bundle ? '' : remote?.message ?? ''}`;
+  const data = useMemo(
+    () => (bundle ? resolveCampusData(bundle) : campusDataWithFallback(remote, bundledCampus)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [key, generation],
+  );
   return useMemo(() => ({ ...data, reload }), [data, reload]);
 }

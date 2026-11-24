@@ -15,6 +15,8 @@ import type { CampusPlace } from '../../contracts.ts';
 import { buildingShapes } from './buildings.ts';
 import { FacilityIcon, MapLabel } from './MapGlyphs.tsx';
 import { theme as t } from '../../ui/theme.ts';
+import { WAY_WIDTH } from '../../map/wayWidth.ts';
+export { WAY_WIDTH };
 export function CampusMap({ center, label, route, from, to, places, graph, buildingId, level, position, flow, onPoint, onPlace, focus = null, selected = null, fitPadding = DEFAULT_PADDING,
   photoSpots = [], onPhotoSpot, stepGroups = [], onStepGroup, preview = null, onOpenPreview,
   highlightBuildings = false, mappedBuildingIds = [], onBuildingPress, markedBuildingId = null, highlight = null }: MapProps) {
@@ -179,7 +181,7 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
       {selected && visible(selected) && selected.id !== from?.id && selected.id !== to?.id && <Marker id="selected-place" lngLat={[selected.lng, selected.lat]} anchor="bottom"><View style={styles.selectedPin}><View style={styles.selectedDot} /></View></Marker>}
       {visible(from) && from && <EndpointPin id="route-start" kind="from" lngLat={[from.lng, from.lat]} />}
       {visible(to) && to && <EndpointPin id="route-end" kind="to" lngLat={[to.lng, to.lat]} />}
-      {preview && <PreviewBubble preview={preview} onOpen={(entry) => onOpenPreview?.(entry)} />}
+      {preview && <PreviewBubble key={preview.key} preview={preview} onOpen={(entry) => onOpenPreview?.(entry)} />}
       {position && <Marker id="current-position" lngLat={[position.lng, position.lat]}><View style={styles.current} /></Marker>}
     </Map>
     {failed && <Text accessibilityLiveRegion="polite" style={styles.error}>배경 지도를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요. 수동 길찾기는 계속 이용할 수 있습니다.</Text>}
@@ -220,11 +222,6 @@ function CompassButton({ bind, onPress }: { bind: { current: ((bearing: number, 
 }
 const DEFAULT_PADDING = { top: 40, bottom: 40, left: 35, right: 35 };
 const ATTRIBUTION_BOTTOM = 22;
-/** Way thickness: grows with zoom and follows width_m (about 2 m = 1x, clamped 0.7x–1.8x). The way itself is thick; no heavy casing. */
-const WAY_WIDTH = ['*',
-  ['interpolate', ['linear'], ['zoom'], 14, 1.4, 16, 2.6, 17, 3.6, 18, 5.2, 19, 7.5, 20, 11],
-  ['max', 0.7, ['min', 1.8, ['/', ['get', 'width'], 2]]],
-] as never;
 const HITBOX = { top: 16, right: 16, bottom: 16, left: 16 };
 
 /**

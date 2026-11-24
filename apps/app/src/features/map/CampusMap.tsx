@@ -4,6 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { FeatureCollection, Point } from 'geojson';
 import { OSM_ATTRIBUTION, OSM_RASTER_STYLE } from '../../map/style.ts';
+import { CAMPUS_MAX_BOUNDS, CAMPUS_MAX_ZOOM, CAMPUS_MIN_ZOOM } from '../../map/campusCamera.ts';
 import { routeBounds, routeLine } from './model.ts';
 import { floorLines } from './indoor.ts';
 import { Image } from 'expo-image';
@@ -91,7 +92,8 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
       onRegionIsChanging={onMoving} onRegionDidChange={(event) => onSettled(regionView(event))}
       onPress={(event) => { const [lng, lat] = event.nativeEvent.lngLat; onPoint({ lng, lat }); }}
       onDidFinishLoadingMap={() => { setLoaded(true); setFailed(false); }} onDidFailLoadingMap={() => setFailed(true)}>
-      <Camera ref={camera} initialViewState={{ center: [center.lng, center.lat], zoom: 16 }} />
+      <Camera ref={camera} initialViewState={{ center: [center.lng, center.lat], zoom: 16 }}
+        maxBounds={CAMPUS_MAX_BOUNDS} minZoom={CAMPUS_MIN_ZOOM} maxZoom={CAMPUS_MAX_ZOOM} />
       {shapes.features.length > 0 && <GeoJSONSource id="app-mapped-buildings" data={shapes} hitbox={HITBOX} onPress={(event) => {
         const id = event.nativeEvent.features[0]?.properties?.['id'];
         if (typeof id === 'string' && onBuildingPress) { event.stopPropagation(); onBuildingPress(id); }

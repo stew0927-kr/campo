@@ -4,6 +4,8 @@ import type { CampusBuilding, CampusPlace } from '../../contracts.ts';
 
 /** 야외 장소 묶음의 id(건물 id와 겹치지 않는다). */
 export const OUTDOOR_GROUP = '__outdoor__';
+/** 건물 안이지만 층 기록이 없는 장소의 '층 미확인' 묶음(실제 층 번호와 겹치지 않는 값). */
+export const UNKNOWN_LEVEL = -9999;
 
 export interface BuildingGroup {
   id: string;
@@ -40,16 +42,23 @@ export function buildingGroups(places: readonly CampusPlace[], buildings: readon
   return outdoor > 0 ? [...groups, { id: OUTDOOR_GROUP, name: '야외 장소', count: outdoor, levelCount: 0 }] : groups;
 }
 
-/** 건물의 층 목록(낮은 층부터). 층 정보 없는 장소는 세지 않는다. */
+/** 건물의 층 목록(낮은 층부터). 층 정보 없는 장소는 맨 뒤 '층 미확인'(level = UNKNOWN_LEVEL) 한 줄로 묶는다. */
 export function levelGroups(places: readonly CampusPlace[], buildingId: string): LevelGroup[] {
   const counts = new Map<number, number>();
-  for (const p of places) if (p.buildingId === buildingId && p.level !== null) counts.set(p.level, (counts.get(p.level) ?? 0) + 1);
-  return [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([level, count]) => ({ level, label: floorText(level), count }));
+  let unknown = 0;
+  for (const p of places) {
+    if (p.buildingId !== buildingId) continue;
+    if (p.level === null) unknown++;
+    else counts.set(p.level, (counts.get(p.level) ?? 0) + 1);
+  }
+  const floors = [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([level, count]) => ({ level, label: floorText(level), count }));
+  return unknown > 0 ? [...floors, { level: UNKNOWN_LEVEL, label: '층 미확인', count: unknown }] : floors;
 }
 
-/** 건물 한 층(또는 야외: buildingId = OUTDOOR_GROUP, level 무시)의 시설을 종류별로. 빈 종류는 뺀다. */
+/** 건물 한 층(또는 야외: buildingId = OUTDOOR_GROUP, level 무시; UNKNOWN_LEVEL은 층 미확인)의 시설을 종류별로. 빈 종류는 뺀다. */
 export function facilityGroups(places: readonly CampusPlace[], buildingId: string, level: number | null): FacilityGroup[] {
-  const scope = places.filter((p) => (buildingId === OUTDOOR_GROUP ? p.buildingId === null : p.buildingId === buildingId && p.level === level));
+  const want = level === UNKNOWN_LEVEL ? null : level;
+  const scope = places.filter((p) => (buildingId === OUTDOOR_GROUP ? p.buildingId === null : p.buildingId === buildingId && p.level === want));
   return FACILITY_ORDER
     .map((kind) => ({ kind, label: FACILITY_LABEL[kind], places: scope.filter((p) => facilityKind(p) === kind).sort(byName) }))
     .filter((g) => g.places.length > 0);

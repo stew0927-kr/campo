@@ -42,3 +42,19 @@ export function tapSnap(snap: SheetSnap): SheetSnap {
 export function toggleLabel(snap: SheetSnap): string {
   return snap === 'collapsed' ? '시트 펼치기' : '시트 접기';
 }
+
+/* ---------- 반화면 장소 검색 시트 ---------- */
+
+/** 검색 시트 기본 높이(지도 영역 대비). 위쪽 절반에 지도가 보인다. */
+export const SEARCH_SHEET_DEFAULT_SHARE = 0.52;
+/** 끌어 올렸을 때 높이. */
+export const SEARCH_SHEET_EXPANDED_SHARE = 0.88;
+
+/**
+ * 검색 시트의 세 높이. 접힘은 0이며, 끝까지 접으면 검색을 끝낸다(releaseSnap이 'collapsed'를 주면 닫는다).
+ * areaHeight: 지도 화면(탭 바 제외) 높이.
+ */
+export function searchSheetHeights(areaHeight: number): SheetHeights {
+  const area = Math.max(320, areaHeight);
+  return { expanded: Math.round(area * SEARCH_SHEET_EXPANDED_SHARE), default: Math.round(area * SEARCH_SHEET_DEFAULT_SHARE), collapsed: 0 };
+}

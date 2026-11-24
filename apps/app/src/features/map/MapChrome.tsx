@@ -1,14 +1,16 @@
 /* Presentational pieces of the full-screen map: floating controls over the map, the bottom sheet,
- * the start/end card and the place search sheet. No routing or GPS logic lives here. */
+ * the start/end card, the building floor picker and the half-screen place search sheet. No routing or GPS logic lives here. */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Animated, FlatList, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActivityIndicator, Animated, FlatList, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { CampusBuilding, CampusPlace, TravelMode } from '../../contracts.ts';
 import { floating, theme as t } from '../../ui/theme.ts';
 import { Empty, Notice } from '../../ui/kit.tsx';
 import { TRAVEL_MODES } from './model.ts';
-import { OUTDOOR_GROUP, TREE_ROOT, buildingGroups, facilityGroups, floorText, levelGroups, treeUp, type TreePath } from './placeTree.ts';
-import { SHEET_COLLAPSED_HEIGHT, SHEET_TAP_SLOP, dragHeight, releaseSnap, tapSnap, toggleLabel, type SheetHeights, type SheetSnap } from './sheetModel.ts';
+import { OUTDOOR_GROUP, TREE_ROOT, UNKNOWN_LEVEL, buildingGroups, facilityGroups, floorText, levelGroups, treeUp, type TreePath } from './placeTree.ts';
+import { RESTROOM_WANTED, genderLabel, restroomCandidates, type RestroomWanted } from './restroomGender.ts';
+import { SHEET_COLLAPSED_HEIGHT, SHEET_TAP_SLOP, dragHeight, releaseSnap, searchSheetHeights, tapSnap, toggleLabel, type SheetHeights, type SheetSnap } from './sheetModel.ts';
+import { BuildingIcon } from './MapGlyphs.tsx';
+import { levelChip, levelName } from './buildings.ts';
 
 export const SEARCH_PLACEHOLDER = '건물 이름, 동 번호, 강의실 검색';
 
@@ -66,6 +68,51 @@ export function SearchBar({ onSearch, onRoute }: { onSearch: () => void; onRoute
 /** Small floating chip, e.g. the developer data switch. */
 export function FloatChip({ label, text, onPress }: { label: string; text: string; onPress: () => void }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [c.floatChip, pressed && { backgroundColor: t.color.sunken }]}><Text style={c.floatChipText}>{text}</Text></Pressable>;
+}
+
+/**
+ * Top bar while a place is selected: a clear ← (선택 취소) on the left and the chosen place's name,
+ * so the back button never sits on top of the search bar. Tapping the name searches again.
+ */
+export function SelectionBar({ name, detail, onBack, onSearch }: { name: string; detail: string; onBack: () => void; onSearch: () => void }) {
+  return <View style={c.searchRow}>
+    <RoundButton label="선택 취소" onPress={onBack}><BackIcon /></RoundButton>
+    <Pressable accessibilityRole="button" accessibilityLabel={`선택한 장소: ${name}, ${detail}. 눌러서 다시 검색`} onPress={onSearch} style={({ pressed }) => [c.searchPill, c.selectionPill, pressed && { backgroundColor: t.color.sunken }]}>
+      <View style={c.selectionMark}><View style={c.selectionMarkDot} /></View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={c.selectionName}>{name}</Text>
+        <Text numberOfLines={1} style={c.selectionDetail}>{detail}</Text>
+      </View>
+    </Pressable>
+  </View>;
+}
+/** Floating 건물 모양 switch: on → mapped buildings are highlighted and a tap on one opens its floor picker. */
+export function BuildingToggle({ value, onChange }: { value: boolean; onChange: (value: boolean) => void }) {
+  return <Pressable accessibilityRole="switch" accessibilityLabel="건물에서 층 고르기" accessibilityState={{ checked: value }} onPress={() => onChange(!value)}
+    style={({ pressed }) => [c.round, value && c.roundOn, pressed && { backgroundColor: value ? t.color.primaryPressed : t.color.sunken }]}>
+    <BuildingIcon color={value ? t.color.surface : t.color.text} />
+  </Pressable>;
+}
+/** Small card over the map: the tapped building's floors. Picking one enters that building and floor. */
+export function FloorPicker({ name, detail, levels, current, onLevel, onClose }: { name: string; detail: string; levels: readonly number[]; current: number | null; onLevel: (level: number) => void; onClose: () => void }) {
+  return <View style={c.floorCard} accessibilityLabel={`${name} 층 선택`}>
+    <View style={c.floorHeader}>
+      <View style={c.floorBadge}><BuildingIcon color={t.color.primary} /></View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text accessibilityRole="header" numberOfLines={1} style={c.floorTitle}>{name}</Text>
+        <Text numberOfLines={1} style={c.floorDetail}>{detail}</Text>
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel="층 선택 닫기" onPress={onClose} style={c.iconButton}><CloseIcon color={t.color.muted} /></Pressable>
+    </View>
+    <View style={c.floorChips}>{levels.map((level) => {
+      const on = level === current;
+      return <Pressable key={level} accessibilityRole="button" accessibilityLabel={`${name} ${levelName(level)}${on ? ', 지금 보는 층' : ''}`} accessibilityState={{ selected: on }} onPress={() => onLevel(level)}
+        style={({ pressed }) => [c.floorChip, on && c.floorChipOn, pressed && !on && { backgroundColor: t.color.soft }]}>
+        <Text style={[c.floorChipText, on && c.floorChipTextOn]}>{levelChip(level)}</Text>
+      </Pressable>;
+    })}</View>
+    <TextButton title="지도에서 계속 보기" onPress={onClose} />
+  </View>;
 }
 
 /* ---------- Start / end card (route input) ---------- */
@@ -188,11 +235,6 @@ export function ModeChips({ value, onChange }: { value: TravelMode; onChange: (m
     })}
   </ScrollView>;
 }
-export function Segmented<T extends string>({ values, value, onChange }: { values: readonly T[]; value: T; onChange: (value: T) => void }) {
-  return <View style={c.segment}>{values.map((item) => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: item === value }} onPress={() => onChange(item)} style={[c.segmentItem, item === value && c.segmentOn]}>
-    <Text style={[c.segmentText, item === value && c.segmentTextOn]}>{item}</Text>
-  </Pressable>)}</View>;
-}
 /** Quiet one-line status used inside sheets instead of large warning boxes. */
 export function StatusLine({ children }: { children: ReactNode }) {
   return <View style={c.status}><View style={c.statusDot} /><Text style={c.statusText}>{children}</Text></View>;
@@ -208,31 +250,76 @@ export function Stat({ value, label }: { value: string; label: string }) {
 export type SearchTarget = 'from' | 'to' | 'place' | 'restroom';
 const SEARCH_TITLE: Record<SearchTarget, string> = { place: '장소 검색', from: '출발지 검색', to: '목적지 검색', restroom: '화장실 찾기 · 출발 위치' };
 /**
- * Search sheet. With a query: a flat filtered list. Without one: a drill-down list
- * (building → floor → facilities such as restrooms, classrooms and entrances).
+ * Half-screen search sheet: the map stays visible above it. With a query: a flat filtered list. Without one: a drill-down
+ * list (building → floor → facilities such as restrooms, classrooms and entrances). Drag the handle between the default
+ * (about half) and expanded heights; dragging it all the way down, ←, ⌄ and the hardware back key end the search.
+ * Opening a building in the list calls `onBuilding` so the map can move there while the sheet stays open.
  */
-export function PlaceSearch({ target, query, onQuery, results, places, buildings, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy }: {
+export function PlaceSearch({ target, query, onQuery, results: allResults, places: allPlaces, buildings, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy, restroomGender = 'any', onRestroomGender, areaHeight = 720, onBuilding }: {
   target: SearchTarget | null; query: string; onQuery: (value: string) => void; results: readonly CampusPlace[]; detail: (place: CampusPlace) => string;
   places: readonly CampusPlace[]; buildings: readonly CampusBuilding[];
   emptyMessage: string; demoNotice: boolean; maxWidth: number; padding: number; busy: boolean;
   onClose: () => void; onChoose: (place: CampusPlace) => void; onCurrent: (() => void) | null; onMapPick: () => void;
+  /** 화장실 찾기(target 'restroom')의 전체/남자/여자. 그 목록의 화장실만 거른다(출발·도착 검색은 줄이지 않는다). */
+  restroomGender?: RestroomWanted; onRestroomGender?: (value: RestroomWanted) => void;
+  /** 지도 화면(탭 바 제외) 높이. 시트 높이의 기준. */
+  areaHeight?: number;
+  /** 건물·층 목록에서 건물을 열었을 때(지도를 그 건물로 옮긴다). */
+  onBuilding?: (buildingId: string) => void;
 }) {
   const word = target === 'to' ? '도착' : '출발';
   const [path, setPath] = useState<TreePath>(TREE_ROOT);
   useEffect(() => setPath(TREE_ROOT), [target]);
   const browsing = query.trim() === '';
-  return <Modal visible={target !== null} animationType="slide" onRequestClose={onClose}><SafeAreaView style={{ flex: 1, backgroundColor: t.color.surface }}>
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, width: '100%', maxWidth, alignSelf: 'center', paddingHorizontal: padding, paddingTop: 8, gap: 12 }}>
+  const gendered = target === 'restroom' && restroomGender !== 'any';
+  const places = useMemo(() => (gendered ? restroomCandidates(allPlaces, restroomGender) : allPlaces), [gendered, allPlaces, restroomGender]);
+  const results = useMemo(() => (gendered ? restroomCandidates(allResults, restroomGender) : allResults), [gendered, allResults, restroomGender]);
+  const heights = useMemo(() => searchSheetHeights(areaHeight), [areaHeight]);
+  const [snap, setSnap] = useState<SheetSnap>('default');
+  const height = useRef(new Animated.Value(heights.default)).current;
+  const state = useRef({ snap, heights, onClose });
+  state.current = { snap, heights, onClose };
+  const go = (next: SheetSnap) => {
+    if (next === 'collapsed') { state.current.onClose(); return; }
+    setSnap(next);
+    Animated.spring(height, { toValue: state.current.heights[next], useNativeDriver: false, bounciness: 0, speed: 18 }).start();
+  };
+  // A new search always opens at the default height; window or keyboard changes keep the current state.
+  useEffect(() => { if (target !== null) { setSnap('default'); height.setValue(state.current.heights.default); } }, [target, height]);
+  useEffect(() => { height.setValue(heights[state.current.snap]); }, [heights, height]);
+  const pan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 4,
+    onPanResponderMove: (_e, g) => height.setValue(dragHeight(state.current.snap, g.dy, state.current.heights)),
+    onPanResponderRelease: (_e, g) => {
+      const tap = Math.abs(g.dy) < SHEET_TAP_SLOP && Math.abs(g.dx) < SHEET_TAP_SLOP;
+      go(tap ? state.current.snap : releaseSnap(state.current.snap, g.dy, g.vy, state.current.heights));
+    },
+    onPanResponderTerminate: () => go(state.current.snap),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
+  const openPath = (next: TreePath) => {
+    setPath(next);
+    if (next.building !== null && next.building !== OUTDOOR_GROUP && next.building !== path.building) onBuilding?.(next.building);
+  };
+  if (target === null) return null;
+  return <Animated.View accessibilityLabel="장소 검색 시트" style={[c.sheet, { height }]}>
+    <View style={c.handleRow} {...pan.panHandlers}>
+      <View accessible accessibilityRole="adjustable" accessibilityLabel={`검색 시트 ${snap === 'expanded' ? '펼침' : '기본'}`} style={c.handleHit}><View style={c.handle} /></View>
+    </View>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, width: '100%', maxWidth, alignSelf: 'center', paddingHorizontal: padding, gap: 10 }}>
       <View style={c.searchHeader}>
-        <Pressable accessibilityRole="button" accessibilityLabel="닫기" onPress={onClose} style={c.iconButton}><BackIcon /></Pressable>
-        <Text accessibilityRole="header" style={c.searchTitle}>{target ? SEARCH_TITLE[target] : ''}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="검색 닫기" onPress={onClose} style={c.iconButton}><BackIcon /></Pressable>
+        <Text accessibilityRole="header" numberOfLines={1} style={c.searchTitle}>{SEARCH_TITLE[target]}</Text>
+        {snap !== 'expanded' && <Pressable accessibilityRole="button" accessibilityLabel="검색 크게 펼치기" onPress={() => go('expanded')} style={c.iconButton}><Chevron up /></Pressable>}
+        <Pressable accessibilityRole="button" accessibilityLabel={snap === 'expanded' ? '검색 시트 줄이기' : '검색 접기'} onPress={() => go(snap === 'expanded' ? 'default' : 'collapsed')} style={c.iconButton}><Chevron up={false} /></Pressable>
       </View>
       <View style={c.searchField}>
         <SearchIcon color={t.color.faint} />
         <TextInput autoFocus value={query} onChangeText={onQuery} placeholder={SEARCH_PLACEHOLDER} placeholderTextColor={t.color.faint} accessibilityLabel="장소 검색어" style={c.searchInput} autoCorrect={false} returnKeyType="search" />
         {query.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="검색어 지우기" onPress={() => onQuery('')} style={c.clear}><CloseIcon color="white" /></Pressable>}
       </View>
-      {target !== 'place' && target !== null && <View style={c.quickRow}>
+      {target !== 'place' && <View style={c.quickRow}>
         {onCurrent && <Pressable accessibilityRole="button" accessibilityLabel={`현재 위치를 ${word}지로`} disabled={busy} onPress={onCurrent} style={({ pressed }) => [c.quick, pressed && { backgroundColor: t.color.soft }]}>
           {busy ? <ActivityIndicator color={t.color.primary} /> : <LocateIcon color={t.color.primary} />}<Text style={c.quickText}>{busy ? '확인 중…' : '현재 위치'}</Text>
         </Pressable>}
@@ -240,18 +327,36 @@ export function PlaceSearch({ target, query, onQuery, results, places, buildings
           <View style={c.pinGlyph}><View style={c.pinGlyphDot} /></View><Text style={c.quickText}>지도에서 선택</Text>
         </Pressable>
       </View>}
+      {target === 'restroom' && <View style={{ gap: 6 }}>
+        <Text style={c.genderCaption}>찾을 화장실</Text>
+        <GenderChips value={restroomGender} onChange={(value) => onRestroomGender?.(value)} />
+      </View>}
       {demoNotice && <Notice>가상 시험 데이터입니다. 실제 장소가 아닙니다.</Notice>}
-      {browsing && places.length > 0
-        ? <PlaceTree places={places} buildings={buildings} path={path} onPath={setPath} onChoose={onChoose} detail={detail} />
-        : <FlatList data={results} keyboardShouldPersistTaps="handled" keyExtractor={(item) => item.id} ListEmptyComponent={<Empty message={emptyMessage} />}
-          renderItem={({ item }) => <PlaceRow place={item} detail={detail(item)} onPress={() => onChoose(item)} />} />}
+      {!browsing && places.length > 0 && <TextButton title="건물·층으로 찾아보기" onPress={() => onQuery('')} />}
+      <View style={{ flex: 1, minHeight: 0 }}>
+        {browsing && places.length > 0
+          ? <PlaceTree places={places} buildings={buildings} path={path} onPath={openPath} onChoose={onChoose} detail={detail} />
+          : <FlatList data={results} keyboardShouldPersistTaps="handled" keyExtractor={(item) => item.id} ListEmptyComponent={<Empty message={emptyMessage} />}
+            renderItem={({ item }) => <PlaceRow place={item} detail={detail(item)} onPress={() => onChoose(item)} />} />}
+      </View>
     </KeyboardAvoidingView>
-  </SafeAreaView></Modal>;
+  </Animated.View>;
+}
+/** 전체 / 남자 / 여자 (화장실 찾기). */
+export function GenderChips({ value, onChange }: { value: RestroomWanted; onChange: (value: RestroomWanted) => void }) {
+  return <View accessibilityRole="radiogroup" accessibilityLabel="화장실 성별" style={c.segment}>{RESTROOM_WANTED.map((item) => {
+    const on = item.value === value;
+    return <Pressable key={item.value} accessibilityRole="radio" accessibilityLabel={`${item.label} 화장실`} accessibilityState={{ selected: on, checked: on }} onPress={() => onChange(item.value)} style={[c.segmentItem, { flex: 1 }, on && c.segmentOn]}>
+      <Text style={[c.segmentText, on && c.segmentTextOn]}>{item.label}</Text>
+    </Pressable>;
+  })}</View>;
 }
 function PlaceRow({ place, detail, onPress }: { place: CampusPlace; detail: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [c.result, pressed && { backgroundColor: t.color.sunken }]}>
+  // 화장실은 성별 라벨을 함께 보인다(같은 건물의 남/여 화장실이 같은 이름일 수 있다).
+  const line = place.nodeType === 'restroom' ? `${genderLabel(place)} · ${detail}` : detail;
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${place.name}, ${line}`} onPress={onPress} style={({ pressed }) => [c.result, pressed && { backgroundColor: t.color.sunken }]}>
     <View style={c.resultPin}><View style={c.resultPinDot} /></View>
-    <View style={{ flex: 1, gap: 2 }}><Text style={c.resultName}>{place.name}</Text><Text style={c.resultDetail}>{detail}</Text></View>
+    <View style={{ flex: 1, gap: 2 }}><Text style={c.resultName}>{place.name}</Text><Text style={c.resultDetail}>{line}</Text></View>
   </Pressable>;
 }
 function TreeRow({ title, detail, onPress, label }: { title: string; detail: string; onPress: () => void; label?: string }) {
@@ -267,7 +372,8 @@ export function PlaceTree({ places, buildings, path, onPath, onChoose, detail }:
 }) {
   const building = path.building === OUTDOOR_GROUP ? { name: '야외 장소' } : buildings.find((b) => b.id === path.building);
   const atFacilities = path.building !== null && (path.building === OUTDOOR_GROUP || path.level !== null);
-  const crumb = path.building === null ? '건물을 골라 주세요' : atFacilities && path.level !== null ? `${building?.name ?? ''} · ${floorText(path.level)}` : building?.name ?? '';
+  const levelText = (level: number) => (level === UNKNOWN_LEVEL ? '층 미확인' : floorText(level));
+  const crumb = path.building === null ? '건물을 골라 주세요' : atFacilities && path.level !== null ? `${building?.name ?? ''} · ${levelText(path.level)}` : building?.name ?? '';
   return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
     <View style={c.treeHeader}>
       {path.building !== null && <Pressable accessibilityRole="button" accessibilityLabel="위 단계로" onPress={() => onPath(treeUp(path))} style={c.iconButton}><BackIcon color={t.color.muted} /></Pressable>}
@@ -287,6 +393,21 @@ export function PlaceTree({ places, buildings, path, onPath, onChoose, detail }:
 const c = StyleSheet.create({
   dot: { width: 12, height: 12, borderRadius: 6, borderWidth: 3.5, backgroundColor: 'white' },
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: t.color.surface, alignItems: 'center', justifyContent: 'center', ...floating },
+  roundOn: { backgroundColor: t.color.primary },
+  selectionPill: { gap: 12, paddingLeft: 14 },
+  selectionMark: { width: 26, height: 26, borderRadius: 13, backgroundColor: t.color.soft, alignItems: 'center', justifyContent: 'center' },
+  selectionMarkDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 2.5, borderColor: t.color.primary, backgroundColor: t.color.surface },
+  selectionName: { fontSize: t.type.body, fontWeight: '800', color: t.color.text },
+  selectionDetail: { fontSize: t.type.micro, color: t.color.muted },
+  floorCard: { alignSelf: 'stretch', backgroundColor: t.color.surface, borderRadius: t.radii.card + 4, paddingHorizontal: t.space.md, paddingTop: t.space.sm + 4, paddingBottom: t.space.xs, gap: t.space.sm + 2, borderWidth: 1, borderColor: t.color.border, ...floating },
+  floorHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  floorBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: t.color.soft, alignItems: 'center', justifyContent: 'center' },
+  floorTitle: { fontSize: t.type.heading, fontWeight: '800', color: t.color.text, letterSpacing: -0.2 },
+  floorDetail: { fontSize: t.type.micro, color: t.color.muted },
+  floorChips: { flexDirection: 'row', flexWrap: 'wrap', gap: t.space.sm },
+  floorChip: { minWidth: 52, minHeight: 44, paddingHorizontal: 12, borderRadius: t.radii.button, borderWidth: 1, borderColor: t.color.border, alignItems: 'center', justifyContent: 'center', backgroundColor: t.color.surface },
+  floorChipOn: { backgroundColor: t.color.primary, borderColor: t.color.primary },
+  floorChipText: { fontSize: 14, fontWeight: '800', color: t.color.text }, floorChipTextOn: { color: t.color.surface },
   searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   searchPill: { flex: 1, minWidth: 0, minHeight: 52, borderRadius: 26, backgroundColor: t.color.surface, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, ...floating },
   searchText: { flex: 1, fontSize: t.type.body, color: t.color.faint, fontWeight: '500' },
@@ -327,6 +448,7 @@ const c = StyleSheet.create({
   mode: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 20, backgroundColor: t.color.sunken, borderWidth: 1, borderColor: t.color.border },
   modeOn: { backgroundColor: t.color.primary, borderColor: t.color.primary },
   modeText: { fontSize: 14, fontWeight: '600', color: t.color.text }, modeTextOn: { color: 'white', fontWeight: '800' },
+  genderCaption: { fontSize: 13, fontWeight: '800', color: t.color.muted },
   segment: { flexDirection: 'row', backgroundColor: '#EDF0F5', borderRadius: 12, padding: 3 },
   segmentItem: { minHeight: 38, minWidth: 54, paddingHorizontal: 12, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   segmentOn: { backgroundColor: t.color.surface, shadowColor: '#0B1F3A', shadowOpacity: 0.1, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
@@ -338,7 +460,7 @@ const c = StyleSheet.create({
   textButtonText: { fontSize: 14, fontWeight: '700', color: t.color.primary },
   stat: { gap: 2 }, statValue: { fontSize: 15, fontWeight: '800', color: t.color.text }, statLabel: { fontSize: t.type.micro, color: t.color.muted },
   searchHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  searchTitle: { fontSize: 18, fontWeight: '800', color: t.color.text },
+  searchTitle: { flex: 1, fontSize: 18, fontWeight: '800', color: t.color.text },
   searchField: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 52, borderRadius: 14, backgroundColor: '#EDF0F5', paddingHorizontal: 14 },
   searchInput: { flex: 1, minWidth: 0, minHeight: 48, fontSize: 16, color: t.color.text },
   clear: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#B5C0CE', alignItems: 'center', justifyContent: 'center', transform: [{ scale: 0.8 }] },

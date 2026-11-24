@@ -96,6 +96,7 @@ export function loadBundledCampus(bundle: BundledCampus, options: { now?: Date }
     };
     const roomRef = classroomRefOf(node);
     if (roomRef !== null) place.roomRef = roomRef;
+    if (props.node_type === 'restroom' && props.restroom_gender !== undefined && props.restroom_gender !== null) place.restroomGender = props.restroom_gender;
     places.push(place);
   }
   places.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1));

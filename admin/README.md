@@ -43,6 +43,29 @@ npm run dev        # http://localhost:5174 이 자동으로 열림. 끄려면 �
 
 `npm test`(값 변환 테스트), `npm run typecheck`, `npm run build`(배포용 `dist/` 생성).
 
+## 배포 (팀이 쓰는 주소)
+
+https://campo-admin.pages.dev — Cloudflare Pages(Direct Upload). 빌드한 `dist/`를 대시보드에 올리는 방식이라 **push·병합해도 자동으로 바뀌지 않는다.**
+
+갱신 순서:
+1. 최신 코드에서 `npm run build` (`.env.local`의 URL·공개 키가 `dist/`에 들어간다. 비밀 키는 넣지 않는다)
+2. Cloudflare → Workers & Pages → `campo-admin` → Create deployment → `dist` 폴더 업로드
+
+Direct Upload 프로젝트는 나중에 Git 연결로 바꿀 수 없다. 자동 배포가 필요하면 새 Pages 프로젝트를 만들어 저장소를 연결한다(저장소 주인 권한 필요).
+
+## 관리자 계정
+
+- Supabase **Authentication → Users → Add user**(Auto Confirm User 체크)로 만들고, SQL Editor에서 `profiles`에 `admin`으로 넣는다.
+  ```sql
+  insert into public.profiles (id, role)
+  select id, 'admin' from auth.users
+  where lower(email) = lower('이메일')
+  on conflict (id) do update set role = 'admin';
+  ```
+  SQL Editor는 한 행도 안 들어가도 `Success`를 보여 주므로, `select u.email, p.role from auth.users u left join public.profiles p on p.id = u.id;`로 `admin`인지 확인한다.
+- 팀은 공용 관리자 계정 하나를 쓴다. 계정 정보는 저장소에 적지 않는다(D에게 문의).
+- Supabase 공개 가입(Allow new users to sign up)은 끈다. 관리자 계정은 위 방법으로만 만든다.
+
 ## 지금 범위에 없는 것
 
-배포(다른 사람이 주소로 접속), 지점 id 검색 선택, 사진 관리. 지금은 이 노트북에서만 열린다.
+지점 id 검색 선택, 사진 관리.

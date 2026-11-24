@@ -7,6 +7,7 @@ import { OSM_ATTRIBUTION, OSM_RASTER_STYLE } from '../../map/style.ts';
 import { CAMPUS_MAX_BOUNDS, CAMPUS_MAX_ZOOM, CAMPUS_MIN_ZOOM } from '../../map/campusCamera.ts';
 import { routeBounds, routeLine } from './model.ts';
 import { floorLines } from './indoor.ts';
+import { outdoorLines, outdoorPlazas } from './outdoor.ts';
 import { Image } from 'expo-image';
 import type { MapProps, RoadviewPreview } from './mapTypes.ts';
 import { buildMarkers, DECLUTTER_THROTTLE_MS, DeclutterScheduler, floorFacilityNodes, labelLift, MARKER_KIND_LABEL, type MapMarker, type MapView, type PlacedMarker } from './mapLabels.ts';
@@ -33,6 +34,8 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
   const [failed, setFailed] = useState(false);
   const line = useMemo(() => routeLine(route?.polyline ?? []), [route]);
   const indoor = useMemo(() => floorLines(graph, buildingId, level, route), [graph, buildingId, level, route]);
+  const wayAreas = useMemo(() => outdoorPlazas(graph), [graph]);
+  const wayLines = useMemo(() => outdoorLines(graph), [graph]);
   const spotData: FeatureCollection<Point> = useMemo(() => ({ type: 'FeatureCollection', features: photoSpots.map((spot, i) => ({ type: 'Feature', properties: { i, count: spot.count }, geometry: { type: 'Point', coordinates: spot.lngLat } })) }), [photoSpots]);
   const groupData: FeatureCollection<Point> = useMemo(() => ({ type: 'FeatureCollection', features: stepGroups.map((group, i) => ({ type: 'Feature', properties: { i, twice: group.entries.length > 1 }, geometry: { type: 'Point', coordinates: group.lngLat } })) }), [stepGroups]);
   const dots: FeatureCollection<Point> = useMemo(() => ({ type: 'FeatureCollection', features: places.map((place) => ({ type: 'Feature', properties: { id: place.id }, geometry: { type: 'Point', coordinates: [place.lng, place.lat] } })) }), [places]);
@@ -94,6 +97,16 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
       onDidFinishLoadingMap={() => { setLoaded(true); setFailed(false); }} onDidFailLoadingMap={() => setFailed(true)}>
       <Camera ref={camera} initialViewState={{ center: [center.lng, center.lat], zoom: 16 }}
         maxBounds={CAMPUS_MAX_BOUNDS} minZoom={CAMPUS_MIN_ZOOM} maxZoom={CAMPUS_MAX_ZOOM} />
+      {buildingId === null && <GeoJSONSource id="app-outdoor-plazas" data={wayAreas}>
+        <Layer id="app-outdoor-plaza-fill" type="fill" paint={{ 'fill-color': '#E2E6EB', 'fill-opacity': 1 }} />
+        <Layer id="app-outdoor-plaza-line" type="line" paint={{ 'line-color': '#CFD6DF', 'line-width': 0.8 }} layout={{ 'line-join': 'round' }} />
+      </GeoJSONSource>}
+      {buildingId === null && <GeoJSONSource id="app-outdoor-ways" data={wayLines}>
+        <Layer id="app-outdoor-way-walk" type="line" filter={['==', ['get', 'kind'], 'walk']} paint={{ 'line-color': '#DCE1E7', 'line-width': WAY_WIDTH }} layout={{ 'line-cap': 'round', 'line-join': 'round' }} />
+        <Layer id="app-outdoor-way-ramp" type="line" filter={['==', ['get', 'kind'], 'ramp']} paint={{ 'line-color': '#C7DDD1', 'line-width': WAY_WIDTH }} layout={{ 'line-cap': 'round', 'line-join': 'round' }} />
+        <Layer id="app-outdoor-way-stairs" type="line" filter={['==', ['get', 'kind'], 'stairs']} paint={{ 'line-color': '#E1D0BA', 'line-width': WAY_WIDTH }} layout={{ 'line-cap': 'round', 'line-join': 'round' }} />
+        <Layer id="app-outdoor-way-stairs-ticks" type="line" filter={['==', ['get', 'kind'], 'stairs']} paint={{ 'line-color': '#B89E7E', 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 1, 19, 2.2], 'line-dasharray': [1.2, 1.8] }} layout={{ 'line-join': 'round' }} />
+      </GeoJSONSource>}
       {shapes.features.length > 0 && <GeoJSONSource id="app-mapped-buildings" data={shapes} hitbox={HITBOX} onPress={(event) => {
         const id = event.nativeEvent.features[0]?.properties?.['id'];
         if (typeof id === 'string' && onBuildingPress) { event.stopPropagation(); onBuildingPress(id); }
@@ -147,6 +160,11 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
   </View>;
 }
 const DEFAULT_PADDING = { top: 40, bottom: 40, left: 35, right: 35 };
+/** Way thickness: grows with zoom and follows width_m (about 2 m = 1x, clamped 0.7x–1.8x). The way itself is thick; no heavy casing. */
+const WAY_WIDTH = ['*',
+  ['interpolate', ['linear'], ['zoom'], 14, 1.4, 16, 2.6, 17, 3.6, 18, 5.2, 19, 7.5, 20, 11],
+  ['max', 0.7, ['min', 1.8, ['/', ['get', 'width'], 2]]],
+] as never;
 const HITBOX = { top: 16, right: 16, bottom: 16, left: 16 };
 
 /**

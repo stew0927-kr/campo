@@ -136,6 +136,8 @@ interface DbError {
 export function koreanError(e: DbError | null | undefined): string {
   if (!e) return '알 수 없는 오류가 났습니다.';
   const msg = e.message ?? '';
+  // Messages written in Korean by our own SQL (save_campus_map in 0006): show them as they are.
+  if (e.code === 'PT409' || e.code === '22023') return msg;
   if (e.code === '42501' || /row-level security|permission denied/i.test(msg)) return '권한이 없습니다. 관리자 계정으로 로그인했는지 확인해 주세요.';
   if (e.code === '23514') return `입력값이 규칙에 맞지 않습니다(예: 끝나는 시각이 시작보다 빠름). ${msg}`;
   if (e.code === '23505') return '이미 같은 값이 있습니다(예: 같은 축제에 같은 날짜, 같은 이름의 계열).';

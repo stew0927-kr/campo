@@ -7,7 +7,12 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "icon": "./assets/icon.png",
     "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0E4A84"
+      },
       "package": "kr.hanyang.campo",
       "versionCode": 1,
       "edgeToEdgeEnabled": true,
@@ -15,6 +20,12 @@
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
+      ],
+      "blockedPermissions": [
+        "android.permission.ACTIVITY_RECOGNITION",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
     "ios": {
@@ -35,7 +46,16 @@
           "motionPermission": "건물 안에서 몇 층에 계신지 기압으로 판단해 길을 안내하기 위해 기압 센서를 사용합니다. 기압 값은 두 지점 사이의 높이 차로만 쓰고 저장하지 않습니다."
         }
       ],
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0E4A84"
+        }
+      ]
     ]
   }
 }

@@ -7,11 +7,11 @@ import type { ContentData } from '../content/types.ts';
 import { ESSAY_NOTICE } from '../content/mock.ts';
 import { essayDestination } from '../content/destinations.ts';
 import { DestinationActions } from '../content/DestinationActions.tsx';
-import { useAppState } from '../../state/AppState.tsx';
+import { useAppSelector } from '../../state/AppState.tsx';
 import { Body, Button, Card, Checklist, Chips, Empty, Heading, Notice, Page, s } from '../../ui/kit.tsx';
 import { checkInTimeline } from './time.ts';
 export function EssayScreen({ data, active = true, sourceMode = 'demo', sourceNotice = null, onReload }: { data: ContentData; active?: boolean } & SourceProps) {
-  const { state } = useAppState();
+  const lastEstimate = useAppSelector((s) => s.lastEstimate);
   const dates = [...new Set(data.essays.map((row) => row.examDate))].sort();
   const [date, setDate] = useState(dates[0] ?? '2026-11-28');
   const [query, setQuery] = useState('');
@@ -20,7 +20,7 @@ export function EssayScreen({ data, active = true, sourceMode = 'demo', sourceNo
   const currentDate = dates.includes(date) ? date : dates[0] ?? date;
   const items = selectEssays(data, currentDate, query);
   useScreenBack(active && selectedId !== null, useCallback(() => setSelectedId(null), []));
-  const travel = selected?.destinationNodeId && state.lastEstimate?.nodeId === selected.destinationNodeId ? state.lastEstimate.timeSec : null;
+  const travel = selected?.destinationNodeId && lastEstimate?.nodeId === selected.destinationNodeId ? lastEstimate.timeSec : null;
   return <Page resetKey={`${active}:${selectedId}`} title="논술 안내" subtitle={sourceMode === 'demo' ? '2027학년도 · 2026년 11월 28~29일 시연' : data.essays[0]?.seasonLabel ?? '공개 논술 일정'}>
     <SourceNotice sourceMode={sourceMode} sourceNotice={sourceNotice} onReload={onReload} demoText={ESSAY_NOTICE} />
     {selected ? <>

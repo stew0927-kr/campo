@@ -71,7 +71,9 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
       onClose: () => undefined, onChoose: () => undefined, onCurrent: null, onMapPick: () => undefined };
     expect(render(createElement(PlaceSearch, { ...base, target: null }))).toBe('');
     const sheet = render(createElement(PlaceSearch, { ...base, target: 'to', areaHeight: 700 }));
-    for (const label of ['목적지 검색', 'data-label="검색 닫기"', 'data-label="검색 접기"', 'data-label="검색 크게 펼치기"', '지도에서 선택']) expect(sheet).toContain(label);
+    for (const label of ['data-label="검색 닫기"', 'placeholder="건물 이름, 동 번호, 강의실 검색"', '지도에서 선택']) expect(sheet).toContain(label);
+    // Compact sheet: no title row and no ^/v buttons (the drag handle and ← cover them).
+    for (const label of ['목적지 검색', 'data-label="검색 접기"', 'data-label="검색 크게 펼치기"']) expect(sheet).not.toContain(label);
     const bar = render(createElement(SelectionBar, { name: '303호 강의실', detail: '공업센터 · 3층', onBack: () => undefined, onSearch: () => undefined }));
     expect(bar).toContain('data-label="선택 취소"'); expect(bar).toContain('303호 강의실');
     const floors = render(createElement(FloorPicker, { name: '공업센터', detail: '8개 층', levels: [-1, 1, 3], current: 3, onLevel: () => undefined, onClose: () => undefined }));
@@ -86,7 +88,7 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
     const search = (query: string, target: 'place' | 'restroom' = 'place') => render(createElement(PlaceSearch, { ...common, target, query, onQuery: () => undefined, results: rt.places.filter((p) => p.name.includes(query)),
       emptyMessage: '없음', demoNotice: false, maxWidth: 600, padding: 16, busy: false, onClose: () => undefined, onCurrent: () => undefined, onMapPick: () => undefined }));
     const root = search('');
-    expect(root).toContain('건물을 골라 주세요'); expect(root).toContain('가상 공학관'); expect(root).toContain('야외 장소'); expect(root).not.toContain('가상 201호 강의실');
+    expect(root).not.toContain('건물을 골라 주세요'); expect(root).toContain('data-label="건물 목록"'); expect(root).toContain('가상 공학관'); expect(root).toContain('야외 장소'); expect(root).not.toContain('가상 201호 강의실');
     const restroom = search('', 'restroom');
     expect(restroom).toContain('화장실 찾기 · 출발 위치'); expect(restroom).toContain('현재 위치'); expect(restroom).toContain('지도에서 선택');
     expect(search('201')).toContain('가상 201호 강의실');

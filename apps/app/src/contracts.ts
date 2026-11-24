@@ -45,6 +45,13 @@ export interface SlopeWarning {
   gradeClass: 'caution' | 'steep';
   /** 예: "경사 12% 급경사 (오르막) · 경사가 급한 길입니다". 화면에 그대로 쓴다. */
   message: string;
+  /**
+   * 이 구간이 `CampusRouteView.polyline`에서 차지하는 자리 [시작 index, 끝 index](양 끝 포함).
+   * 경로선에서 이 구간을 찾지 못하면 없다. 이어지는 구간은 앞 구간의 끝 index가 다음 구간의 시작 index와 같다.
+   */
+  polylineRange?: [number, number];
+  /** 경로선에서 잘라 낸 이 구간의 좌표([경도, 위도], 진행 방향). 지도에서 구간을 강조하거나 카메라를 옮길 때 쓴다. */
+  coordinates?: [number, number][];
 }
 
 /** 화면에 그릴 수 있는 완성된 경로. 코어 Route를 화면이 쓰기 좋은 모양으로 감싼 것이다. */

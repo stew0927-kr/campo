@@ -276,7 +276,8 @@ try {
     await button(p, '개발 데이터').click(); await button(p, '정문 → 가상 408호 선택').click();
     await button(p, '엘리베이터 우선').click(); await button(p, '길찾기').click();
     await text(p, '검사 경로 좌표').waitFor(); await text(p, '층 (엘리베이터)').waitFor();
-    await button(p, '실외 지도로 나가기').click(); await text(p, '실외 지도').waitFor();
+    // Route planning stays on the outdoor map even when the end is a room (the building is opened by the user).
+    await text(p, '실외 지도').waitFor(); assert.equal(await button(p, '실외 지도로 나가기').count(), 0);
     assert.equal(await p.getByRole('switch', { name: '건물에서 층 고르기' }).getAttribute('aria-checked'), 'false');
     await button(p, '건물 목록').click(); await button(p, /^A동, 4개 층/).click();
     await button(p, 'A동 4층').click(); await text(p, 'A동 · 4층').waitFor(); await text(p, '검사 실내: bldg_A 4층').waitFor();

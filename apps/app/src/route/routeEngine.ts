@@ -61,8 +61,20 @@ function endOf(runtime: CampusRuntime, endpoint: RouteEndpoint, profile: Profile
   return { end: { snap }, snapM: snap.distanceM };
 }
 
-function polylineOf(runtime: CampusRuntime, route: PointRoute): RoutePoint[] {
+/**
+ * 경로선 위의 한 구간: 두 캠퍼스 지점 사이, 또는 지도에서 고른 점의 발(foot)과 지점 사이(null = 발).
+ * start/end는 polyline의 index(양 끝 포함).
+ */
+interface PolylineLeg {
+  from: string | null;
+  to: string | null;
+  start: number;
+  end: number;
+}
+
+function polylineOf(runtime: CampusRuntime, route: PointRoute): { points: RoutePoint[]; legs: PolylineLeg[] } {
   const points: RoutePoint[] = [];
+  const nodeIndex: (number | undefined)[] = [];
   const push = (position: Position): void => {
     points.push({ lat: position[1], lng: position[0] });
   };
@@ -73,6 +85,7 @@ function polylineOf(runtime: CampusRuntime, route: PointRoute): RoutePoint[] {
   route.nodes.forEach((id, i) => {
     const node = runtime.graph.nodes.get(id);
     if (node !== undefined) push(node.geometry.coordinates as Position);
+    nodeIndex.push(node !== undefined ? points.length - 1 : undefined);
     const via = vias[next];
     if (via !== undefined && via.fromNodeId === id && via.toNodeId === route.nodes[i + 1]) {
       for (const p of via.line.slice(1, -1)) push(p);
@@ -80,10 +93,29 @@ function polylineOf(runtime: CampusRuntime, route: PointRoute): RoutePoint[] {
     }
   });
   if (route.endFoot !== null) push(route.endFoot);
+  const legs = legsOf(route, nodeIndex, points.length - 1);
   // 출발과 도착이 같은 자리면 점이 하나뿐이다. 한 점짜리 LineString은 지도에 그릴 수 없으므로 같은 점을 한 번 더 둔다.
   const only = points.length === 1 ? points[0] : undefined;
   if (only !== undefined) points.push({ lat: only.lat, lng: only.lng });
-  return points;
+  return { points, legs };
+}
+
+/** 경로선을 진행 순서대로 구간(발 → 첫 지점, 지점 → 지점, 마지막 지점 → 발)으로 나눈다. 좌표를 찾지 못한 지점 옆 구간은 뺀다. */
+function legsOf(route: PointRoute, nodeIndex: readonly (number | undefined)[], last: number): PolylineLeg[] {
+  const legs: PolylineLeg[] = [];
+  const add = (from: string | null, to: string | null, start: number | undefined, end: number | undefined): void => {
+    if (start !== undefined && end !== undefined && start <= end) legs.push({ from, to, start, end });
+  };
+  const ids = route.nodes;
+  if (ids.length === 0) {
+    // 한 구간 위에서 발에서 발로 바로 걷는 경로.
+    if (route.startFoot !== null && route.endFoot !== null) add(null, null, 0, last);
+    return legs;
+  }
+  if (route.startFoot !== null) add(null, ids[0]!, 0, nodeIndex[0]);
+  for (let i = 0; i + 1 < ids.length; i++) add(ids[i]!, ids[i + 1]!, nodeIndex[i], nodeIndex[i + 1]);
+  if (route.endFoot !== null) add(ids[ids.length - 1]!, null, nodeIndex[ids.length - 1], last);
+  return legs;
 }
 
 /** 계단·에스컬레이터·엘리베이터 단계 중 층이 실제로 바뀌는 곳만. 층 번호는 표시에만 쓴다(길찾기는 비교하지 않는다). */
@@ -103,8 +135,31 @@ function floorChangesOf(steps: readonly RouteStep[]): FloorChange[] {
   return changes;
 }
 
-function slopeWarningsOf(segments: readonly SlopeSegment[]): SlopeWarning[] {
+/**
+ * 경사 구간마다 경로선에서 차지하는 자리를 찾는다. 경사 구간과 경로선 구간은 둘 다 진행 순서이므로 앞에서부터 차례로 맞춘다.
+ * 지점과 지점 사이는 두 id가 같아야 하고, 발 쪽 구간(null)은 그 쪽 id를 따지지 않는다.
+ */
+function placeSegments(segments: readonly SlopeSegment[], legs: readonly PolylineLeg[]): (PolylineLeg | null)[] {
+  let cursor = 0;
   return segments.map((segment) => {
+    for (let k = cursor; k < legs.length; k++) {
+      const leg = legs[k]!;
+      if ((leg.from === null || leg.from === segment.from) && (leg.to === null || leg.to === segment.to)) {
+        cursor = k + 1;
+        return leg;
+      }
+    }
+    return null;
+  });
+}
+
+function slopeWarningsOf(segments: readonly SlopeSegment[], points: readonly RoutePoint[], legs: readonly PolylineLeg[]): SlopeWarning[] {
+  const placed = placeSegments(segments, legs);
+  return segments.map((segment, i) => {
+    const leg = placed[i];
+    const place = leg
+      ? { polylineRange: [leg.start, leg.end] as [number, number], coordinates: points.slice(leg.start, leg.end + 1).map((p): [number, number] => [p.lng, p.lat]) }
+      : {};
     const where = segment.gradePct > 0 ? '오르막' : segment.gradePct < 0 ? '내리막' : '평지';
     const word = segment.gradeClass === 'steep' ? '급경사' : '경사';
     const tail = segment.gradeClass === 'steep' ? ` · ${STEEP_NOTE}` : '';
@@ -113,11 +168,13 @@ function slopeWarningsOf(segments: readonly SlopeSegment[]): SlopeWarning[] {
       gradePct: segment.gradePct,
       gradeClass: segment.gradeClass,
       message: `${word} ${Math.abs(segment.gradePct)}% (${where})${tail}`,
+      ...place,
     };
   });
 }
 
 function viewOf(runtime: CampusRuntime, route: PointRoute): CampusRouteView {
+  const line = polylineOf(runtime, route);
   const view: CampusRouteView = {
     profile: route.profile,
     usedProfile: route.fallback !== null ? 'fewest_steps' : route.profile,
@@ -127,9 +184,9 @@ function viewOf(runtime: CampusRuntime, route: PointRoute): CampusRouteView {
     escalatorCount: route.escalatorCount,
     steps: route.steps,
     floorChanges: floorChangesOf(route.steps),
-    slopeWarnings: slopeWarningsOf(route.slopeSegments),
+    slopeWarnings: slopeWarningsOf(route.slopeSegments, line.points, line.legs),
     fallbackMessage: route.fallback !== null ? route.fallback.message : null,
-    polyline: polylineOf(runtime, route),
+    polyline: line.points,
     nodeIds: [...route.nodes],
   };
   return view;

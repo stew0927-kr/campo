@@ -2,10 +2,10 @@ import { getBuildingOutlineForLevel } from '@campo/core';
 import { Camera, GeoJSONSource, Layer, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import type { FeatureCollection, Point } from 'geojson';
+import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import { OSM_ATTRIBUTION, OSM_RASTER_STYLE } from '../../map/style.ts';
 import { CAMPUS_MAX_BOUNDS, CAMPUS_MAX_ZOOM, CAMPUS_MIN_ZOOM } from '../../map/campusCamera.ts';
-import { routeBounds, routeLine } from './model.ts';
+import { compassState, coordinateBounds, outsideMask, routeBounds, routeConnectors, routeLine } from './model.ts';
 import { floorLines } from './indoor.ts';
 import { outdoorLines, outdoorPlazas } from './outdoor.ts';
 import { Image } from 'expo-image';
@@ -17,7 +17,7 @@ import { FacilityIcon, MapLabel } from './MapGlyphs.tsx';
 import { theme as t } from '../../ui/theme.ts';
 export function CampusMap({ center, label, route, from, to, places, graph, buildingId, level, position, flow, onPoint, onPlace, focus = null, selected = null, fitPadding = DEFAULT_PADDING,
   photoSpots = [], onPhotoSpot, stepGroups = [], onStepGroup, preview = null, onOpenPreview,
-  highlightBuildings = false, mappedBuildingIds = [], onBuildingPress, markedBuildingId = null }: MapProps) {
+  highlightBuildings = false, mappedBuildingIds = [], onBuildingPress, markedBuildingId = null, highlight = null }: MapProps) {
   const camera = useRef<CameraRef>(null);
   const [loaded, setLoaded] = useState(false);
   // Current viewport (center, zoom, bearing, size). Kept in a ref: a region event must not re-render the whole map;
@@ -33,6 +33,15 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
   const handlePlace = useCallback((place: CampusPlace) => onPlaceRef.current(place), []);
   const [failed, setFailed] = useState(false);
   const line = useMemo(() => routeLine(route?.polyline ?? []), [route]);
+  // Only a point picked on the map is snapped onto a way; a campus node is the line's own end.
+  const loose = (place: CampusPlace | null) => (place && (place.nodeType === 'point' || place.nodeType === 'gps') ? place : null);
+  const fromPoint = loose(from), toPoint = loose(to);
+  const connectors = useMemo(() => routeConnectors(route?.polyline ?? [], fromPoint, toPoint),
+    [route, fromPoint?.lng, fromPoint?.lat, toPoint?.lng, toPoint?.lat]);
+  const highlightLine: Feature<LineString> | null = useMemo(() => (highlight && highlight.coordinates.length >= 2
+    ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: highlight.coordinates } } : null), [highlight]);
+  // Compass needle state lives in its own component: a region event updates only the compass, not the whole map.
+  const compass = useRef<((bearing: number, pitch: number) => void) | null>(null);
   const indoor = useMemo(() => floorLines(graph, buildingId, level, route), [graph, buildingId, level, route]);
   const wayAreas = useMemo(() => outdoorPlazas(graph), [graph]);
   const wayLines = useMemo(() => outdoorLines(graph), [graph]);
@@ -49,8 +58,9 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
   // New markers or indoor/outdoor: lay out again now. setPlaced bails out when the scheduler returns the same array.
   useEffect(() => { setPlaced(scheduler.current!.setMarkers(markers, indoorView)); }, [markers, indoorView]);
   useEffect(() => () => { if (trailing.current) clearTimeout(trailing.current); }, []);
-  const regionView = (event: { nativeEvent: { center: [number, number] | number[]; zoom: number; bearing: number } }): MapView => {
-    const { center: [lng, lat], zoom: z, bearing } = event.nativeEvent;
+  const regionView = (event: { nativeEvent: { center: [number, number] | number[]; zoom: number; bearing: number; pitch?: number } }): MapView => {
+    const { center: [lng, lat], zoom: z, bearing, pitch = 0 } = event.nativeEvent;
+    compass.current?.(bearing, pitch);
     return (viewRef.current = { ...viewRef.current, lng: lng!, lat: lat!, zoom: z, bearing });
   };
   /**
@@ -86,8 +96,17 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
     // Only a new focus request moves the camera; zoom changes from the user must not.
     if (loaded && focus) camera.current?.easeTo({ center: [focus.lng, focus.lat], zoom: focus.zoom ?? Math.max(viewRef.current.zoom, 17), duration: 450 });
   }, [focus?.key, loaded]);
+  useEffect(() => {
+    // A newly highlighted route section (a slope card): fit it with room to spare around the overlays.
+    const bounds = highlight ? coordinateBounds(highlight.coordinates) : null;
+    if (loaded && bounds) camera.current?.fitBounds(bounds, { padding: { top: fitPadding.top + 24, bottom: fitPadding.bottom + 24, left: fitPadding.left + 24, right: fitPadding.right + 24 }, duration: 500 });
+  }, [highlight?.key, loaded]);
+  // easeTo needs a center: keep the current one (last region event) so only bearing and pitch change.
+  const northUp = useCallback(() => camera.current?.easeTo({ center: [viewRef.current.lng, viewRef.current.lat], bearing: 0, pitch: 0, duration: 400 }), []);
   const building = buildingId ? graph?.buildings.get(buildingId) : null;
   const outline = building ? { type: 'Feature' as const, properties: {}, geometry: { type: 'Polygon' as const, coordinates: getBuildingOutlineForLevel(building, level) } } : null;
+  // Indoors: veil everything outside this building, so it reads as the only place that can be picked now.
+  const mask = useMemo(() => (outline ? outsideMask(MASK_BOUNDS, outline.geometry.coordinates) : null), [building, level]);
   const color = flow === 'queue' ? '#BA6700' : flow === 'exit' ? '#596579' : '#1F5EFF';
   const visible = (place: MapProps['from']) => place && (buildingId === null || place.buildingId === buildingId && place.level === level);
   return <View accessibilityLabel={label} style={styles.frame} onLayout={(event) => { const { width, height } = event.nativeEvent.layout; onSettled((viewRef.current = { ...viewRef.current, width, height })); }}>
@@ -117,10 +136,18 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
       {marked.features.length > 0 && <GeoJSONSource id="app-marked-building" data={marked}>
         <Layer id="app-marked-building-line" type="line" paint={{ 'line-color': t.color.primary, 'line-width': 2, 'line-dasharray': [2, 1.5] }} />
       </GeoJSONSource>}
+      {mask && <GeoJSONSource id="app-indoor-mask" data={mask}><Layer id="app-indoor-mask-fill" type="fill" paint={{ 'fill-color': '#000000', 'fill-opacity': 0.35 }} /></GeoJSONSource>}
       {outline && <GeoJSONSource id="app-building-outline" data={outline}><Layer id="app-building-fill" type="fill" paint={{ 'fill-color': '#E4EAF1', 'fill-opacity': 0.85 }} /><Layer id="app-building-border" type="line" paint={{ 'line-color': '#63788D', 'line-width': 2 }} /></GeoJSONSource>}
+      {buildingId === null && connectors.features.length > 0 && <GeoJSONSource id="app-route-connectors" data={connectors}>
+        <Layer id="app-route-connector-line" type="line" paint={{ 'line-color': '#1F5EFF', 'line-width': 3, 'line-opacity': 0.65, 'line-dasharray': [1.5, 1.5] }} layout={{ 'line-cap': 'round', 'line-join': 'round' }} />
+      </GeoJSONSource>}
       {line && buildingId === null && <GeoJSONSource id="app-route" data={line}>
         <Layer id="app-route-outline" type="line" paint={{ 'line-color': '#FFFFFF', 'line-width': 9 }} layout={{ 'line-cap': 'round', 'line-join': 'round' }} />
         <Layer id="app-route-line" type="line" paint={{ 'line-color': color, 'line-width': 5 }} layout={{ 'line-cap': 'round', 'line-join': 'round' }} />
+      </GeoJSONSource>}
+      {highlightLine && buildingId === null && <GeoJSONSource id="app-route-highlight" data={highlightLine}>
+        <Layer id="app-route-highlight-outline" type="line" paint={{ 'line-color': '#FFFFFF', 'line-width': 11 }} layout={{ 'line-cap': 'round', 'line-join': 'round' }} />
+        <Layer id="app-route-highlight-line" type="line" paint={{ 'line-color': HIGHLIGHT_COLOR, 'line-width': 7 }} layout={{ 'line-cap': 'round', 'line-join': 'round' }} />
       </GeoJSONSource>}
       {buildingId !== null && <GeoJSONSource id="app-indoor" data={indoor}>
         <Layer id="app-floor-network" type="line" filter={['==', ['get', 'route'], false]} paint={{ 'line-color': '#708397', 'line-width': 3 }} />
@@ -157,9 +184,42 @@ export function CampusMap({ center, label, route, from, to, places, graph, build
     </Map>
     {failed && <Text accessibilityLiveRegion="polite" style={styles.error}>배경 지도를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요. 수동 길찾기는 계속 이용할 수 있습니다.</Text>}
     <Text pointerEvents="none" style={styles.attribution}>{OSM_ATTRIBUTION}</Text>
+    <CompassButton bind={compass} onPress={northUp} />
   </View>;
 }
+/** Steep-section highlight on the route (a slope card in the sheet). */
+export const HIGHLIGHT_COLOR = '#E68A00';
+/** The indoor veil covers the whole camera range (the camera cannot leave CAMPUS_MAX_BOUNDS), with a margin. */
+const MASK_BOUNDS: [number, number, number, number] = [CAMPUS_MAX_BOUNDS[0] - 0.05, CAMPUS_MAX_BOUNDS[1] - 0.05, CAMPUS_MAX_BOUNDS[2] + 0.05, CAMPUS_MAX_BOUNDS[3] + 0.05];
+const COMPASS = 44;
+
+/**
+ * Bottom-left compass above the attribution. The needle follows the map's bearing while it moves and at rest
+ * (`bind` receives every region event); tapping eases back to north-up and flat. North-up: quiet; rotated or tilted: accented.
+ */
+function CompassButton({ bind, onPress }: { bind: { current: ((bearing: number, pitch: number) => void) | null }; onPress: () => void }) {
+  const [state, setState] = useState(() => compassState(0));
+  useEffect(() => {
+    bind.current = (bearing, pitch) => {
+      const next = compassState(bearing, pitch);
+      // Whole degrees are enough for the needle; this keeps re-renders to visible changes.
+      setState((old) => (Math.round(old.rotation) === Math.round(next.rotation) && old.northUp === next.northUp ? old : next));
+    };
+    return () => { bind.current = null; };
+  }, [bind]);
+  const degrees = Math.round(Math.abs(state.rotation));
+  return <Pressable accessibilityRole="button" accessibilityLabel="나침반, 누르면 정북으로 정렬"
+    accessibilityValue={{ text: state.northUp ? '지금 북쪽이 위입니다' : `지도가 ${degrees}도 돌아가 있습니다` }}
+    hitSlop={4} onPress={onPress} style={({ pressed }) => [styles.compass, !state.northUp && styles.compassRotated, pressed && styles.compassPressed]}>
+    <View pointerEvents="none" style={[styles.needle, { transform: [{ rotate: `${state.rotation}deg` }] }]}>
+      <Text style={[styles.compassN, !state.northUp && { color: '#F2473F' }]}>N</Text>
+      <View style={styles.needleNorth} />
+      <View style={styles.needleSouth} />
+    </View>
+  </Pressable>;
+}
 const DEFAULT_PADDING = { top: 40, bottom: 40, left: 35, right: 35 };
+const ATTRIBUTION_BOTTOM = 22;
 /** Way thickness: grows with zoom and follows width_m (about 2 m = 1x, clamped 0.7x–1.8x). The way itself is thick; no heavy casing. */
 const WAY_WIDTH = ['*',
   ['interpolate', ['linear'], ['zoom'], 14, 1.4, 16, 2.6, 17, 3.6, 18, 5.2, 19, 7.5, 20, 11],
@@ -230,7 +290,7 @@ function PreviewBubble({ preview, onOpen }: { preview: RoadviewPreview; onOpen: 
 const styles = StyleSheet.create({
   frame: { flex: 1, backgroundColor: '#E8EEE9' }, map: { flex: 1 },
   // Bottom offsets leave room for the sheet that overlaps the map edge.
-  attribution: { position: 'absolute', bottom: 22, left: 8, fontSize: 10, color: '#142A44', backgroundColor: '#FFFFFFDD', paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4 },
+  attribution: { position: 'absolute', bottom: ATTRIBUTION_BOTTOM, left: 8, fontSize: 10, color: '#142A44', backgroundColor: '#FFFFFFDD', paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4 },
   dot: { width: DOT, height: DOT, borderRadius: DOT / 2, borderWidth: 2.5, borderColor: 'white', elevation: 5, shadowColor: '#0B1F3A', shadowOpacity: 0.3, shadowRadius: 2, shadowOffset: { width: 0, height: 1 } },
   pinLabel: { alignItems: 'center' },
   badge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1.5, borderColor: 'white', elevation: 4 },
@@ -249,5 +309,13 @@ const styles = StyleSheet.create({
   selectedPin: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#142A44', borderWidth: 3, borderColor: 'white', alignItems: 'center', justifyContent: 'center', elevation: 4 },
   selectedDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'white' },
   current: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#1F5EFF', borderWidth: 4, borderColor: 'white', elevation: 4 },
-  error: { position: 'absolute', bottom: 48, left: 12, right: 72, padding: 10, backgroundColor: '#FFF5DF', color: '#8A5200', borderRadius: 10, fontSize: 13 },
+  // Clear of the compass at the bottom left.
+  compass: { position: 'absolute', left: 8, bottom: ATTRIBUTION_BOTTOM + 24, width: COMPASS, height: COMPASS, borderRadius: COMPASS / 2, backgroundColor: 'white', borderWidth: 1, borderColor: '#D5DCE5', alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#0B1F3A', shadowOpacity: 0.18, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+  compassRotated: { borderColor: '#1F5EFF', borderWidth: 2 },
+  compassPressed: { backgroundColor: '#EEF3FF' },
+  needle: { width: COMPASS - 8, height: COMPASS - 8, alignItems: 'center', justifyContent: 'center' },
+  compassN: { position: 'absolute', top: -1, fontSize: 9, fontWeight: '900', color: '#596579' },
+  needleNorth: { width: 0, height: 0, borderLeftWidth: 5, borderRightWidth: 5, borderBottomWidth: 12, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#F2473F' },
+  needleSouth: { width: 0, height: 0, borderLeftWidth: 5, borderRightWidth: 5, borderTopWidth: 12, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderTopColor: '#9AA6B5' },
+  error: { position: 'absolute', bottom: 48, left: 60, right: 72, padding: 10, backgroundColor: '#FFF5DF', color: '#8A5200', borderRadius: 10, fontSize: 13 },
 });

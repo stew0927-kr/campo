@@ -51,4 +51,6 @@ export interface MapProps {
   onBuildingPress?: (buildingId: string) => void;
   /** 검색에서 골라 카메라를 옮긴 건물: 은은한 점선 테두리로 문맥을 남긴다. */
   markedBuildingId?: string | null;
+  /** 경로의 한 구간(급경사 카드)을 주황 선으로 강조한다. `key`가 바뀌면 카메라가 그 구간으로 맞춰 이동한다. */
+  highlight?: { key: string; coordinates: [number, number][] } | null;
 }

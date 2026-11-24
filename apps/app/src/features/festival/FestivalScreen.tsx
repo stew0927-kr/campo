@@ -7,13 +7,13 @@ import type { ContentData, StallCategory } from '../content/types.ts';
 import { CONTENT_NOTICE } from '../content/mock.ts';
 import { stageDestination, stallDestination } from '../content/destinations.ts';
 import { DestinationActions } from '../content/DestinationActions.tsx';
-import { useAppState } from '../../state/AppState.tsx';
+import { useAppActions } from '../../state/AppState.tsx';
 import { Body, Button, Card, Chips, Empty, Heading, Notice, Page, s } from '../../ui/kit.tsx';
 import { BoothMap } from './BoothMap.tsx';
 import { flowDestination, hasFlowNodes, type StallFlow } from './flow.ts';
 const FLOW_LABEL: Record<StallFlow, string> = { enter: '입장 동선', queue: '대기 동선', exit: '퇴장 동선' };
 export function FestivalScreen({ data, active = true, sourceMode = 'demo', sourceNotice = null, onReload }: { data: ContentData; active?: boolean } & SourceProps) {
-  const { dispatch } = useAppState();
+  const { dispatch } = useAppActions();
   const festival = data.festivals[0];
   const days = data.days.filter((d) => d.festivalId === festival?.id).sort((a, b) => a.dayDate.localeCompare(b.dayDate));
   const [dayId, setDayId] = useState(days[0]?.id ?? '');

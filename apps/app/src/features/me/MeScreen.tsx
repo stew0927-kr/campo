@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Linking } from 'react-native';
 import * as Location from 'expo-location';
-import { useAppState } from '../../state/AppState.tsx';
+import { useAppActions, useAppSelector } from '../../state/AppState.tsx';
 import type { DefaultMode } from '../../state/model.ts';
 import { Body, Button, Card, Chips, Empty, Heading, Notice, Page } from '../../ui/kit.tsx';
 import { AppInfoScreen } from './AppInfoScreen.tsx';
@@ -11,7 +11,9 @@ const PROFILES: { mode: DefaultMode; title: string; description: string }[] = [
   { mode: 'wheelchair', title: '휠체어 보행', description: '계단을 지나지 않는 길만 안내합니다. 통행 가능한 경로가 없을 수 있으며 현장 확인이 필요합니다.' },
 ];
 export function MeScreen({ active = true, contentMode = 'demo' }: { active?: boolean; contentMode?: 'demo' | 'live' }) {
-  const { state, dispatch } = useAppState();
+  const { dispatch } = useAppActions();
+  const defaultMode = useAppSelector((s) => s.defaultMode);
+  const allFavorites = useAppSelector((s) => s.favorites);
   const [permission, setPermission] = useState('확인 중');
   const [message, setMessage] = useState<string | null>(null);
   const [category, setCategory] = useState('전체');
@@ -19,11 +21,11 @@ export function MeScreen({ active = true, contentMode = 'demo' }: { active?: boo
     if (alive) setPermission(result.granted ? '허용됨' : result.canAskAgain ? '미허용 · 지도에서 필요할 때 요청합니다' : '거절됨 · 기기 설정에서 변경할 수 있습니다');
   }, () => { if (alive) setPermission('이 환경에서는 확인할 수 없습니다'); }); return () => { alive = false; }; }, []);
   const kindLabel = (kind: string) => kind === 'place' ? '장소' : kind === 'stall' ? '부스' : kind === 'event' ? '행사' : '기타';
-  const favorites = state.favorites.filter((item) => category === '전체' || kindLabel(item.kind) === category);
+  const favorites = allFavorites.filter((item) => category === '전체' || kindLabel(item.kind) === category);
   return <Page resetKey={String(active)} title="내정보" subtitle="로그인 없이 보행 방식과 즐겨찾기를 관리합니다.">
     <Notice>설정·즐겨찾기는 앱을 실행한 동안만 기억합니다. 앱을 완전히 종료하면 초기화됩니다.</Notice>
     <Card><Heading>기본 이동 방식</Heading><Body>변경하면 지도 탭의 이동 방식에 바로 반영됩니다. 지도에서 다른 방식을 선택할 수도 있습니다.</Body>
-      {PROFILES.map((profile) => <Card key={profile.mode}><Heading>{state.defaultMode === profile.mode ? '✓ ' : ''}{profile.title}</Heading><Body>{profile.description}</Body><Button secondary disabled={state.defaultMode === profile.mode} title={state.defaultMode === profile.mode ? '현재 기본값입니다' : `${profile.title}을 기본으로 설정`} onPress={() => dispatch({ type: 'mode', mode: profile.mode })} /></Card>)}
+      {PROFILES.map((profile) => <Card key={profile.mode}><Heading>{defaultMode === profile.mode ? '✓ ' : ''}{profile.title}</Heading><Body>{profile.description}</Body><Button secondary disabled={defaultMode === profile.mode} title={defaultMode === profile.mode ? '현재 기본값입니다' : `${profile.title}을 기본으로 설정`} onPress={() => dispatch({ type: 'mode', mode: profile.mode })} /></Card>)}
     </Card>
     <Heading>즐겨찾기</Heading><Chips values={['전체', '장소', '부스', '행사', '기타']} value={category} onChange={setCategory} />
     {favorites.length === 0 && <Empty message="아직 담은 항목이 없습니다. 지도 장소나 부스·행사 상세에서 즐겨찾기를 추가해 주세요." />}

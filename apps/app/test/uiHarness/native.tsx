@@ -66,8 +66,15 @@ export function useWindowDimensions() {
 }
 export type Node = ReactNode;
 // Draggable sheet stand-ins: values are read once, gestures are not simulated.
-class AnimatedValue { constructor(public v: number) {} setValue(v: number) { this.v = v; } }
-const plain = (style: any): any => Array.isArray(style) ? style.map(plain) : style && typeof style === 'object' ? Object.fromEntries(Object.entries(style).map(([k, v]) => [k, v instanceof AnimatedValue ? v.v : v])) : style;
+class AnimatedValue {
+  constructor(public v: number) {}
+  setValue(v: number) { this.v = v; }
+  /** Only the degree mapping the compass uses ([-360, 360] → ['-360deg', '360deg']); read once like the value. */
+  interpolate(_config: { inputRange: number[]; outputRange: string[] }) { return new AnimatedDegrees(this); }
+}
+class AnimatedDegrees { constructor(public source: AnimatedValue) {} }
+const resolve = (v: any): any => v instanceof AnimatedValue ? v.v : v instanceof AnimatedDegrees ? `${v.source.v}deg` : Array.isArray(v) ? v.map(resolve) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, resolve(x)])) : v;
+const plain = (style: any): any => resolve(style);
 export const Animated = {
   View: (p: Props) => View({ ...p, style: plain(p.style) }),
   Value: AnimatedValue,

@@ -240,7 +240,7 @@ try {
     await button(p, '장소 검색 열기').click(); await searchSheet(p).getByRole('button', { name: /^A동,/ }).click();
     await text(p, '검사 카메라 이동 2회').waitFor(); await text(p, '검사 검색 건물: bldg_A').waitFor();
     assert.equal(await searchSheet(p).count(), 1); await searchSheet(p).getByRole('button', { name: /A동 4층/ }).click();
-    await button(p, '검색 접기').click(); await settle(p); assert.equal(await searchSheet(p).count(), 0);
+    await button(p, '검색 닫기').click(); await settle(p); assert.equal(await searchSheet(p).count(), 0);
     // Closed: the camera stays at the building (no reset), nothing is selected and the building keeps its mark.
     await text(p, '검사 카메라 이동 2회').waitFor(); assert.equal(await button(p, '선택 취소').count(), 0);
     await text(p, '검사 검색 건물: bldg_A').waitFor();
@@ -368,7 +368,7 @@ try {
     // Dropping the selection does not move the camera or leave the floor.
     await text(p, '검사 카메라 이동 1회').waitFor(); await text(p, '검사 실내: bldg_B 2층').waitFor();
   });
-  await scenario('search: drilling to a floor and back up, then 검색 접기 keeps the building', async (p) => {
+  await scenario('search: drilling to a floor and back up, then 검색 닫기 keeps the building', async (p) => {
     await useDemo(p, '실내·계단·엘리베이터 시험');
     await button(p, '장소 검색 열기').click(); const sheet = searchSheet(p);
     await sheet.getByRole('button', { name: /^A동,/ }).click(); await text(p, '검사 카메라 이동 1회').waitFor();
@@ -376,10 +376,10 @@ try {
     await sheet.getByRole('button', { name: /^A동 4층 여자 화장실, 여자 화장실/ }).waitFor();
     // Going up inside the same building never moves the camera again.
     await button(p, '위 단계로').click(); await sheet.getByRole('button', { name: /^A동 4층, 시설/ }).waitFor();
-    await button(p, '위 단계로').click(); await text(p, '건물을 골라 주세요').waitFor(); await absent(text(p, '검사 카메라 이동 2회'));
+    await button(p, '위 단계로').click(); await searchSheet(p).getByRole('button', { name: /^A동,/ }).waitFor(); await absent(text(p, '검사 카메라 이동 2회'));
     await sheet.getByRole('button', { name: /^A동,/ }).click(); await text(p, '검사 카메라 이동 2회').waitFor();
     await sheet.getByRole('button', { name: /^A동 4층, 시설/ }).click();
-    await button(p, '검색 접기').click(); await absent(searchSheet(p));
+    await button(p, '검색 닫기').click(); await absent(searchSheet(p));
     await text(p, '검사 카메라 이동 2회').waitFor(); await text(p, '검사 검색 건물: bldg_A').waitFor();
     await absent(button(p, '선택 취소')); await absent(text(p, '검사 실내')); await text(p, '실외 지도').waitFor();
   });
@@ -394,7 +394,7 @@ try {
     await text(p, '검사 검색 건물: bldg_C').waitFor(); await text(p, '검사 카메라 이동 1회').waitFor();
     await absent(searchSheet(p)); await absent(button(p, '선택 취소')); await text(p, '실외 지도').waitFor();
     // A new search starts empty at the building list.
-    await button(p, '장소 검색 열기').click(); assert.equal(await searchBox(p).inputValue(), ''); await text(p, '건물을 골라 주세요').waitFor();
+    await button(p, '장소 검색 열기').click(); assert.equal(await searchBox(p).inputValue(), ''); await searchSheet(p).getByRole('button', { name: /^A동,/ }).waitFor();
   });
 
   /* ---------- 2. ← (선택 취소) and the back key ---------- */
@@ -409,7 +409,7 @@ try {
     await text(p, '검사 선택 장소: 408호 강의실').waitFor(); await button(p, '선택 취소').click();
     await absent(searchSheet(p)); await absent(button(p, '선택 취소')); await button(p, '장소 검색 열기').waitFor();
     // Blank words behave like empty words.
-    await button(p, '장소 검색 열기').click(); await searchBox(p).fill('   '); await text(p, '건물을 골라 주세요').waitFor();
+    await button(p, '장소 검색 열기').click(); await searchBox(p).fill('   '); await searchSheet(p).getByRole('button', { name: /^A동,/ }).waitFor();
     await searchSheet(p).getByRole('button', { name: /^B동,/ }).click(); await searchSheet(p).getByRole('button', { name: /^B동 2층, 시설/ }).click();
     await searchSheet(p).getByRole('button', { name: /^201호 강의실, / }).click(); await button(p, '선택 취소').click();
     await absent(searchSheet(p)); await button(p, '장소 검색 열기').waitFor();
@@ -418,7 +418,7 @@ try {
     await useDemo(p, '실내·계단·엘리베이터 시험');
     await button(p, '장소 검색 열기').click(); await searchBox(p).fill('없는강의실');
     await text(p, '검색 결과가 없습니다').waitFor(); await absent(searchSheet(p).getByRole('button', { name: /호 강의실, / }));
-    await button(p, '건물·층으로 찾아보기').click(); assert.equal(await searchBox(p).inputValue(), ''); await text(p, '건물을 골라 주세요').waitFor();
+    await button(p, '건물·층으로 찾아보기').click(); assert.equal(await searchBox(p).inputValue(), ''); await searchSheet(p).getByRole('button', { name: /^A동,/ }).waitFor();
     await searchBox(p).fill('없는강의실'); await button(p, '검색 닫기').click(); await absent(searchSheet(p));
     await absent(button(p, '선택 취소')); await absent(text(p, '검사 선택 장소'));
     await button(p, '장소 검색 열기').click(); assert.equal(await searchBox(p).inputValue(), '');

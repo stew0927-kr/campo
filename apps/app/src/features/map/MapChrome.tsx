@@ -248,11 +248,18 @@ export function Stat({ value, label }: { value: string; label: string }) {
 
 /* ---------- Place search ---------- */
 export type SearchTarget = 'from' | 'to' | 'place' | 'restroom';
-const SEARCH_TITLE: Record<SearchTarget, string> = { place: '장소 검색', from: '출발지 검색', to: '목적지 검색', restroom: '화장실 찾기 · 출발 위치' };
+/**
+ * The sheet has no title row: the drag handle expands/collapses it and ← sits beside the field. Only the restroom finder keeps
+ * a one-line caption, because there the field picks the start of the walk, not the place being looked for.
+ */
+const SEARCH_CAPTION: Partial<Record<SearchTarget, string>> = { restroom: '화장실 찾기 · 출발 위치' };
+/** Screen readers still hear what the field is for (the visible title row is gone). */
+const SEARCH_HINT: Record<SearchTarget, string> = { place: '장소 검색', from: '출발지 검색', to: '목적지 검색', restroom: '화장실 찾기 출발 위치 검색' };
 /**
  * Half-screen search sheet: the map stays visible above it. With a query: a flat filtered list. Without one: a drill-down
  * list (building → floor → facilities such as restrooms, classrooms and entrances). Drag the handle between the default
- * (about half) and expanded heights; dragging it all the way down, ←, ⌄ and the hardware back key end the search.
+ * (about half) and expanded heights; dragging it all the way down, ← and the hardware back key end the search. For screen
+ * readers the handle is an adjustable control (increment: expand, decrement: shrink, then close).
  * Opening a building in the list calls `onBuilding` so the map can move there while the sheet stays open.
  */
 export function PlaceSearch({ target, query, onQuery, results: allResults, places: allPlaces, buildings, detail, emptyMessage, demoNotice, maxWidth, padding, onClose, onChoose, onCurrent, onMapPick, busy, restroomGender = 'any', onRestroomGender, areaHeight = 720, onBuilding }: {
@@ -304,26 +311,29 @@ export function PlaceSearch({ target, query, onQuery, results: allResults, place
   };
   if (target === null) return null;
   return <Animated.View accessibilityLabel="장소 검색 시트" style={[c.sheet, { height }]}>
-    <View style={c.handleRow} {...pan.panHandlers}>
-      <View accessible accessibilityRole="adjustable" accessibilityLabel={`검색 시트 ${snap === 'expanded' ? '펼침' : '기본'}`} style={c.handleHit}><View style={c.handle} /></View>
+    <View style={c.searchHandleRow} {...pan.panHandlers}>
+      <View accessible accessibilityRole="adjustable" accessibilityLabel={`검색 시트 ${snap === 'expanded' ? '펼침' : '기본'}`}
+        accessibilityActions={[{ name: 'increment', label: '검색 크게 펼치기' }, { name: 'decrement', label: snap === 'expanded' ? '검색 시트 줄이기' : '검색 접기' }]}
+        onAccessibilityAction={(event) => {
+          if (event.nativeEvent.actionName === 'increment') go('expanded');
+          else if (event.nativeEvent.actionName === 'decrement') go(snap === 'expanded' ? 'default' : 'collapsed');
+        }} style={c.searchHandleHit}><View style={c.handle} /></View>
     </View>
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, width: '100%', maxWidth, alignSelf: 'center', paddingHorizontal: padding, gap: 10 }}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, width: '100%', maxWidth, alignSelf: 'center', paddingHorizontal: padding, gap: 8 }}>
+      {SEARCH_CAPTION[target] && <Text accessibilityRole="header" numberOfLines={1} style={c.searchCaption}>{SEARCH_CAPTION[target]}</Text>}
       <View style={c.searchHeader}>
-        <Pressable accessibilityRole="button" accessibilityLabel="검색 닫기" onPress={onClose} style={c.iconButton}><BackIcon /></Pressable>
-        <Text accessibilityRole="header" numberOfLines={1} style={c.searchTitle}>{SEARCH_TITLE[target]}</Text>
-        {snap !== 'expanded' && <Pressable accessibilityRole="button" accessibilityLabel="검색 크게 펼치기" onPress={() => go('expanded')} style={c.iconButton}><Chevron up /></Pressable>}
-        <Pressable accessibilityRole="button" accessibilityLabel={snap === 'expanded' ? '검색 시트 줄이기' : '검색 접기'} onPress={() => go(snap === 'expanded' ? 'default' : 'collapsed')} style={c.iconButton}><Chevron up={false} /></Pressable>
-      </View>
-      <View style={c.searchField}>
-        <SearchIcon color={t.color.faint} />
-        <TextInput autoFocus value={query} onChangeText={onQuery} placeholder={SEARCH_PLACEHOLDER} placeholderTextColor={t.color.faint} accessibilityLabel="장소 검색어" style={c.searchInput} autoCorrect={false} returnKeyType="search" />
-        {query.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="검색어 지우기" onPress={() => onQuery('')} style={c.clear}><CloseIcon color="white" /></Pressable>}
+        <Pressable accessibilityRole="button" accessibilityLabel="검색 닫기" hitSlop={4} onPress={onClose} style={c.searchBack}><BackIcon /></Pressable>
+        <View style={c.searchField}>
+          <SearchIcon color={t.color.faint} />
+          <TextInput autoFocus value={query} onChangeText={onQuery} placeholder={SEARCH_PLACEHOLDER} placeholderTextColor={t.color.faint} accessibilityLabel="장소 검색어" accessibilityHint={SEARCH_HINT[target]} style={c.searchInput} autoCorrect={false} returnKeyType="search" />
+          {query.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="검색어 지우기" hitSlop={11} onPress={() => onQuery('')} style={c.clear}><CloseIcon color="white" /></Pressable>}
+        </View>
       </View>
       {target !== 'place' && <View style={c.quickRow}>
-        {onCurrent && <Pressable accessibilityRole="button" accessibilityLabel={`현재 위치를 ${word}지로`} disabled={busy} onPress={onCurrent} style={({ pressed }) => [c.quick, pressed && { backgroundColor: t.color.soft }]}>
+        {onCurrent && <Pressable accessibilityRole="button" accessibilityLabel={`현재 위치를 ${word}지로`} hitSlop={QUICK_SLOP} disabled={busy} onPress={onCurrent} style={({ pressed }) => [c.quick, pressed && { backgroundColor: t.color.soft }]}>
           {busy ? <ActivityIndicator color={t.color.primary} /> : <LocateIcon color={t.color.primary} />}<Text style={c.quickText}>{busy ? '확인 중…' : '현재 위치'}</Text>
         </Pressable>}
-        <Pressable accessibilityRole="button" accessibilityLabel={`지도에서 ${word} 선택`} onPress={onMapPick} style={({ pressed }) => [c.quick, pressed && { backgroundColor: t.color.soft }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`지도에서 ${word} 선택`} hitSlop={QUICK_SLOP} onPress={onMapPick} style={({ pressed }) => [c.quick, pressed && { backgroundColor: t.color.soft }]}>
           <View style={c.pinGlyph}><View style={c.pinGlyphDot} /></View><Text style={c.quickText}>지도에서 선택</Text>
         </Pressable>
       </View>}
@@ -373,12 +383,13 @@ export function PlaceTree({ places, buildings, path, onPath, onChoose, detail }:
   const building = path.building === OUTDOOR_GROUP ? { name: '야외 장소' } : buildings.find((b) => b.id === path.building);
   const atFacilities = path.building !== null && (path.building === OUTDOOR_GROUP || path.level !== null);
   const levelText = (level: number) => (level === UNKNOWN_LEVEL ? '층 미확인' : floorText(level));
-  const crumb = path.building === null ? '건물을 골라 주세요' : atFacilities && path.level !== null ? `${building?.name ?? ''} · ${levelText(path.level)}` : building?.name ?? '';
-  return <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
-    <View style={c.treeHeader}>
-      {path.building !== null && <Pressable accessibilityRole="button" accessibilityLabel="위 단계로" onPress={() => onPath(treeUp(path))} style={c.iconButton}><BackIcon color={t.color.muted} /></Pressable>}
+  // The building list needs no caption (the rows say what they are); deeper levels show where you are and a way up.
+  const crumb = path.building === null ? null : atFacilities && path.level !== null ? `${building?.name ?? ''} · ${levelText(path.level)}` : building?.name ?? '';
+  return <ScrollView accessibilityLabel={path.building === null ? '건물 목록' : undefined} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 }}>
+    {crumb !== null && <View style={c.treeHeader}>
+      <Pressable accessibilityRole="button" accessibilityLabel="위 단계로" onPress={() => onPath(treeUp(path))} style={c.iconButton}><BackIcon color={t.color.muted} /></Pressable>
       <Text accessibilityRole="header" style={c.treeTitle}>{crumb}</Text>
-    </View>
+    </View>}
     {path.building === null && buildingGroups(places, buildings).map((g) => <TreeRow key={g.id} title={g.name} detail={g.id === OUTDOOR_GROUP ? `장소 ${g.count}곳` : `${g.levelCount}개 층 · 장소 ${g.count}곳`}
       onPress={() => onPath({ building: g.id, level: null })} />)}
     {path.building !== null && !atFacilities && levelGroups(places, path.building).map((l) => <TreeRow key={l.level} title={l.label} detail={`시설 ${l.count}곳`}
@@ -390,6 +401,7 @@ export function PlaceTree({ places, buildings, path, onPath, onChoose, detail }:
   </ScrollView>;
 }
 
+const QUICK_SLOP = { top: 4, bottom: 4, left: 2, right: 2 };
 const c = StyleSheet.create({
   dot: { width: 12, height: 12, borderRadius: 6, borderWidth: 3.5, backgroundColor: 'white' },
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: t.color.surface, alignItems: 'center', justifyContent: 'center', ...floating },
@@ -425,6 +437,9 @@ const c = StyleSheet.create({
   sheet: { flexShrink: 0, marginTop: -18, overflow: 'hidden', borderTopLeftRadius: t.radii.sheet, borderTopRightRadius: t.radii.sheet, backgroundColor: t.color.surface, ...floating, shadowOffset: { width: 0, height: -3 } },
   handleRow: { minHeight: 28, justifyContent: 'center' },
   handleHit: { alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 40 },
+  // The search sheet's handle sits tighter: the list below gets the room.
+  searchHandleRow: { minHeight: 20, justifyContent: 'center' },
+  searchHandleHit: { alignSelf: 'center', paddingVertical: 8, paddingHorizontal: 48 },
   handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: '#D5DCE5' },
   sheetTools: { position: 'absolute', right: 10, top: 0, bottom: 0, flexDirection: 'row', alignItems: 'center', gap: 2 },
   sheetTool: { width: 36, height: 32, alignItems: 'center', justifyContent: 'center' },
@@ -459,14 +474,16 @@ const c = StyleSheet.create({
   textButton: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 2 },
   textButtonText: { fontSize: 14, fontWeight: '700', color: t.color.primary },
   stat: { gap: 2 }, statValue: { fontSize: 15, fontWeight: '800', color: t.color.text }, statLabel: { fontSize: t.type.micro, color: t.color.muted },
-  searchHeader: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  searchTitle: { flex: 1, fontSize: 18, fontWeight: '800', color: t.color.text },
-  searchField: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 52, borderRadius: 14, backgroundColor: '#EDF0F5', paddingHorizontal: 14 },
-  searchInput: { flex: 1, minWidth: 0, minHeight: 48, fontSize: 16, color: t.color.text },
+  searchHeader: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  searchBack: { width: 40, height: 44, marginLeft: -8, alignItems: 'center', justifyContent: 'center' },
+  searchCaption: { fontSize: 13, fontWeight: '800', color: t.color.muted },
+  searchField: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, borderRadius: 12, backgroundColor: '#EDF0F5', paddingHorizontal: 12 },
+  searchInput: { flex: 1, minWidth: 0, minHeight: 40, paddingVertical: 0, fontSize: 16, color: t.color.text },
   clear: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#B5C0CE', alignItems: 'center', justifyContent: 'center', transform: [{ scale: 0.8 }] },
-  quickRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  quick: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingHorizontal: 14, borderRadius: 22, borderWidth: 1, borderColor: t.color.border },
-  quickText: { fontSize: 14, fontWeight: '700', color: t.color.text },
+  quickRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  // Compact chips (36pt high); QUICK_SLOP keeps the touch target at 44pt.
+  quick: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 36, paddingHorizontal: 12, borderRadius: 18, borderWidth: 1, borderColor: t.color.border },
+  quickText: { fontSize: 13, fontWeight: '700', color: t.color.text },
   pinGlyph: { width: 16, height: 16, borderRadius: 8, borderBottomRightRadius: 2, backgroundColor: t.color.end, transform: [{ rotate: '45deg' }], alignItems: 'center', justifyContent: 'center' },
   pinGlyphDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: 'white' },
   result: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14, paddingHorizontal: 4, borderBottomWidth: 1, borderColor: t.color.divider },

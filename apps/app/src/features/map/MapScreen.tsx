@@ -10,7 +10,7 @@ import { headingLabel } from '../../photos/demoPhotoArt.ts';
 import { useCampusData } from '../../hooks/useCampusData.ts';
 import { useCampusRoute } from '../../hooks/useCampusRoute.ts';
 import { useGpsMatcher } from '../../hooks/useGpsMatcher.ts';
-import { useAppState } from '../../state/AppState.tsx';
+import { useAppActions, useAppSelector } from '../../state/AppState.tsx';
 import { placeDestination, planIntent } from '../../state/model.ts';
 import { useScreenBack } from '../../ui/useScreenBack.ts';
 import { screenLayout } from '../../ui/layout.ts';
@@ -55,13 +55,17 @@ const INDOOR_OUTSIDE_HINT = "지금은 이 건물 실내만 선택할 수 있습
 export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, photoNotice = '현장 사진은 공급 데이터 연결 대기 중입니다.' }: { active?: boolean; photoCatalog?: PhotoCatalog; photoNotice?: string }) {
   const window = useWindowDimensions();
   const layout = screenLayout(window.width, window.height, window.fontScale);
-  const { state, dispatch } = useAppState();
+  const { dispatch } = useAppActions();
+  // Only the fields this screen reads: a tab switch or an estimate update does not re-render the map screen.
+  const defaultMode = useAppSelector((s) => s.defaultMode);
+  const intentState = useAppSelector((s) => s.intent);
+  const favorites = useAppSelector((s) => s.favorites);
   const [demo, setDemo] = useState<DemoData>('none');
   const data = useCampusData(demo === 'none' ? undefined : DEMO_BUNDLE[demo]);
   const [view, setView] = useState<'home' | 'plan'>('home');
   const [from, setFrom] = useState<CampusPlace | null>(null);
   const [to, setTo] = useState<CampusPlace | null>(null);
-  const [mode, setMode] = useState<TravelMode>(state.defaultMode);
+  const [mode, setMode] = useState<TravelMode>(defaultMode);
   const [request, setRequest] = useState<CampusRouteRequest | null>(null);
   const [search, setSearch] = useState<SearchTarget | null>(null);
   const [query, setQuery] = useState('');
@@ -155,7 +159,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   /** A tap outside the open building's outline (unknown outline: not outside). */
   const outsideIndoor = (point: RoutePoint) => indoorOutline !== null && !insideOutline(point, indoorOutline);
   useEffect(() => () => { gpsGeneration.current++; }, []);
-  useEffect(() => { setMode(state.defaultMode); setRequest(null); }, [state.defaultMode]);
+  useEffect(() => { setMode(defaultMode); setRequest(null); }, [defaultMode]);
   useEffect(() => { if (!active) { setTracking(false); gpsGeneration.current++; setGpsBusy(false); } }, [active]);
   useEffect(() => { if (!route) dispatch({ type: 'clearEstimate' }); }, [route, dispatch]);
   useEffect(() => {
@@ -169,7 +173,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     setMessage('경로를 벗어나 현재 위치에서 다시 찾았습니다.');
   }, [gps.mode, gps.fixCount, gps.rerouteRequested, gps.position, sensors.running, to, mode]);
   useEffect(() => {
-    const intent = state.intent;
+    const intent = intentState;
     if (!intent) return;
     // An event's real destination must never resolve against the developer fixture.
     if (demo !== 'none') { switchData('none'); return; }
@@ -191,7 +195,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       setMessage(resolved.kind === 'search' ? resolved.message : '입장·퇴장 지점 연결이 아직 없습니다. 실제 출발지와 목적지를 직접 선택해 주세요.');
     }
     dispatch({ type: 'consumed', sequence: intent.sequence });
-  }, [state.intent, data.runtime, demo, dispatch]);
+  }, [intentState, data.runtime, demo, dispatch]);
 
   function clearGps() { gpsGeneration.current++; setGpsBusy(false); setMessage(null); }
   function focusOn(point: RoutePoint) { setFocus({ lat: point.lat, lng: point.lng, key: ++focusKey.current }); }
@@ -288,7 +292,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   }
   function setWheelchair(on: boolean) {
     if (restroom) findRestroom(restroom.start, on, restroom.gender);
-    else changeMode(on ? 'wheelchair' : walkingMode(state.defaultMode));
+    else changeMode(on ? 'wheelchair' : walkingMode(defaultMode));
   }
   /** 전체/남자/여자 in the result sheet: the nearest restroom is found again at once. */
   function changeRestroomGender(gender: RestroomWanted) {
@@ -416,7 +420,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
         <View style={{ flex: 1 }}><Button secondary title="출발지로" onPress={() => choose(selected, 'from')} /></View>
         <View style={{ flex: 1 }}><Button title="도착지로" onPress={() => choose(selected, 'to')} /></View>
       </ActionRow>
-      {demo === 'none' && <TextButton title={state.favorites.some((p) => p.key === `place:${selected.id}`) ? '장소 즐겨찾기 해제' : '장소 즐겨찾기'} onPress={() => dispatch({ type: 'favorite', destination: placeDestination(selected) })} />}
+      {demo === 'none' && <TextButton title={favorites.some((p) => p.key === `place:${selected.id}`) ? '장소 즐겨찾기 해제' : '장소 즐겨찾기'} onPress={() => dispatch({ type: 'favorite', destination: placeDestination(selected) })} />}
     </View> : null}
     {data.status === 'error' && <View style={{ gap: 8 }}><Notice>{data.error}</Notice><Button secondary title="데이터 다시 읽기" onPress={data.reload} /></View>}
     {notices.length > 0 && <View style={{ gap: 6 }}>{notices.map((text, i) => <StatusLine key={i}>{text}</StatusLine>)}</View>}

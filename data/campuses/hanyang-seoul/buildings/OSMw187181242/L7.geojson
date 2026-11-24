@@ -1,0 +1,4 @@
+{"type":"FeatureCollection","features":[
+{"type":"Feature","id":"n_OSMw187181242_7_elevator_stop_eanomw","geometry":{"type":"Point","coordinates":[127.04619415182077,37.554754731144456]},"properties":{"kind":"node","node_type":"elevator_stop","building_id":"bldg_OSMw187181242","level":7,"elevator_id":"OSMw187181242_elevA","source":"estimate","rev":2}},
+{"type":"Feature","id":"n_OSMw187181242_7_stair_landing_4xmvaf","geometry":{"type":"Point","coordinates":[127.04618827195674,37.55474103996934]},"properties":{"kind":"node","node_type":"stair_landing","building_id":"bldg_OSMw187181242","level":7,"source":"estimate","rev":1}}
+]}

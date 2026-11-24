@@ -1,6 +1,6 @@
 import type { ContentData, ContentSource, EssaySession, FestivalStall } from './types.ts';
-export const ESSAY_NOTICE = '2027학년도 논술고사(2026년 11월 28~29일)를 소재로 만든 차기 시즌 프로토타입·시연용 화면입니다. 날짜를 포함한 실제 일정·배정 고사장·입실 마감·준비물은 반드시 학교 공식 공지를 확인해 주세요. 아래 시간·건물·호실은 가상 정보이며 수험 안내로 사용하면 안 됩니다.';
-export const CONTENT_NOTICE = '시연용 가상 데이터입니다. 실제 행사·출연진·운영 시간·대기 정보가 아닙니다. 서버 연동은 준비 중입니다.';
+export const ESSAY_NOTICE = '서버에 연결하지 못해 예시 정보를 표시하고 있습니다. 실제 일정·고사장·준비물은 학교 공식 공지를 확인해 주세요.';
+export const CONTENT_NOTICE = '서버에 연결하지 못해 예시 정보를 표시하고 있습니다. 실제 일정은 학교 공식 공지를 확인해 주세요.';
 const essay = (id: string, examDate: string, trackLabel: string, startsAt: string, endsAt: string, checkInBy: string, roomLabel: string): EssaySession => ({
   id, seasonLabel: '2027학년도', trackLabel, examDate, startsAt, endsAt, checkInBy,
   buildingCode: '가상 시험관', roomLabel, destinationNodeId: null, checkInNodeId: null,

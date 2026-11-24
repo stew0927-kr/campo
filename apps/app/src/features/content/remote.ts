@@ -81,7 +81,7 @@ export function createReadOnlySource(config: ReadConfig, fetcher: typeof fetch =
 export async function loadWithDemoFallback(remote: ContentSource | null) {
   if (remote) {
     try { return { data: await remote.load(), mode: remote.mode, notice: null }; }
-    catch { return { data: await DEMO_SOURCE.load(), mode: 'demo' as const, notice: '서버에 연결하지 못해 시연용 데이터를 표시합니다.' }; }
+    catch { return { data: await DEMO_SOURCE.load(), mode: 'demo' as const, notice: '서버에 연결하지 못해 예시 정보를 표시합니다.' }; }
   }
-  return { data: await DEMO_SOURCE.load(), mode: 'demo' as const, notice: '서버 연결 정보가 없어 시연용 데이터를 표시합니다.' };
+  return { data: await DEMO_SOURCE.load(), mode: 'demo' as const, notice: '서버에 연결할 수 없어 예시 정보를 표시합니다.' };
 }

@@ -54,7 +54,8 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
   it('shows the empty real map honestly and supports manual endpoints', () => {
     vi.stubGlobal('__DEV__', true);
     const html = render(createElement(MapScreen));
-    expect(html).toContain('실제 캠퍼스 길 데이터가 아직 없습니다');
+    // Real campus data is bundled now, so no "data missing" or internal-team notice is shown.
+    expect(html).not.toContain('실제 캠퍼스 길 데이터가 아직 없습니다'); expect(html).not.toContain('조원');
     // Home is a full-screen map: floating place search, the route button and the locate button.
     expect(html).toContain('건물 이름, 동 번호, 강의실 검색'); expect(html).toContain('길찾기'); expect(html).toContain('내 위치로 이동');
     // The first sheet is left clean: no "어디로 가시나요?" heading or guide caption. The restroom quick button floats on the map.
@@ -99,12 +100,12 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
   });
   it('always shows the essay prototype notice and both date filters', () => {
     const html = render(createElement(EssayScreen, { data: DEMO_CONTENT }));
-    expect(html).toContain('차기 시즌 프로토타입'); expect(html).toContain('2026-11-28'); expect(html).toContain('2026-11-29');
+    expect(html).toContain('예시 정보'); expect(html).not.toContain('시연'); expect(html).toContain('2026-11-28'); expect(html).toContain('2026-11-29');
     expect(html).toContain('실제 일정'); expect(html).toContain('고사장 상세 보기');
   });
   it('renders the festival timetable without inventing booth pins', () => {
     const html = render(createElement(FestivalScreen, { data: DEMO_CONTENT }));
-    expect(html).toContain('가상 밴드'); expect(html).toContain('지도 지점 ID가 없어');
+    expect(html).toContain('가상 밴드'); expect(html).toContain('예시 정보');
     for (const category of ['주점', '부스', '공연', '편의']) expect(html).toContain(category);
   });
   it('renders event categories and an empty content state', () => {
@@ -113,7 +114,8 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
   });
   it('renders profiles, session-only favorites, privacy links and open-source notices', () => {
     const html = render(createElement(MeScreen));
-    for (const label of ['일반 보행', '계단 회피', '휠체어 보행', '위치·센서 권한', 'OpenStreetMap', '개인정보 처리방침', '앱을 완전히 종료하면 초기화']) expect(html).toContain(label);
+    for (const label of ['일반 보행', '계단 회피', '휠체어 보행', '위치·센서 권한', 'OpenStreetMap', '개인정보 처리방침']) expect(html).toContain(label);
+    for (const gone of ['조원', '시제품', '개발용', '앱을 완전히 종료하면 초기화']) expect(html).not.toContain(gone);
   });
   it('links the legal pages and the team contact without placeholder copy', () => {
     const html = render(createElement(AppInfoScreen));

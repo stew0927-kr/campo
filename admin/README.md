@@ -1,6 +1,7 @@
 # 캠포 관리자 웹 (`admin/`)
 
 관리자가 로그인해서 논술·축제(날짜·부스·공연)·학교행사를 추가·수정·삭제하고, **"앱에 공개"**를 켜고 끄는 웹 화면.
+캠퍼스 지도 파일(campus.json·*.geojson)을 서버에 올리고 내려받는 **매핑** 탭도 있다.
 Supabase 대시보드에 들어가지 않고 내용을 관리하기 위한 것이다. 담당: D.
 
 - Vite + React + TypeScript, `@supabase/supabase-js`. 서버 코드 없음.
@@ -32,6 +33,7 @@ npm run dev        # http://localhost:5174 이 자동으로 열림. 끄려면 �
 | 논술 | `essay_sessions`, `essay_tracks` | 계열은 드롭다운에서 고르거나 "직접 입력"(저장하면 계열 목록에 자동 추가). 아래 "논술 계열 목록"에서 선택지를 추가·이름 변경·삭제(이름을 바꾸면 그 계열을 쓰던 일정도 함께 바뀜, 쓰는 중인 계열은 삭제 불가). 준비물·유의사항은 한 줄에 하나 |
 | 축제 | `festivals` → `festival_days` → `festival_stalls`, `festival_performances` | "선택"으로 아래 단계 열기. 부스·공연은 축제가 공개 중일 때만 앱에 보임 |
 | 학교행사 | `school_events` | 시각은 한국 시간으로 입력(저장 시 +09:00) |
+| 매핑 | `campus_map_files` | 서버 지도 상태, zip 내려받기, 폴더 올리기(아래) |
 
 **숨김 / 공개 중**은 두 버튼이 항상 함께 보이고, 지금 상태가 초록색, 다른 쪽이 회색이다. 회색 쪽을 누르면 바로 바뀐다(목록과 입력 창 모두).
 위쪽 탭을 누르면(지금 보고 있는 탭이어도) 그 탭의 처음 화면으로 돌아간다. 입력 중인 창이 있으면 먼저 묻는다.
@@ -39,10 +41,49 @@ npm run dev        # http://localhost:5174 이 자동으로 열림. 끄려면 �
 
 계열 목록 표(`essay_tracks`)는 `supabase/migrations/0005_essay_tracks.sql`로 만든다.
 
+## 매핑 탭: 지도 파일
+
+지도는 서버의 `campus_map_files` 표(`supabase/migrations/0006_campus_maps.sql`)에 파일 하나당 한 줄로 있고, 앱은 실행할 때 이 지도를 받는다.
+
+- **폴더 올리기**: PC의 `data/campuses/hanyang-seoul` 폴더를 고르면 서버와 비교한 목록(새 파일·바뀐 파일·같은 파일·서버에만 있는 파일·건너뛴 파일)을 보여 주고, "서버에 올리기"로 한 번에 저장한다.
+  - 올리는 것은 `campus.json`, `outdoor.geojson`, `connections.geojson`, `buildings/<id>/building.geojson`, `buildings/<id>/L1.geojson`(지하는 `L-1`)뿐이다. `overrides.json`·`observations/` 등은 건너뛴다.
+  - 서버에만 있는 파일은 체크했을 때만 지운다. 내용이 같은 파일은 다시 쓰지 않는다.
+  - 저장은 DB 함수 `save_campus_map()` 한 번이다: 관리자만 되고, 비교 목록을 띄운 뒤 그 사이 다른 저장이 있으면 아무것도 바꾸지 않고 멈춘다(목록을 다시 비교함). 반쯤 저장되는 일은 없다.
+  - Windows 줄바꿈(CRLF)과 BOM은 올리기 전에 없앤다(체크아웃 방식 때문에 "전부 바뀜"으로 보이지 않게).
+- **서버 지도 내려받기(zip)**: 압축을 풀면 `hanyang-seoul/` 폴더가 나온다. 서버는 무료 플랜이라 백업이 없으니 큰 작업 전에 받아 둔다.
+
+지도 작업 규칙:
+1. 지도의 원본은 서버다. 지도 수정은 매핑 탭(서버)에서 한다.
+2. PC 편집기(고도·지형 3D)로 작업할 때는 **내려받기 → 압축을 풀어 `data/campuses/hanyang-seoul`을 바꿔 넣기 → 작업 → 폴더 올리기** 순서로 한다. "바뀐 파일"이 예상보다 많으면 올리지 않는다(오래된 폴더로 덮어쓰는 것을 막기 위해).
+3. 저장소의 `data/campuses/hanyang-seoul`은 앱 내장(폴백) 지도다. APK를 만들기 전에 서버 지도를 내려받아 바꿔 넣고 커밋한다.
+
 ## 그 밖의 명령
 
 `npm test`(값 변환 테스트), `npm run typecheck`, `npm run build`(배포용 `dist/` 생성).
 
+## 배포 (팀이 쓰는 주소)
+
+https://campo-admin.pages.dev — Cloudflare Pages(Direct Upload). 빌드한 `dist/`를 대시보드에 올리는 방식이라 **push·병합해도 자동으로 바뀌지 않는다.**
+
+갱신 순서:
+1. 최신 코드에서 `npm run build` (`.env.local`의 URL·공개 키가 `dist/`에 들어간다. 비밀 키는 넣지 않는다)
+2. Cloudflare → Workers & Pages → `campo-admin` → Create deployment → `dist` 폴더 업로드
+
+Direct Upload 프로젝트는 나중에 Git 연결로 바꿀 수 없다. 자동 배포가 필요하면 새 Pages 프로젝트를 만들어 저장소를 연결한다(저장소 주인 권한 필요).
+
+## 관리자 계정
+
+- Supabase **Authentication → Users → Add user**(Auto Confirm User 체크)로 만들고, SQL Editor에서 `profiles`에 `admin`으로 넣는다.
+  ```sql
+  insert into public.profiles (id, role)
+  select id, 'admin' from auth.users
+  where lower(email) = lower('이메일')
+  on conflict (id) do update set role = 'admin';
+  ```
+  SQL Editor는 한 행도 안 들어가도 `Success`를 보여 주므로, `select u.email, p.role from auth.users u left join public.profiles p on p.id = u.id;`로 `admin`인지 확인한다.
+- 팀은 공용 관리자 계정 하나를 쓴다. 계정 정보는 저장소에 적지 않는다(D에게 문의).
+- Supabase 공개 가입(Allow new users to sign up)은 끈다. 관리자 계정은 위 방법으로만 만든다.
+
 ## 지금 범위에 없는 것
 
-배포(다른 사람이 주소로 접속), 지점 id 검색 선택, 사진 관리. 지금은 이 노트북에서만 열린다.
+지점 id 검색 선택, 사진 관리.

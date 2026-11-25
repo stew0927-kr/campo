@@ -1,15 +1,16 @@
-// Sign-in gate + three tabs. Only users whose profiles.role is 'admin' get past the gate;
+// Sign-in gate + four tabs (논술, 축제, 학교행사, 매핑). Only users whose profiles.role is 'admin' get past the gate;
 // the database checks the same thing again on every write (RLS), so hiding the screens is not the security.
 import type { Session } from '@supabase/supabase-js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { FestivalPage } from './components/FestivalPage.tsx';
+import { MapFilesPanel } from './components/MapFilesPanel.tsx';
 import { ResourcePanel } from './components/ResourcePanel.tsx';
 import { koreanError } from './lib/convert.ts';
 import { EditingContext, type EditingTracker } from './lib/editing.ts';
 import { configProblem, supabase } from './lib/supabase.ts';
 import { essaySessions, essayTracks, schoolEvents } from './tables.ts';
 
-type Tab = 'essay' | 'festival' | 'events';
+type Tab = 'essay' | 'festival' | 'events' | 'map';
 type Role = 'checking' | 'admin' | 'not-admin';
 
 export default function App() {
@@ -73,7 +74,7 @@ export default function App() {
       <header>
         <h1>캠포 관리자</h1>
         <nav>
-          {([['essay', '논술'], ['festival', '축제'], ['events', '학교행사']] as const).map(([k, label]) => (
+          {([['essay', '논술'], ['festival', '축제'], ['events', '학교행사'], ['map', '매핑']] as const).map(([k, label]) => (
             <button key={k} className={tab === k ? 'tab active' : 'tab'} onClick={() => goToTab(k)}>
               {label}
             </button>
@@ -86,7 +87,9 @@ export default function App() {
       </header>
       <EditingContext.Provider value={tracker}>
         <main key={`${tab}-${resetCount}`}>
-          <p className="hint">“공개 중”으로 둔 항목만 앱에 보입니다. 숨김으로 저장해 두고, 준비가 되면 공개 중으로 바꾸세요.</p>
+          {tab !== 'map' && (
+            <p className="hint">“공개 중”으로 둔 항목만 앱에 보입니다. 숨김으로 저장해 두고, 준비가 되면 공개 중으로 바꾸세요.</p>
+          )}
           {tab === 'essay' && (
             <>
               <ResourcePanel config={essaySessions} />
@@ -96,6 +99,12 @@ export default function App() {
           )}
           {tab === 'festival' && <FestivalPage />}
           {tab === 'events' && <ResourcePanel config={schoolEvents} />}
+          {tab === 'map' && (
+            <>
+              <p className="hint">캠퍼스 지도(campus.json·*.geojson)는 서버에 있고, 앱은 실행할 때 서버 지도를 받습니다.</p>
+              <MapFilesPanel />
+            </>
+          )}
         </main>
       </EditingContext.Provider>
     </div>

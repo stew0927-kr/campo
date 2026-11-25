@@ -59,3 +59,21 @@ tr.selected td { background: #eef6f4; }
 .card h1 { font-size: 20px; margin: 0 0 16px; color: var(--navy); }
 .login { display: flex; flex-direction: column; gap: 12px; }
 .login label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+
+/* 매핑 탭: 지도 파일 */
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.file-pick { display: inline-block; padding: 6px 12px; border-radius: 6px; background: var(--navy); color: #fff; cursor: pointer; font-size: 15px; }
+.file-pick.disabled { opacity: 0.5; cursor: default; }
+.file-pick input { display: none; }
+.compare { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.file-group { margin: 6px 0; font-size: 14px; }
+.file-group summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.file-group ul { margin: 4px 0 8px; padding-left: 20px; max-height: 260px; overflow: auto; }
+.file-group li { margin: 2px 0; }
+.file-group.add summary { color: #1f7a3a; }
+.file-group.change summary { color: #9a6700; }
+.file-group.remove summary { color: var(--danger); }
+.group-empty { margin: 6px 0; font-size: 14px; color: var(--muted); }
+.check-line { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 8px 0; }
+.check-line input { width: auto; }
+code { font-size: 13px; background: #eef1f4; padding: 1px 4px; border-radius: 4px; }

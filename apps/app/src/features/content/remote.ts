@@ -39,7 +39,7 @@ function checkedRows(table: Table, value: unknown): unknown[] {
   }
   return value;
 }
-export type PublicTable = Table | 'campus_photos';
+export type PublicTable = Table | 'campus_photos' | 'campus_map_files';
 /** GET-only, bounded-time, paged reader. Publishable keys are sent as apikey, not as fake JWTs. */
 export function createPublicReader(config: ReadConfig, fetcher: typeof fetch = fetch) {
   const base = new URL(config.url);

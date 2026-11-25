@@ -53,6 +53,7 @@ import { TerrainButton } from '../ui/TerrainButton.tsx';
 import { measuredFloorLevels, plinthFloors } from '@campo/core';
 import { deckLayers } from '../map/deck3d.ts';
 import { fetchTerrain } from '../api.ts';
+import { PC_ONLY, SERVER_MODE } from '../storage.ts';
 import { sampleTerrainGrid, terrainBase, terrainTop, type TerrainGrid, type TerrainWall } from '../model/terrain3d.ts';
 import { fineGround, type TerrainTile } from '../model/terrainFootprint.ts';
 import type { RoadSegmentJson } from '../model/roadRibbon.ts';
@@ -179,7 +180,9 @@ export function Workspace({ session }: { session: Session }) {
         setTerrainWalls([]);
         setTerrainTiles([]);
         setTerrainRoads([]);
-        info('고도 그리드를 불러오지 못해 샘플 지형(실제 고도가 아님)을 보여 줍니다.');
+        info(SERVER_MODE
+          ? `실제 고도 지형은 PC 편집기에서만 됩니다. 샘플 지형(실제 고도가 아님)을 보여 줍니다.`
+          : '고도 그리드를 불러오지 못해 샘플 지형(실제 고도가 아님)을 보여 줍니다.');
       },
     );
   };
@@ -858,7 +861,12 @@ export function Workspace({ session }: { session: Session }) {
       const result = await persistCampus([]);
       if (result) {
         const removedText = result.removed.length > 0 ? `, 지운 파일 ${result.removed.length}개` : '';
-        info(`저장했습니다. 쓴 파일 ${result.written.length}개${removedText}. 커밋은 Git에서 해 주세요.`);
+        if (SERVER_MODE) {
+          const skippedText = result.skipped && result.skipped.length > 0 ? ` 서버에 두지 않는 ${result.skipped.join(', ')}은(는) 올리지 않았습니다(PC 편집기 전용).` : '';
+          info(`서버에 저장했습니다(바뀐 파일 ${result.written.length}개${removedText}). 앱은 다음 실행 때 받아 갑니다.${skippedText}`);
+        } else {
+          info(`저장했습니다. 쓴 파일 ${result.written.length}개${removedText}. 커밋은 Git에서 해 주세요.`);
+        }
       }
     } catch (err) {
       fail((err as Error).message);
@@ -1256,7 +1264,9 @@ export function Workspace({ session }: { session: Session }) {
         dirty={dirty}
         notice={notice}
         hint={ui.tool in TOOL_OPTIONS ? toolDef(ui.tool).hint : null}
-        elevation={{ count: elevation.count, busy: elevation.busy, onRecompute: elevation.recompute, dhCount: elevation.dhEdges.length, onOpenDh: () => setDhOpen(true) }}
+        elevation={SERVER_MODE
+          ? { count: 0, busy: false, onRecompute: () => info(PC_ONLY), dhCount: 0, onOpenDh: () => info(PC_ONLY), pcOnly: PC_ONLY }
+          : { count: elevation.count, busy: elevation.busy, onRecompute: elevation.recompute, dhCount: elevation.dhEdges.length, onOpenDh: () => setDhOpen(true) }}
       />
 
       {ctxMenu && contextBuilding && (

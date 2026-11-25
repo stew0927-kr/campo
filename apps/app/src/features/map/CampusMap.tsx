@@ -10,11 +10,11 @@ import { floorLines } from './indoor.ts';
 import { outdoorLines, outdoorPlazas } from './outdoor.ts';
 import { Image } from 'expo-image';
 import type { MapProps, RoadviewPreview } from './mapTypes.ts';
-import { buildMarkers, DECLUTTER_THROTTLE_MS, DeclutterScheduler, floorFacilityNodes, labelLift, MARKER_KIND_LABEL, type MapMarker, type MapView, type PlacedMarker } from './mapLabels.ts';
+import { buildMarkers, DECLUTTER_THROTTLE_MS, DeclutterScheduler, floorFacilityNodes, labelLift, MARKER_KIND_LABEL, type BuildingLabel, type MapMarker, type MapView, type PlacedMarker } from './mapLabels.ts';
 import type { CampusPlace, RoutePoint } from '../../contracts.ts';
 import type { MarkerGroup, PhotoSpot } from '../../photos/roadviewModel.ts';
-import { buildingShapes } from './buildings.ts';
-import { FacilityIcon, MapLabel } from './MapGlyphs.tsx';
+import { buildingLabels, buildingShapes } from './buildings.ts';
+import { BuildingName, FacilityIcon, MapLabel } from './MapGlyphs.tsx';
 import { theme as t } from '../../ui/theme.ts';
 import { WAY_WIDTH } from '../../map/wayWidth.ts';
 export { WAY_WIDTH };
@@ -54,7 +54,7 @@ type ViewProps = Omit<MapProps, 'fitPadding' | 'photoSpots' | 'stepGroups' | 'on
 interface ViewSink { moving: (view: MapView) => void; settled: (view: MapView) => void }
 const CampusMapView = memo(function CampusMapView({ center, label, route, from, to, places, graph, buildingId, level, position, flow, onPoint, onPlace, focus = null, selected = null, fitPadding,
   photoSpots, onPhotoSpot, stepGroups, onStepGroup, preview = null, onOpenPreview,
-  highlightBuildings = false, mappedBuildingIds = NO_IDS, onBuildingPress, hasBuildingPress, markedBuildingId = null, highlight = null, stepFocus = null, onCenter }: ViewProps) {
+  highlightBuildings = false, mappedBuildingIds = NO_IDS, onBuildingPress, hasBuildingPress, pickedBuildingId = null, markedBuildingId = null, highlight = null, stepFocus = null, onCenter }: ViewProps) {
   const camera = useRef<CameraRef>(null);
   const [loaded, setLoaded] = useState(false);
   // Current viewport (center, zoom, bearing, size). Kept in a ref: a region event must not re-render the map. The marker
@@ -82,10 +82,13 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
   const indoorView = buildingId !== null;
   const facilities = useMemo(() => floorFacilityNodes(graph, buildingId, level), [graph, buildingId, level]);
   const routeNodeIds = route?.nodeIds ?? null;
+  // Building names sit on the outdoor map only, and only mapped buildings open the floor picker (never in pick/nav).
+  const nameLabels = useMemo(() => (buildingId === null ? buildingLabels(graph, highlightBuildings && hasBuildingPress ? mappedBuildingIds : NO_IDS) : NO_LABELS),
+    [graph, buildingId, highlightBuildings, hasBuildingPress, mappedBuildingIds]);
   const markers = useMemo(() => {
     const inScope = (place: MapProps['from']) => (place && (buildingId === null ? place.buildingId === null : place.buildingId === buildingId && place.level === level) ? place : null);
-    return buildMarkers({ places, facilities, from: inScope(from), to: inScope(to), selected: inScope(selected), routeNodeIds });
-  }, [places, facilities, from, to, selected, routeNodeIds, buildingId, level]);
+    return buildMarkers({ places, facilities, from: inScope(from), to: inScope(to), selected: inScope(selected), routeNodeIds, buildings: nameLabels });
+  }, [places, facilities, from, to, selected, routeNodeIds, buildingId, level, nameLabels]);
   // Region handlers are stable: the Map's props never change because of a camera move.
   const regionView = useCallback((event: RegionEvent, settled: boolean): MapView => {
     const { center: [lng, lat], zoom: z, bearing, pitch = 0 } = event.nativeEvent;
@@ -108,7 +111,7 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
     onCenter({ lng: viewRef.current.lng, lat: viewRef.current.lat });
   }, [onCenter]);
   const onFailed = useCallback(() => setFailed(true), []);
-  const shapes = useMemo(() => buildingShapes(graph, highlightBuildings ? mappedBuildingIds : [], buildingId), [graph, highlightBuildings, mappedBuildingIds, buildingId]);
+  const shapes = useMemo(() => buildingShapes(graph, highlightBuildings ? mappedBuildingIds : [], buildingId, pickedBuildingId), [graph, highlightBuildings, mappedBuildingIds, buildingId, pickedBuildingId]);
   const marked = useMemo(() => buildingShapes(graph, markedBuildingId ? [markedBuildingId] : []), [graph, markedBuildingId]);
   // Press handlers read the latest data through refs so they stay stable across renders.
   const pressData = useRef({ places, photoSpots, stepGroups, hasBuildingPress });
@@ -167,7 +170,8 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
   const floorRoutePaint = useMemo((): LinePaint => ({ 'line-color': color, 'line-width': 6 }), [color]);
   const visible = (place: MapProps['from']) => place && (buildingId === null || place.buildingId === buildingId && place.level === level);
   return <View accessibilityLabel={label} style={styles.frame} onLayout={onLayout}>
-    <Map style={styles.map} mapStyle={OSM_RASTER_STYLE}
+    {/* The native compass, attribution button and logo are off: the app draws its own compass (bottom left) and OSM_ATTRIBUTION below. */}
+    <Map style={styles.map} mapStyle={OSM_RASTER_STYLE} compass={false} attribution={false} logo={false}
       onRegionIsChanging={onMoving} onRegionDidChange={onSettled}
       onPress={onMapPress}
       onDidFinishLoadingMap={onLoaded} onDidFailLoadingMap={onFailed}>
@@ -215,7 +219,7 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
         {/* Indoors the facility icons carry the meaning; the dots stay small as tap targets for places the icons leave out. */}
         <Layer id="app-place-dots" type="circle" paint={indoorView ? P.placeDotIndoor : P.placeDotOutdoor} />
       </GeoJSONSource>
-      <MarkerLayer markers={markers} indoorView={indoorView} onPlace={onPlace} sink={markerSink} viewRef={viewRef} />
+      <MarkerLayer markers={markers} indoorView={indoorView} onPlace={onPlace} onBuilding={onBuildingPress} pickedBuildingId={pickedBuildingId} sink={markerSink} viewRef={viewRef} />
       {photoSpots.length > 0 && stepGroups.length === 0 && <GeoJSONSource id="app-photo-spots" data={spotData} hitbox={HITBOX} onPress={onSpotDot}><Layer id="app-photo-spot-dots" type="circle" paint={P.spotDot} /></GeoJSONSource>}
       {stepGroups.length > 0 && <GeoJSONSource id="app-step-photos" data={groupData} hitbox={HITBOX} onPress={onGroupDot}>
         <Layer id="app-step-photo-dots" type="circle" paint={P.stepDot} />
@@ -235,14 +239,15 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
 type RegionEvent = { nativeEvent: { center: [number, number] | number[]; zoom: number; bearing: number; pitch?: number } };
 type FeaturePressEvent = { nativeEvent: { features: { properties?: Record<string, unknown> | null }[] }; stopPropagation: () => void };
 const NO_IDS: readonly string[] = [];
+const NO_LABELS: readonly BuildingLabel[] = [];
 /**
  * Facility icons and name labels. The declutter layout lives here, not in the map: while a finger moves the map, a new
  * layout re-renders only these markers (never the sources and layers above), and that render runs as a transition so it
  * yields to the next gesture frame. Mid-gesture layouts are throttled (MOVING_LAYOUT_MS) and skipped while nothing moved
  * enough; when the map settles the exact layout is applied at once.
  */
-const MarkerLayer = memo(function MarkerLayer({ markers, indoorView, onPlace, sink, viewRef }: {
-  markers: readonly MapMarker[]; indoorView: boolean; onPlace: (place: CampusPlace) => void;
+const MarkerLayer = memo(function MarkerLayer({ markers, indoorView, onPlace, onBuilding, pickedBuildingId, sink, viewRef }: {
+  markers: readonly MapMarker[]; indoorView: boolean; onPlace: (place: CampusPlace) => void; onBuilding: (id: string) => void; pickedBuildingId: string | null;
   sink: { current: ViewSink | null }; viewRef: { current: MapView };
 }) {
   const scheduler = useRef<DeclutterScheduler | null>(null);
@@ -277,10 +282,12 @@ const MarkerLayer = memo(function MarkerLayer({ markers, indoorView, onPlace, si
     return () => { sink.current = null; clear(); };
   }, [sink, viewRef, apply]);
   const icons = useMemo(() => (indoorView ? placed.filter((p) => p.marker.tone === 'normal').map((p) => p.marker) : []), [placed, indoorView]);
-  const labels = useMemo(() => placed.filter((p) => p.label && p.marker.name).map((p) => p.marker), [placed]);
+  const labels = useMemo(() => placed.filter((p) => p.label && p.marker.name && p.marker.kind !== 'building').map((p) => p.marker), [placed]);
+  const names = useMemo(() => placed.filter((p) => p.label && p.marker.kind === 'building').map((p) => p.marker), [placed]);
   return <>
     {icons.map((marker) => <FacilityMarker key={`icon:${marker.id}`} marker={marker} onPlace={onPlace} />)}
     {labels.map((marker) => <LabelMarker key={`label:${marker.id}`} marker={marker} />)}
+    {names.map((marker) => <BuildingNameMarker key={`building:${marker.id}`} marker={marker} picked={marker.id === pickedBuildingId} onBuilding={onBuilding} />)}
   </>;
 });
 /** Mid-gesture re-layout interval. Longer than the scheduler default: markers re-mount less often while a finger moves. */
@@ -299,7 +306,9 @@ const P = {
   plazaFill: { 'fill-color': '#E2E6EB', 'fill-opacity': 1 }, plazaLine: { 'line-color': '#CFD6DF', 'line-width': 0.8 },
   walk: { 'line-color': '#DCE1E7', 'line-width': WAY_WIDTH }, ramp: { 'line-color': '#C7DDD1', 'line-width': WAY_WIDTH }, stairs: { 'line-color': '#E1D0BA', 'line-width': WAY_WIDTH },
   stairTicks: { 'line-color': '#B89E7E', 'line-width': ['interpolate', ['linear'], ['zoom'], 15, 1, 19, 2.2], 'line-dasharray': [1.2, 1.8] },
-  mappedFill: { 'fill-color': t.color.primary, 'fill-opacity': ['case', ['get', 'current'], 0, 0.14] }, mappedLine: { 'line-color': t.color.primary, 'line-width': 2, 'line-opacity': 0.9 },
+  // Mapped buildings: a faint blue by default; the one whose floor picker is open gets a darker, thicker border.
+  mappedFill: { 'fill-color': t.color.primary, 'fill-opacity': ['case', ['get', 'current'], 0, ['get', 'picked'], 0.28, 0.14] },
+  mappedLine: { 'line-color': ['case', ['get', 'picked'], '#0B3FC4', t.color.primary], 'line-width': ['case', ['get', 'picked'], 4, 1.5], 'line-opacity': ['case', ['get', 'picked'], 1, 0.55] },
   markedLine: { 'line-color': t.color.primary, 'line-width': 2, 'line-dasharray': [2, 1.5] },
   mask: { 'fill-color': '#000000', 'fill-opacity': 0.35 },
   buildingFill: { 'fill-color': '#E4EAF1', 'fill-opacity': 0.85 }, buildingBorder: { 'line-color': '#63788D', 'line-width': 2 },
@@ -372,6 +381,17 @@ const FacilityMarker = memo(function FacilityMarker({ marker, onPlace }: { marke
 const LabelMarker = memo(function LabelMarker({ marker }: { marker: MapMarker }) {
   return <Marker id={`place-label:${marker.id}`} lngLat={[marker.lng, marker.lat]} anchor="bottom" offset={[0, -labelLift(marker.tone)]}>
     <View pointerEvents="none"><MapLabel name={marker.name!} kind={marker.kind} tone={marker.tone} /></View>
+  </Marker>;
+});
+/**
+ * Building name on top of its footprint. A React Native view, so it stays upright on screen however the map is rotated.
+ * A mapped building's name is also a tap target for the floor picker (it shares the placement/throttle path of the other markers).
+ */
+const BuildingNameMarker = memo(function BuildingNameMarker({ marker, picked, onBuilding }: { marker: MapMarker; picked: boolean; onBuilding: (id: string) => void }) {
+  return <Marker id={`building-name:${marker.id}`} lngLat={[marker.lng, marker.lat]} anchor="center">
+    {marker.tappable
+      ? <Pressable accessibilityRole="button" accessibilityLabel={`${marker.name}, 층 선택`} onPress={() => onBuilding(marker.id)}><BuildingName name={marker.name!} picked={picked} /></Pressable>
+      : <View pointerEvents="none"><BuildingName name={marker.name!} picked={picked} /></View>}
   </Marker>;
 });
 const DOT = 14;

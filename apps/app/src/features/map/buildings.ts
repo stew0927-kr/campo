@@ -1,8 +1,9 @@
-// 지도 위 '건물에서 층 고르기'에 쓰는 순수 함수. React를 import하지 않는다.
+// 지도 위 건물 윤곽·이름표·층 고르기에 쓰는 순수 함수. React를 import하지 않는다.
 // 실내 매핑 데이터가 있어 들어갈 수 있는 건물(장소가 1곳 이상)만 강조하고, 그 모양·가운데·층 칩 문구를 만든다.
 import { getBuildingOutlineForLevel, type CampusGraph } from '@campo/core';
 import type { FeatureCollection, Polygon } from 'geojson';
 import type { CampusBuilding, CampusPlace, RoutePoint } from '../../contracts.ts';
+import type { BuildingLabel } from './mapLabels.ts';
 import { OUTDOOR_GROUP, buildingGroups } from './placeTree.ts';
 
 /** 실내 매핑 건물(buildingGroups 기준 장소 수 > 0), 장소가 많은 순. */
@@ -14,12 +15,12 @@ export function mappedBuildings(places: readonly CampusPlace[], buildings: reado
 }
 
 /** 강조할 건물 모양(feature 속성 id·name·current). 그래프에 없는 건물은 뺀다. */
-export function buildingShapes(graph: CampusGraph | null, ids: readonly string[], currentId: string | null = null): FeatureCollection<Polygon> {
+export function buildingShapes(graph: CampusGraph | null, ids: readonly string[], currentId: string | null = null, pickedId: string | null = null): FeatureCollection<Polygon> {
   const features: FeatureCollection<Polygon>['features'] = [];
   for (const id of ids) {
     const building = graph?.buildings.get(id);
     if (!building) continue;
-    features.push({ type: 'Feature', properties: { id, name: building.properties.name, current: id === currentId }, geometry: { type: 'Polygon', coordinates: getBuildingOutlineForLevel(building) } });
+    features.push({ type: 'Feature', properties: { id, name: building.properties.name, current: id === currentId, picked: id === pickedId }, geometry: { type: 'Polygon', coordinates: getBuildingOutlineForLevel(building) } });
   }
   return { type: 'FeatureCollection', features };
 }
@@ -36,6 +37,31 @@ export function buildingCenter(graph: CampusGraph | null, id: string, places: re
   const own = places.filter((p) => p.buildingId === id);
   if (!own.length) return null;
   return { lng: own.reduce((s, p) => s + p.lng, 0) / own.length, lat: own.reduce((s, p) => s + p.lat, 0) / own.length };
+}
+
+const M_PER_DEG_LAT = 110_540, M_PER_DEG_LNG = 111_320;
+/**
+ * 지도에 얹을 건물 이름표 재료: 이름이 있는 건물마다 가운데(buildingCenter), 이름, 외곽선 긴 변(m).
+ * `tappableIds`에 든 건물(실내 매핑 건물)은 이름을 눌러 층 선택을 열 수 있다. 그래프가 같으면 결과를 다시 쓸 수 있도록 호출 쪽이 memo한다.
+ */
+export function buildingLabels(graph: CampusGraph | null, tappableIds: readonly string[] = []): BuildingLabel[] {
+  if (!graph) return [];
+  const tappable = new Set(tappableIds);
+  const out: BuildingLabel[] = [];
+  for (const [id, building] of graph.buildings) {
+    const name = building.properties.name?.trim();
+    const center = buildingCenter(graph, id, []);
+    const ring = building.geometry.coordinates[0];
+    if (!name || !center || !ring) continue;
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    for (const [lng, lat] of ring) {
+      if (typeof lng !== 'number' || typeof lat !== 'number') continue;
+      minLng = Math.min(minLng, lng); maxLng = Math.max(maxLng, lng); minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
+    }
+    const spanM = Math.max((maxLng - minLng) * M_PER_DEG_LNG * Math.cos((center.lat * Math.PI) / 180), (maxLat - minLat) * M_PER_DEG_LAT);
+    out.push({ id, name, lng: center.lng, lat: center.lat, spanM: Number.isFinite(spanM) ? spanM : 0, tappable: tappable.has(id) });
+  }
+  return out;
 }
 
 /** 층 칩 글자: B1 / 1F. */

@@ -18,6 +18,7 @@ export function MapCanvas(p: MapProps) {
     <Button title="검사: 캠퍼스 밖 선택" onPress={() => p.onPoint({ lat: 0, lng: 0 })} />
     {p.places.map((place) => <Button key={place.id} title={`검사 지점: ${place.name}`} onPress={() => p.onPlace(place)} />)}
     {p.highlightBuildings && <Body>{`검사 건물 강조 ${p.mappedBuildingIds?.length ?? 0}곳`}</Body>}
+    {p.pickedBuildingId && <Body>{`검사 선택 건물: ${p.pickedBuildingId}`}</Body>}
     {p.markedBuildingId && <Body>{`검사 검색 건물: ${p.markedBuildingId}`}</Body>}
     {p.buildingId && <Body>{`검사 실내: ${p.buildingId} ${p.level}층`}</Body>}
     {p.highlightBuildings && p.mappedBuildingIds?.map((id) => <Button key={id} title={`검사 건물 누르기: ${id}`} onPress={() => p.onBuildingPress?.(id)} />)}

@@ -86,13 +86,6 @@ export function SelectionBar({ name, detail, onBack, onSearch }: { name: string;
     </Pressable>
   </View>;
 }
-/** Floating 건물 모양 switch: on → mapped buildings are highlighted and a tap on one opens its floor picker. */
-export function BuildingToggle({ value, onChange }: { value: boolean; onChange: (value: boolean) => void }) {
-  return <Pressable accessibilityRole="switch" accessibilityLabel="건물에서 층 고르기" accessibilityState={{ checked: value }} onPress={() => onChange(!value)}
-    style={({ pressed }) => [c.round, value && c.roundOn, pressed && { backgroundColor: value ? t.color.primaryPressed : t.color.sunken }]}>
-    <BuildingIcon color={value ? t.color.surface : t.color.text} />
-  </Pressable>;
-}
 /** Small card over the map: the tapped building's floors. Picking one enters that building and floor. */
 export function FloorPicker({ name, detail, levels, current, onLevel, onClose }: { name: string; detail: string; levels: readonly number[]; current: number | null; onLevel: (level: number) => void; onClose: () => void }) {
   return <View style={c.floorCard} accessibilityLabel={`${name} 층 선택`}>
@@ -441,7 +434,6 @@ const QUICK_SLOP = { top: 4, bottom: 4, left: 2, right: 2 };
 const c = StyleSheet.create({
   dot: { width: 12, height: 12, borderRadius: 6, borderWidth: 3.5, backgroundColor: 'white' },
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: t.color.surface, alignItems: 'center', justifyContent: 'center', ...floating },
-  roundOn: { backgroundColor: t.color.primary },
   selectionPill: { gap: 12, paddingLeft: 14 },
   selectionMark: { width: 26, height: 26, borderRadius: 13, backgroundColor: t.color.soft, alignItems: 'center', justifyContent: 'center' },
   selectionMarkDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 2.5, borderColor: t.color.primary, backgroundColor: t.color.surface },

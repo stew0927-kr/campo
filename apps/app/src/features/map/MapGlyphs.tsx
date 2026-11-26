@@ -1,8 +1,8 @@
-/* 지도 위 시설 아이콘·이름표·건물 아이콘. 아이콘 폰트나 SVG 없이 View/Text로만 그린다. MapLibre는 import하지 않는다. */
+/* 지도 위 시설 아이콘·이름표·건물 아이콘(건물 이름 글자는 네이티브 SymbolLayer, buildingNames.ts). 아이콘 폰트나 SVG 없이 View/Text로만 그린다. MapLibre는 import하지 않는다. */
 import { StyleSheet, Text, View } from 'react-native';
 import { floating, theme as t } from '../../ui/theme.ts';
 import type { MarkerKind, MarkerTone } from './mapLabels.ts';
-import { BUILDING_FONT_PX, BUILDING_LABEL_MAX_LINES, BUILDING_LABEL_MAX_WIDTH_PX, BUILDING_LINE_PX, ICON_SIZE_PX, LABEL_MAX_WIDTH_PX } from './mapLabels.ts';
+import { ICON_SIZE_PX, LABEL_MAX_WIDTH_PX } from './mapLabels.ts';
 
 const TONE_COLOR: Record<Exclude<MarkerTone, 'normal'>, string> = { start: t.color.start, end: t.color.end, selected: t.color.primary };
 
@@ -50,14 +50,6 @@ export function MapLabel({ name, kind, tone }: { name: string; kind: MarkerKind;
   </View>;
 }
 
-/**
- * 건물 위에 얹는 이름 글자(네이버지도 식): 바탕 없이 흰 테두리 글자, 화면 기준 수평. 지도가 돌아가도 React Native 뷰라 눕지 않는다.
- * 겹치지 않게 놓는 계산(buildingLabelSize)이 같은 폭·줄 수를 가정한다.
- */
-export function BuildingName({ name, picked = false }: { name: string; picked?: boolean }) {
-  return <Text numberOfLines={BUILDING_LABEL_MAX_LINES} ellipsizeMode="tail" style={[g.buildingName, picked && g.buildingNamePicked]}>{name}</Text>;
-}
-
 /** 건물 모양 아이콘: 건물 몸체와 창문 2×3, 바닥선. */
 export function BuildingIcon({ color = t.color.text }: { color?: string }) {
   return <View style={g.building}>
@@ -88,8 +80,6 @@ const g = StyleSheet.create({
   label: { flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: LABEL_MAX_WIDTH_PX, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: t.color.border, backgroundColor: t.color.surface, shadowColor: floating.shadowColor, shadowOpacity: 0.08, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   labelDot: { width: 6, height: 6, borderRadius: 3 },
   labelText: { flexShrink: 1, fontSize: t.type.micro, lineHeight: 15, fontWeight: '600', color: t.color.text },
-  buildingName: { maxWidth: BUILDING_LABEL_MAX_WIDTH_PX, textAlign: 'center', fontSize: BUILDING_FONT_PX, lineHeight: BUILDING_LINE_PX, fontWeight: '700', color: t.facility.building, textShadowColor: '#FFFFFF', textShadowRadius: 3, textShadowOffset: { width: 0, height: 0 }, includeFontPadding: false },
-  buildingNamePicked: { color: t.color.primary },
   building: { width: 20, height: 20, alignItems: 'center', justifyContent: 'flex-end' },
   buildingBody: { width: 13, height: 16, borderWidth: 2, borderBottomWidth: 0, borderTopLeftRadius: 2, borderTopRightRadius: 2, paddingTop: 2, gap: 2, alignItems: 'center' },
   windowRow: { flexDirection: 'row', gap: 2.5 },

@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import type { BundledCampus } from '../../campus/types.ts';
 import type { CampusPlace, CampusRouteRequest, TravelMode, PhotoCatalog, RoutePoint } from '../../contracts.ts';
 import { EMPTY_PHOTO_CATALOG } from '../../contracts.ts';
-import { useRoutePhotos } from '../../hooks/useRoutePhotos.ts';
+import { routeAlongPhotos } from '../../photos/routeAlongPhotos.ts';
 import { combineRoundTrip, photoSpots as spotsOf, placeLine, placeLookup, roadviewFrames, spotFrame, stepMarkerGroups, type MarkerGroup, type PhotoSpot, type RoadviewFrame } from '../../photos/roadviewModel.ts';
 import { headingLabel } from '../../photos/demoPhotoArt.ts';
 import { useCampusData } from '../../hooks/useCampusData.ts';
@@ -23,7 +23,7 @@ import { endpointFor, insideOutline, placeDetail, placesInScope, pointPlace, req
 import { slopeSections } from '../../route/slopeSections.ts';
 import { getBuildingOutlineForLevel } from '@campo/core';
 import { useSensorFixes } from './useSensorFixes.ts';
-import { BackIcon, EndpointCard, EndpointDot, FloatChip, FloorChips, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
+import { BackIcon, EndpointCard, Stack3DIcon, EndpointDot, FloatChip, FloorChips, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
 import { buildingCenter, floorChoice, mappedBuildings } from './buildings.ts';
 import { RoadviewScreen } from './RoadviewScreen.tsx';
 import { ROADVIEW_DEMO_CAMPUS, ROADVIEW_DEMO_CATALOG, RV } from './roadviewDemo.ts';
@@ -31,7 +31,7 @@ import { nearestRestroom } from './restroom.ts';
 import { nearestRestroomTitle, type RestroomWanted } from './restroomGender.ts';
 import type { RoadviewPreview } from './mapTypes.ts';
 import { navCards, stepPhotoEntry } from './navModel.ts';
-import { centerPickInfo } from './centerPick.ts';
+import { centerPickInfo, pressPinInfo } from './centerPick.ts';
 
 type Field = 'from' | 'to';
 type PickTarget = Field | 'restroom';
@@ -102,6 +102,10 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   /** 마지막으로 멈춘 지도 가운데. 핀 고르기를 시작할 때 첫 좌표로 쓴다(평소에는 화면을 다시 그리지 않는다). */
   const mapCenter = useRef<RoutePoint | null>(null);
   const [flow, setFlow] = useState<'enter' | 'queue' | 'exit' | null>(null);
+  /** 지도를 길게 눌러 띄운 핀: 그 자리를 출발지/도착지로 고른다. */
+  const [pressPin, setPressPin] = useState<RoutePoint | null>(null);
+  /** 3D 보기(층별 수직 분리). */
+  const [threeD, setThreeD] = useState(false);
   const [devOpen, setDevOpen] = useState(false);
   const [placesOpen, setPlacesOpen] = useState(false);
   const [placesExpanded, setPlacesExpanded] = useState(false);
@@ -126,7 +130,9 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   }, [sections, slopeKey]);
   // Demo data uses the virtual roadview photos (no network); the real campus uses the provider's catalog.
   const effectiveCatalog = demo === 'none' ? photoCatalog : demo === 'roadview' ? ROADVIEW_DEMO_CATALOG : EMPTY_PHOTO_CATALOG;
-  const stepPhotos = useRoutePhotos(shownRoute, effectiveCatalog);
+  // The map shows every photo point the route passes (not only step starts), closest to the way walked there; a photo that does
+  // not face that way is still shown, with the "정면이 아닐 수 있습니다" badge (routeAlongPhotos). The contract hook stays as is.
+  const stepPhotos = useMemo(() => routeAlongPhotos(shownRoute, effectiveCatalog, data.graph), [shownRoute, effectiveCatalog, data.graph]);
   const lookup = useMemo(() => placeLookup(data.graph, data.places), [data.graph, data.places]);
   const frames = useMemo(() => roadviewFrames(shownRoute, stepPhotos, effectiveCatalog, lookup, trip?.backFrom ?? null), [shownRoute, stepPhotos, effectiveCatalog, lookup, trip]);
   const stepGroups = useMemo(() => stepMarkerGroups(stepPhotos, shownRoute?.steps.length ?? 0, trip?.backFrom ?? null), [stepPhotos, shownRoute, trip]);
@@ -146,7 +152,9 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (!card) return;
     setBuildingId(card.buildingId); setLevel(card.level);
   }, [card?.index, card?.buildingId, card?.level, navOn]);
-  const stepFocus = useMemo(() => (card && card.coordinates.length >= 2 ? { key: `${navIndex}:${shownRoute?.nodeIds.join(',') ?? ''}:${shownRoute?.distanceM ?? 0}`, coordinates: card.coordinates } : null), [card, navIndex, shownRoute]);
+  const stepFocus = useMemo(() => (card && card.coordinates.length >= 2 ? { key: `${navIndex}:${shownRoute?.nodeIds.join(',') ?? ''}:${shownRoute?.distanceM ?? 0}`, coordinates: card.coordinates, bearingDeg: card.bearingDeg } : null), [card, navIndex, shownRoute]);
+  // Photo pins of the step shown during navigation (the first one also shows as the bubble).
+  const navGroups = useMemo(() => (card ? stepMarkerGroups(stepPhotos.map((s) => (s.stepIndex === card.index ? s : { ...s, photo: null })), shownRoute?.steps.length ?? 0, trip?.backFrom ?? null) : []), [card, stepPhotos, shownRoute, trip]);
   const matches = useMemo(() => searchPlaces(data.places, data.buildings, query), [data.places, data.buildings, query]);
   const scopePlaces = useMemo(() => placesInScope(data.places, buildingId, level), [data.places, buildingId, level]);
   const visiblePlaces = placesExpanded ? scopePlaces : scopePlaces.slice(0, 20);
@@ -162,6 +170,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   // roadview → bubble → search → dev menu → floor picker → map pick → route → route input → selection (→ its search).
   const back = useCallback(() => {
     if (roadview !== null) setRoadview(null);
+    else if (pressPin !== null) setPressPin(null);
     else if (preview !== null) setPreview(null);
     else if (search !== null) setSearch(null);
     else if (devOpen) setDevOpen(false);
@@ -171,8 +180,8 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     else if (request !== null) { setRequest(null); }
     else if (view === 'plan') closePlan();
     else clearSelection();
-  }, [roadview, preview, search, devOpen, floorPicker, mapPick, nav, request, view, selectQuery]);
-  useScreenBack(active && (roadview !== null || preview !== null || search !== null || devOpen || floorPicker !== null || mapPick !== null || nav !== null || request !== null || view === 'plan' || selected !== null), back);
+  }, [roadview, pressPin, preview, search, devOpen, floorPicker, mapPick, nav, request, view, selectQuery]);
+  useScreenBack(active && (roadview !== null || pressPin !== null || preview !== null || search !== null || devOpen || floorPicker !== null || mapPick !== null || nav !== null || request !== null || view === 'plan' || selected !== null), back);
   const building = data.buildings.find((item) => item.id === buildingId);
   const indoorFeature = buildingId ? data.graph?.buildings.get(buildingId) : undefined;
   const indoorOutline = useMemo(() => (indoorFeature ? getBuildingOutlineForLevel(indoorFeature, level) : null), [indoorFeature, level]);
@@ -226,7 +235,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (next && data.status === 'ready') setRequest(next);
   }
   function choose(place: CampusPlace, target: Field) {
-    clearGps(); setRestroom(null);
+    clearGps(); setRestroom(null); setPressPin(null);
     const start = target === 'from' ? place : from;
     const end = target === 'to' ? place : to;
     setFrom(start); setTo(end);
@@ -287,7 +296,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (request) setRequest(requestFor(from, to, next));
   }
   function openSearch(target: SearchTarget) {
-    setQuery(''); setSearch(target); setPreview(null); setFloorPicker(null);
+    setPressPin(null); setQuery(''); setSearch(target); setPreview(null); setFloorPicker(null);
     // The restroom sheet opens on the gender of the restroom shown now, else 전체.
     if (target === 'restroom') setRestroomGender(restroom?.gender ?? 'any');
   }
@@ -337,7 +346,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     focusOn({ lng: group.lngLat[0], lat: group.lngLat[1] });
   }
   function showStep(stepIndex: number) {
-    const index = stepPhotos.findIndex((s) => s.stepIndex === stepIndex);
+    const index = stepPhotos.findIndex((s) => s.stepIndex === stepIndex && s.photo !== null);
     const group = stepGroups.find((g) => g.entries.some((e) => e.index === index));
     if (group) showStepGroup({ ...group, entries: group.entries.filter((e) => e.index === index) });
   }
@@ -391,17 +400,34 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (run) findRoute(start, end);
   }
   /** 위치 안내 시작: 사진·GPS가 없어도 단계 카드와 지도로 안내한다. GPS는 이때부터 켠다. */
-  function startNav() { gps.reset(); lastReroute.current = -1; setPreview(null); setSlopeKey(null); setNav({ index: 0 }); }
+  function startNav() { gps.reset(); lastReroute.current = -1; setPreview(null); setPressPin(null); setSlopeKey(null); setNav({ index: 0 }); }
   /** 위치 안내 끝: GPS를 끄고 경로 결과(실외 지도)로 돌아간다. */
   function stopNav() { setNav(null); setPreview(null); setBuildingId(null); setLevel(null); }
   function moveStep(delta: number) { setPreview(null); setNav((old) => (old ? { index: Math.min(Math.max(0, old.index + delta), Math.max(0, cards.length - 1)) } : old)); }
   /** '지도에서 선택': 지도 가운데 핀을 움직여 고른다. 실외 지도에서, 이미 고른 그 끝이 있으면 그 자리에서 시작한다. */
   function startMapPick(target: PickTarget) {
-    setSearch(null); setView('plan'); setMapPick(target); setFloorPicker(null); setPreview(null);
+    setPressPin(null); setSearch(null); setView('plan'); setMapPick(target); setFloorPicker(null); setPreview(null);
     setBuildingId(null); setLevel(null);
     setPickCenter(mapCenter.current);
     const existing = target === 'from' ? from : target === 'to' ? to : null;
     if (existing && existing.buildingId === null) focusOn(existing);
+  }
+  /**
+   * 지도를 길게 눌렀을 때: 그 자리에 핀을 띄우고 출발지/도착지를 고르게 한다. 가운데 핀 고르기·위치 안내·검색·로드뷰 중에는
+   * 받지 않는다(서로 방해하지 않게). 실내 도면에서 건물 안을 누르면 받지 않는다(실외 지점만).
+   */
+  function longPress(point: RoutePoint) {
+    if (mapPick || screen === 'nav' || search !== null || roadview !== null || data.status !== 'ready') return;
+    if (buildingId && !outsideIndoor(point)) return;
+    setPreview(null); setFloorPicker(null); setDevOpen(false); setSelected(null); setSelectQuery(null);
+    setPressPin(point);
+  }
+  function choosePressed(target: Field) {
+    if (!pressPin) return;
+    const info = pressPinInfo(data.graph, data.places, pressPin);
+    const place = info.place ?? pointPlace(pressPin, info.title);
+    choose(place, target);
+    if (info.far) setMessage(info.detail);
   }
   function confirmPick() {
     if (!mapPick || !pickCenter) return;
@@ -603,21 +629,38 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
         onLevel={(floor) => enterBuilding(picker.id, floor)} onClose={() => setFloorPicker(null)} />
     </View>
   </View> : null;
+  const pressInfo = useMemo(() => (pressPin ? pressPinInfo(data.graph, data.places, pressPin) : null), [pressPin, data.graph, data.places]);
+  const pressSheet = pressPin && pressInfo && (screen === 'home' || screen === 'plan' || screen === 'route') ? <View style={[st.floorSheet, { paddingHorizontal: layout.padding }]}>
+    <View style={[st.pressCard, { width: '100%', maxWidth: layout.modalMaxWidth, alignSelf: 'center' }]} accessibilityLabel="길게 눌러 고른 위치">
+      <View style={st.rowBetween}>
+        <View style={{ flex: 1, minWidth: 0, gap: 2 }} accessibilityLiveRegion="polite">
+          <Text accessibilityRole="header" numberOfLines={2} style={st.pickTitle}>{pressInfo.title}</Text>
+          <Text style={pressInfo.far ? st.pressFar : st.caption}>{pressInfo.detail}</Text>
+        </View>
+        <TextButton title="닫기" onPress={() => setPressPin(null)} />
+      </View>
+      <ActionRow>
+        <View style={{ flex: 1 }}><Button secondary title="출발지로" onPress={() => choosePressed('from')} /></View>
+        <View style={{ flex: 1 }}><Button title="도착지로" onPress={() => choosePressed('to')} /></View>
+      </ActionRow>
+    </View>
+  </View> : null;
   return <View style={st.root} onLayout={(event) => setAreaHeight(event.nativeEvent.layout.height)}>
     <View style={st.mapArea}>
       <MapCanvas center={data.campus?.center ?? { lat: 37.5572, lng: 127.045 }} label={demo !== 'none' ? '가상 시험 캠퍼스' : building?.name ?? '한양대학교 서울캠퍼스'} route={shownRoute} from={from} to={to} places={scopePlaces} graph={data.graph} buildingId={buildingId} level={level}
         position={navOn && sensors.running ? gps.position : myLocation} flow={flow}
         focus={focus} selected={screen === 'home' ? selected : null} fitPadding={{ top: fitTop, bottom: 48, left: 36, right: 36 }}
-        photoSpots={screen === 'home' ? spots : []} onPhotoSpot={showSpot} stepGroups={screen === 'route' ? stepGroups : []} onStepGroup={showStepGroup}
-        preview={screen === 'pick' ? null : screen === 'nav' ? navPreview : preview} onOpenPreview={openRoadview}
-        stepFocus={screen === 'nav' ? stepFocus : null}
+        photoSpots={screen === 'home' ? spots : []} onPhotoSpot={showSpot} stepGroups={screen === 'route' ? stepGroups : screen === 'nav' ? navGroups : []} onStepGroup={showStepGroup}
+        preview={screen === 'pick' ? null : screen === 'nav' ? preview ?? navPreview : preview} onOpenPreview={openRoadview}
+        stepFocus={screen === 'nav' ? stepFocus : null} threeD={threeD}
+        onLongPress={longPress} pressPin={screen === 'pick' || screen === 'nav' ? null : pressPin}
         onCenter={(point) => { mapCenter.current = point; if (mapPick) setPickCenter(point); }}
         highlightBuildings={buildingsTappable} mappedBuildingIds={mappedIds} onBuildingPress={pressBuilding} pickedBuildingId={buildingsTappable ? floorPicker : null}
         markedBuildingId={search === null && buildingsTappable ? null : searchBuilding}
         onPoint={(point) => {
           // Picking moves the map under the fixed centre pin; a tap does not pick.
           if (mapPick || screen === 'nav') return;
-          setPreview(null); if (buildingId && outsideIndoor(point)) setMessage(INDOOR_OUTSIDE_HINT);
+          setPreview(null); setPressPin(null); if (buildingId && outsideIndoor(point)) setMessage(INDOOR_OUTSIDE_HINT);
         }}
         highlight={screen === 'route' ? slopeFocus : null}
         onPlace={(place) => { if (mapPick) focusOn(place); else if (screen === 'home') { setSelected(place); setSelectQuery(null); setDevOpen(false); setFloorPicker(null); } }} />
@@ -661,11 +704,12 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       </View>}
       {screen !== 'pick' && search === null && <View style={st.bottomStack} pointerEvents="box-none">
         <View style={st.fabs} pointerEvents="box-none">
+          <RoundButton label={threeD ? '3D 보기 끄기' : '3D 보기, 건물 층을 세워서 보기'} selected={threeD} onPress={() => setThreeD((value) => !value)}><Stack3DIcon on={threeD} /></RoundButton>
           {demo === 'none' && <RoundButton label="내 위치로 이동" busy={gpsBusy} onPress={() => void locateMe()}><LocateIcon color={myLocation ? t.color.primary : t.color.text} /></RoundButton>}
         </View>
       </View>}
     </View>
-    {search !== null ? searchSheet : floorSheet ?? (screen === 'home' ? homeSheet : screen === 'plan' ? planSheet : screen === 'route' ? routeSheet : screen === 'nav' ? navPanel : pickSheet)}
+    {search !== null ? searchSheet : pressSheet ?? floorSheet ?? (screen === 'home' ? homeSheet : screen === 'plan' ? planSheet : screen === 'route' ? routeSheet : screen === 'nav' ? navPanel : pickSheet)}
     <RoadviewScreen visible={roadview !== null} frames={roadview?.frames ?? []} initialIndex={roadview?.index ?? 0} route={roadview?.route ? shownRoute?.polyline ?? null : null} onClose={() => setRoadview(null)} />
   </View>;
 }
@@ -688,6 +732,8 @@ function SlopeCard({ message, steep, on, onPress }: { message: string; steep: bo
 
 const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: t.color.bg, overflow: 'hidden' },
+  pressCard: { gap: 12, paddingVertical: 4 },
+  pressFar: { fontSize: 13, lineHeight: 18, color: '#8A5200' },
   mapArea: { flex: 1, minHeight: 0 },
   top: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 12 },
   topInner: { width: '100%', alignSelf: 'center', gap: 10 },

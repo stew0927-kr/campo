@@ -50,3 +50,21 @@ export function centerPickInfo(graph: CampusGraph | null, places: readonly Campu
   const detail = [inPlaza ? '평지(광장) 안 · 평지 안으로 걸어 안내합니다' : null, near].filter(Boolean).join(' · ') || '가장 가까운 걷는 길에 이어 안내합니다.';
   return { title, detail, place: null };
 }
+
+/** 길게 누른 핀이 가장 가까운 실외 지점에서 이보다 멀면(m) 경로를 못 찾을 수 있다고 미리 알린다. */
+export const PRESS_FAR_M = 120;
+export const PRESS_FAR_TEXT = '캠퍼스 걷는 길에서 멀어 경로를 찾지 못할 수 있습니다. 찾지 못하면 길 가까이를 다시 길게 눌러 주세요.';
+
+/** 길게 누른 지점의 핀 설명: 가운데 핀 고르기와 같은 문구에, 걷는 길에서 멀면 안내를 붙인다. */
+export function pressPinInfo(graph: CampusGraph | null, places: readonly CampusPlace[], point: RoutePoint): CenterPickInfo & { far: boolean } {
+  const info = centerPickInfo(graph, places, point);
+  let nearest = Number.POSITIVE_INFINITY;
+  for (const node of graph?.nodes.values() ?? []) {
+    if ((node.properties.building_id ?? null) !== null) continue;
+    const [lng, lat] = node.geometry.coordinates;
+    if (typeof lng !== 'number' || typeof lat !== 'number') continue;
+    nearest = Math.min(nearest, distanceM([point.lng, point.lat], [lng, lat]));
+  }
+  const far = graph !== null && nearest > PRESS_FAR_M;
+  return { ...info, detail: far ? PRESS_FAR_TEXT : info.detail, far };
+}

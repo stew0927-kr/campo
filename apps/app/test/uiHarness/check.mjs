@@ -655,24 +655,25 @@ try {
   });
   await scenario('roadview: open, move by index, full screen, close and back key, step bubbles', async (p) => {
     await useDemo(p, '실내·실외 로드뷰 시험', '정문 → 가상 201호 강의실'); await text(p, '검사 경로 좌표').waitFor();
+    // 13 scenes: the 8 step points, the 2F hall the route passes mid-step and 4 photo points within 18 m of the route (routeAlongPhotos).
     await button(p, '로드뷰로 보기').click(); const rv = roadview(p); await rv.waitFor();
-    await rv.getByText('1 / 8 · 가상 정문').waitFor(); assert.equal(await button(p, '이전 단계').isDisabled(), true);
-    for (let i = 2; i <= 8; i++) { await button(p, '다음 단계').click(); await rv.getByText(new RegExp(`^${i} / 8 · `)).waitFor(); }
-    assert.equal(await button(p, '다음 단계').isDisabled(), true); await button(p, '이전 단계').click(); await rv.getByText(/^7 \/ 8 · /).waitFor();
+    await rv.getByText('1 / 13 · 가상 정문').waitFor(); assert.equal(await button(p, '이전 단계').isDisabled(), true);
+    for (let i = 2; i <= 13; i++) { await button(p, '다음 단계').click(); await rv.getByText(new RegExp(`^${i} / 13 · `)).waitFor(); }
+    assert.equal(await button(p, '다음 단계').isDisabled(), true); await button(p, '이전 단계').click(); await rv.getByText(/^12 \/ 13 · /).waitFor();
     await button(p, '전체화면으로 보기').click(); await absent(rv.getByText(/^검사 미니 지도/));
     await button(p, '분할 화면으로 돌아가기').click(); await rv.getByText(/^검사 미니 지도/).waitFor();
     await button(p, '로드뷰 닫기').click(); await absent(roadview(p));
-    await button(p, '로드뷰로 보기').click(); await roadview(p).getByText('1 / 8 · 가상 정문').waitFor();
+    await button(p, '로드뷰로 보기').click(); await roadview(p).getByText('1 / 13 · 가상 정문').waitFor();
     assert.equal(await back(p), true); await absent(roadview(p)); await text(p, '검사 경로 좌표').waitFor();
     // A step with a photo opens a bubble on the map; the bubble opens the roadview at that step.
     await button(p, /^3단계\. .*눌러서 지도에서 사진 보기$/).click(); await text(p, '검사 말풍선').waitFor();
-    await p.getByLabel('검사 로드뷰 말풍선').getByRole('button').click(); await roadview(p).getByText(/^3 \/ 8 · /).waitFor();
+    await p.getByLabel('검사 로드뷰 말풍선').getByRole('button').click(); await roadview(p).getByText(/^3 \/ 13 · /).waitFor();
     await button(p, '로드뷰 닫기').click(); await absent(text(p, '검사 말풍선'));
     // A point passed twice on the way (steps 6 and 7) asks which step to show.
     await button(p, '검사 경로 사진 묶음: 6단계 / 7단계').click();
     assert.equal(await p.getByLabel('검사 로드뷰 말풍선').getByRole('button').count(), 2);
     assert.equal(await back(p), true); await absent(text(p, '검사 말풍선'));
-    await button(p, '검사 경로 사진 묶음: 6단계 / 7단계').click(); await button(p, '7단계 로드뷰 보기').click(); await roadview(p).getByText(/^7 \/ 8 · /).waitFor();
+    await button(p, '검사 경로 사진 묶음: 6단계 / 7단계').click(); await button(p, '7단계 로드뷰 보기').click(); await roadview(p).getByText(/^9 \/ 13 · /).waitFor();
   });
   await scenario('roadview round trip: 가는 길 / 오는 길 frames and the two-way bubble', async (p) => {
     await useDemo(p, '실내·실외 로드뷰 시험', '왕복 예시: 정문 ↔ 가상 본관 앞'); await checked(roundTrip(p), true);
@@ -690,15 +691,15 @@ try {
   });
   await scenario('roadview branch: other directions at a fork, chosen per point and reset on reopen', async (p) => {
     await useDemo(p, '실내·실외 로드뷰 시험', '갈림길 예시: 정문 → 가상 중앙 광장');
-    await button(p, '로드뷰로 보기').click(); const rv = roadview(p); await rv.getByText(/^1 \/ 3 · /).waitFor();
-    await button(p, '다음 단계').click(); await rv.getByText('2 / 3 · 가상 본관 앞 갈림길').waitFor();
+    await button(p, '로드뷰로 보기').click(); const rv = roadview(p); await rv.getByText(/^1 \/ 4 · /).waitFor(); // 4th scene: a restroom photo within 18 m of the route.
+    await button(p, '다음 단계').click(); await rv.getByText('2 / 4 · 가상 본관 앞 갈림길').waitFor();
     const others = button(p, '이 지점 다른 방향 사진 3장');
     assert.equal(await others.getAttribute('aria-expanded'), 'false'); await others.click(); assert.equal(await others.getAttribute('aria-expanded'), 'true');
     const chips = rv.getByRole('button', { name: /° 방향 사진$/ }); assert.equal(await chips.count(), 4);
     await isSelected(button(p, '서쪽 270° 방향 사진')); await rv.getByText(/^검사 미니 지도: .* · 서쪽 270°/).waitFor();
     await button(p, '북쪽 0° 방향 사진').click(); await isSelected(button(p, '북쪽 0° 방향 사진')); await isSelected(button(p, '서쪽 270° 방향 사진'), false);
     await rv.getByText(/^검사 미니 지도: .* · 북쪽 0°/).waitFor(); await rv.getByText('북쪽 0° 방향을 보고 있습니다', { exact: false }).first().waitFor();
-    await button(p, '다음 단계').click(); await rv.getByText(/^3 \/ 3 · /).waitFor(); await absent(button(p, /° 방향 사진$/));
+    await button(p, '다음 단계').click(); await rv.getByText(/^3 \/ 4 · /).waitFor(); await absent(button(p, /° 방향 사진$/));
     await button(p, '이전 단계').click(); await rv.getByText(/^검사 미니 지도: .* · 북쪽 0°/).waitFor();
     await button(p, '로드뷰 닫기').click(); await button(p, '로드뷰로 보기').click(); await button(p, '다음 단계').click();
     await roadview(p).getByText(/^검사 미니 지도: .* · 서쪽 270°/).waitFor();

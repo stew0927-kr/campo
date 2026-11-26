@@ -8,8 +8,25 @@ const harnessFixture: Plugin = {
   name: 'campo-harness-fixture', enforce: 'pre',
   resolveId(source, importer) { return source.endsWith('/indoorFixture.json') && importer?.endsWith('/MapScreen.tsx') ? local('./indoorFixture.ts') : null; },
 };
+/**
+ * Metro's `require('./x.png')` (TabBar's tab icons) does not exist in the browser: turn each into an import of the asset URL,
+ * as `{ uri }` like a remote image, so the first screen renders. Test-only; the app source is not changed.
+ */
+const harnessRequireAssets: Plugin = {
+  name: 'campo-harness-require-assets', enforce: 'pre',
+  transform(code, id) {
+    if (!/\/src\/.*\.tsx?$/.test(id) || !code.includes('require(')) return null;
+    const imports: string[] = [];
+    const out = code.replace(/require\((['"])([^'"]+\.(?:png|jpe?g|webp))\1\)/g, (_m, _q, path: string) => {
+      const name = `__campoAsset${imports.length}`;
+      imports.push(`import ${name} from ${JSON.stringify(path)};`);
+      return `{ uri: ${name} }`;
+    });
+    return imports.length ? { code: `${imports.join('\n')}\n${out}`, map: null } : null;
+  },
+};
 export default defineConfig({
-  root: local('./'), plugins: [harnessFixture, react()], define: { __DEV__: true },
+  root: local('./'), plugins: [harnessFixture, harnessRequireAssets, react()], define: { __DEV__: true },
   resolve: { alias: [
     { find: /.*\/configured\.ts$/, replacement: local('./connection.ts') },
     { find: /^react$/, replacement: rootModule('react/index.js') },

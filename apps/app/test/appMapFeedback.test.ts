@@ -177,10 +177,13 @@ describe('[7] 길게 눌러 핀 → 출발/도착', () => {
 });
 
 describe('[8] 사진 핀: 짧은 탭이면 열린다', () => {
-  it('핀마다 누를 수 있는 Marker(Pressable 48pt)를 얹고, 네이티브 onPress hitbox는 26px로 넓힌다', () => {
-    expect(MAP).toContain('const PIN_HITBOX = { top: 26, right: 26, bottom: 26, left: 26 };');
-    expect(MAP).toContain('id="app-photo-spots" data={spotData} hitbox={PIN_HITBOX} onPress={onSpotDot}');
-    expect(MAP).toContain('id="app-step-photos" data={groupData} hitbox={PIN_HITBOX} onPress={onGroupDot}');
+  // 바뀜(실기기 피드백 2차): 초록 사진 점(네이티브 circle 레이어)을 없애고, 핀(Marker 안의 보이는 원 + 사진 그림)만 남긴다.
+  it('핀마다 누를 수 있는 Marker(Pressable 48pt)가 사진 핀을 직접 그리고, 초록 점 레이어는 없다', () => {
+    expect(MAP).toContain('const PIN_TOUCH = 48;');
+    expect(MAP).not.toContain('app-photo-spots');
+    expect(MAP).not.toContain('app-step-photos');
+    expect(MAP).not.toContain('#1FBF7A');
+    expect(MAP).toContain('<View style={styles.photoGlyph}>');
     expect(MAP).toMatch(/photoSpots\.map\(\(spot, i\) => <PhotoPinMarker/);
     expect(MAP).toMatch(/stepGroups\.map\(\(group, i\) => <PhotoPinMarker/);
   });

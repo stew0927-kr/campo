@@ -51,6 +51,14 @@ function client(): StoreClient {
   return shared;
 }
 
+/**
+ * The same signed-in client for the photo store (src/photos/photoStore.ts): one login, the publishable key only. Throws the
+ * Korean configuration message when the build has no server values.
+ */
+export function sharedClient(): SupabaseClient {
+  return client() as SupabaseClient;
+}
+
 /** Tests only: use this client instead of one made from the build's values. */
 export function setStoreClientForTests(c: StoreClient | null): void {
   shared = c;

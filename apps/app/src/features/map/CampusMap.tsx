@@ -83,8 +83,6 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
   const indoor = useMemo(() => floorLines(graph, buildingId, level, route), [graph, buildingId, level, route]);
   const wayAreas = useMemo(() => outdoorPlazas(graph), [graph]);
   const wayLines = useMemo(() => outdoorLines(graph), [graph]);
-  const spotData: FeatureCollection<Point> = useMemo(() => ({ type: 'FeatureCollection', features: photoSpots.map((spot, i) => ({ type: 'Feature', properties: { i, count: spot.count }, geometry: { type: 'Point', coordinates: spot.lngLat } })) }), [photoSpots]);
-  const groupData: FeatureCollection<Point> = useMemo(() => ({ type: 'FeatureCollection', features: stepGroups.map((group, i) => ({ type: 'Feature', properties: { i, twice: group.entries.length > 1 }, geometry: { type: 'Point', coordinates: group.lngLat } })) }), [stepGroups]);
   const dots: FeatureCollection<Point> = useMemo(() => ({ type: 'FeatureCollection', features: places.map((place) => ({ type: 'Feature', properties: { id: place.id }, geometry: { type: 'Point', coordinates: [place.lng, place.lat] } })) }), [places]);
   const indoorView = buildingId !== null;
   const facilities = useMemo(() => floorFacilityNodes(graph, buildingId, level), [graph, buildingId, level]);
@@ -149,9 +147,9 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
     const place = pressData.current.places.find((p) => p.id === id);
     if (place) { event.stopPropagation(); onPlace(place); }
   }, [onPlace]);
-  // Photo pins open on a short tap two ways: a touchable Marker over each pin (PhotoPinMarker, the sure path: a React Native
-  // Pressable, which a pan never fires) and the native source's onPress with a wide hitbox. Either one marks the time, and a
-  // map tap that the same touch also produced is ignored, so it cannot close the bubble the pin just opened.
+  // Photo pins are React Native markers (PhotoPinMarker): the pin is drawn and tapped there (a Pressable, which a pan never
+  // fires). A tap marks the time, and a map tap that the same touch also produced is ignored, so it cannot close the bubble
+  // the pin just opened. There is no native dot layer under them any more (the green dots were dropped: the pin is the mark).
   const pinPressedAt = useRef(0);
   const openSpot = useCallback((i: number) => {
     const spot = pressData.current.photoSpots[i];
@@ -163,14 +161,6 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
     if (!group) return false;
     pinPressedAt.current = Date.now(); onStepGroup(group); return true;
   }, [onStepGroup]);
-  const onSpotDot = useCallback((event: FeaturePressEvent) => {
-    const i = event.nativeEvent.features[0]?.properties?.['i'];
-    if (typeof i === 'number' && openSpot(i)) event.stopPropagation();
-  }, [openSpot]);
-  const onGroupDot = useCallback((event: FeaturePressEvent) => {
-    const i = event.nativeEvent.features[0]?.properties?.['i'];
-    if (typeof i === 'number' && openGroup(i)) event.stopPropagation();
-  }, [openGroup]);
   useEffect(() => {
     if (loaded) camera.current?.jumpTo({ center: [center.lng, center.lat], zoom: 16 });
   }, [center.lng, center.lat, loaded]);
@@ -259,8 +249,25 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
       {marked.features.length > 0 && <GeoJSONSource id="app-marked-building" data={marked}>
         <Layer id="app-marked-building-line" type="line" paint={P.markedLine} />
       </GeoJSONSource>}
-      {mask && <GeoJSONSource id="app-indoor-mask" data={mask}><Layer id="app-indoor-mask-fill" type="fill" paint={P.mask} /></GeoJSONSource>}
-      {outline && <GeoJSONSource id="app-building-outline" data={outline}><Layer id="app-building-fill" type="fill" paint={threeD ? P.buildingFill3d : P.buildingFill} /><Layer id="app-building-border" type="line" paint={P.buildingBorder} /></GeoJSONSource>}
+      {/* Layer order. MapLibre adds a layer on top when it is mounted, whatever its place here, so the indoor veil, the floor
+          outline and the 3D glass are always mounted (empty when unused) and keep this order from the first frame; the route,
+          indoor network and step lines mount later and so always draw over the glass (2D layers after a fill-extrusion paint
+          over it), and the RN markers sit above all of them. */}
+      <GeoJSONSource id="app-indoor-mask" data={mask ?? EMPTY}><Layer id="app-indoor-mask-fill" type="fill" paint={P.mask} /></GeoJSONSource>
+      <GeoJSONSource id="app-building-outline" data={outline ?? EMPTY}><Layer id="app-building-fill" type="fill" paint={threeD ? P.buildingFill3d : P.buildingFill} /><Layer id="app-building-border" type="line" paint={P.buildingBorder} /></GeoJSONSource>
+      {/* 3D 보기: glass floors. Faint slabs (two tiers: the floor just above, then fainter), dark rims along each slab's top and
+          bottom edges so the plates read, and strong lift/stair pillars through them. */}
+      <GeoJSONSource id="app-3d-floors" data={stack?.slabs ?? EMPTY}>
+        <Layer id="app-3d-floor-slabs" type="fill-extrusion" filter={F.tierNear} paint={buildingId ? P.slabsNear : P.slabsOutdoor} />
+        <Layer id="app-3d-floor-slabs-far" type="fill-extrusion" filter={F.tierFar} paint={P.slabsFar} />
+      </GeoJSONSource>
+      <GeoJSONSource id="app-3d-rims" data={stack?.rims ?? EMPTY}>
+        <Layer id="app-3d-floor-rims" type="fill-extrusion" filter={F.tierNear} paint={P.rimsNear} />
+        <Layer id="app-3d-floor-rims-far" type="fill-extrusion" filter={F.tierFar} paint={P.rimsFar} />
+      </GeoJSONSource>
+      <GeoJSONSource id="app-3d-links" data={stack?.pillars ?? EMPTY}>
+        <Layer id="app-3d-link-pillars" type="fill-extrusion" paint={P.pillars} />
+      </GeoJSONSource>
       {stack && stack.outlines.features.length > 0 && <GeoJSONSource id="app-3d-outlines" data={stack.outlines}>
         <Layer id="app-3d-outline-line" type="line" paint={P.stackOutline} layout={ROUND_JOIN} />
       </GeoJSONSource>}
@@ -283,12 +290,6 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
         <Layer id="app-nav-step-outline" type="line" paint={P.stepOutline} layout={ROUND} />
         <Layer id="app-nav-step-line" type="line" paint={P.stepLine} layout={ROUND} />
       </GeoJSONSource>}
-      {stack && stack.slabs.features.length > 0 && <GeoJSONSource id="app-3d-floors" data={stack.slabs}>
-        <Layer id="app-3d-floor-slabs" type="fill-extrusion" paint={buildingId ? P.slabsAbove : P.slabsOutdoor} />
-      </GeoJSONSource>}
-      {stack && stack.pillars.features.length > 0 && <GeoJSONSource id="app-3d-links" data={stack.pillars}>
-        <Layer id="app-3d-link-pillars" type="fill-extrusion" paint={P.pillars} />
-      </GeoJSONSource>}
       {nameLayers.length > 0 && <GeoJSONSource id="app-building-names" data={nameData}>
         {nameLayers.map((bucket) => <Layer key={bucket} id={`app-building-name-${bucket}`} type="symbol" minzoom={bucket} filter={['==', ['get', 'bucket'], bucket]} layout={NAME_LAYOUT} paint={NAME_PAINT} />)}
       </GeoJSONSource>}
@@ -297,13 +298,8 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
         <Layer id="app-place-dots" type="circle" paint={indoorView ? P.placeDotIndoor : P.placeDotOutdoor} />
       </GeoJSONSource>
       <MarkerLayer markers={markers} indoorView={indoorView} onPlace={onPlace} sink={markerSink} viewRef={viewRef} />
-      {photoSpots.length > 0 && stepGroups.length === 0 && <GeoJSONSource id="app-photo-spots" data={spotData} hitbox={PIN_HITBOX} onPress={onSpotDot}><Layer id="app-photo-spot-dots" type="circle" paint={P.spotDot} /></GeoJSONSource>}
-      {stepGroups.length > 0 && <GeoJSONSource id="app-step-photos" data={groupData} hitbox={PIN_HITBOX} onPress={onGroupDot}>
-        <Layer id="app-step-photo-dots" type="circle" paint={P.stepDot} />
-        <Layer id="app-step-photo-twice" type="circle" filter={F.twice} paint={P.stepTwice} />
-      </GeoJSONSource>}
-      {stepGroups.length === 0 && photoSpots.map((spot, i) => <PhotoPinMarker key={`spot:${spot.nodeId}`} id={`photo-pin:spot:${spot.nodeId}`} lngLat={spot.lngLat} index={i} label={`사진 지점, 사진 ${spot.count}장. 눌러서 보기`} onOpen={openSpot} />)}
-      {stepGroups.map((group, i) => <PhotoPinMarker key={`group:${group.key}`} id={`photo-pin:group:${group.key}`} lngLat={group.lngLat} index={i}
+      {stepGroups.length === 0 && photoSpots.map((spot, i) => <PhotoPinMarker key={`spot:${spot.nodeId}`} id={`photo-pin:spot:${spot.nodeId}`} lngLat={spot.lngLat} index={i} count={spot.count} label={`사진 지점, 사진 ${spot.count}장. 눌러서 보기`} onOpen={openSpot} />)}
+      {stepGroups.map((group, i) => <PhotoPinMarker key={`group:${group.key}`} id={`photo-pin:group:${group.key}`} lngLat={group.lngLat} index={i} count={group.entries.length}
         label={group.entries.length > 1 ? `경로 사진, ${group.entries.map((e) => e.label).join(' / ')}. 눌러서 고르기` : `경로 사진, ${group.entries[0]?.label ?? ''}. 눌러서 보기`} onOpen={openGroup} />)}
       {selected && visible(selected) && selected.id !== from?.id && selected.id !== to?.id && <Marker id="selected-place" lngLat={[selected.lng, selected.lat]} anchor="bottom"><View style={styles.selectedPin}><View style={styles.selectedDot} /></View></Marker>}
       {visible(from) && from && <EndpointPin id="route-start" kind="from" lng={from.lng} lat={from.lat} />}
@@ -379,13 +375,16 @@ const MOVING_LAYOUT_MS = Math.max(DECLUTTER_THROTTLE_MS, 120);
 export const HIGHLIGHT_COLOR = '#E68A00';
 type ExtrusionPaint = NonNullable<FillExtrusionLayerSpecification['paint']>;
 type LinePaint = NonNullable<LineLayerSpecification['paint']>; type FillPaint = NonNullable<FillLayerSpecification['paint']>; type CirclePaint = NonNullable<CircleLayerSpecification['paint']>; type LineLayout = NonNullable<LineLayerSpecification['layout']>;
+/** Slab, rim and pillar heights from the feature (stack3d.ts); flat colour, no vertical gradient (glass, not a block). */
+const SLAB_HEIGHT = { 'fill-extrusion-base': ['get', 'baseM'], 'fill-extrusion-height': ['get', 'topM'], 'fill-extrusion-vertical-gradient': false } satisfies ExtrusionPaint;
+const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 const ROUND: LineLayout = { 'line-cap': 'round', 'line-join': 'round' };
 const ROUND_JOIN: LineLayout = { 'line-join': 'round' };
 /** Layer filters and paints are module constants: the same object every render, so nothing is re-sent to native. */
-const F: Record<'walk' | 'ramp' | 'stairs' | 'offRoute' | 'onRoute' | 'twice' | 'picked', FilterSpecification> = {
+const F: Record<'walk' | 'ramp' | 'stairs' | 'offRoute' | 'onRoute' | 'picked' | 'tierNear' | 'tierFar', FilterSpecification> = {
   walk: ['==', ['get', 'kind'], 'walk'], ramp: ['==', ['get', 'kind'], 'ramp'], stairs: ['==', ['get', 'kind'], 'stairs'],
-  offRoute: ['==', ['get', 'route'], false], onRoute: ['==', ['get', 'route'], true], twice: ['==', ['get', 'twice'], true],
-  picked: ['==', ['get', 'picked'], true],
+  offRoute: ['==', ['get', 'route'], false], onRoute: ['==', ['get', 'route'], true],
+  picked: ['==', ['get', 'picked'], true], tierNear: ['==', ['get', 'tier'], 0], tierFar: ['==', ['get', 'tier'], 1],
 };
 const P = {
   plazaFill: { 'fill-color': '#E2E6EB', 'fill-opacity': 1 }, plazaLine: { 'line-color': '#CFD6DF', 'line-width': 0.8 },
@@ -404,13 +403,15 @@ const P = {
   floorNetwork: { 'line-color': '#708397', 'line-width': 3 },
   placeDotIndoor: { 'circle-radius': 3.5, 'circle-color': '#8A97A8', 'circle-stroke-color': 'white', 'circle-stroke-width': 1.5 },
   placeDotOutdoor: { 'circle-radius': 6, 'circle-color': '#18744D', 'circle-stroke-color': 'white', 'circle-stroke-width': 2 },
-  spotDot: { 'circle-radius': 8, 'circle-color': '#1FBF7A', 'circle-stroke-color': 'white', 'circle-stroke-width': 3 },
-  stepDot: { 'circle-radius': 9, 'circle-color': '#FFFFFF', 'circle-stroke-color': '#1FBF7A', 'circle-stroke-width': 4 },
-  stepTwice: { 'circle-radius': 4, 'circle-color': '#7A4FD6' },
-  // 3D 보기. fill-extrusion-opacity is one value per layer: the floors above the chosen one are faint, the links strong.
-  slabsAbove: { 'fill-extrusion-color': STACK_FLOOR_COLOR, 'fill-extrusion-opacity': 0.28, 'fill-extrusion-base': ['get', 'baseM'], 'fill-extrusion-height': ['get', 'topM'], 'fill-extrusion-vertical-gradient': false },
-  slabsOutdoor: { 'fill-extrusion-color': ['case', ['get', 'picked'], '#8FB0F5', STACK_FLOOR_COLOR], 'fill-extrusion-opacity': 0.55, 'fill-extrusion-base': ['get', 'baseM'], 'fill-extrusion-height': ['get', 'topM'] },
-  pillars: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-opacity': 0.9, 'fill-extrusion-base': ['get', 'baseM'], 'fill-extrusion-height': ['get', 'topM'], 'fill-extrusion-vertical-gradient': false },
+  // 3D 보기 as glass (stack3d.ts). fill-extrusion-opacity is one value per layer and the colour's alpha is ignored, so each
+  // density is its own layer: the floor just above the chosen one, the floors above that (fainter), and outdoors every floor.
+  // The rims carry the plates' edges (the editor's wireframe); lift and stair pillars stay strong so they read through the glass.
+  slabsNear: { 'fill-extrusion-color': STACK_FLOOR_COLOR, 'fill-extrusion-opacity': 0.2, ...SLAB_HEIGHT },
+  slabsFar: { 'fill-extrusion-color': STACK_FLOOR_COLOR, 'fill-extrusion-opacity': 0.1, ...SLAB_HEIGHT },
+  slabsOutdoor: { 'fill-extrusion-color': ['case', ['get', 'picked'], '#8FB0F5', STACK_FLOOR_COLOR], 'fill-extrusion-opacity': 0.3, ...SLAB_HEIGHT },
+  rimsNear: { 'fill-extrusion-color': STACK_EDGE_COLOR, 'fill-extrusion-opacity': 0.55, ...SLAB_HEIGHT },
+  rimsFar: { 'fill-extrusion-color': STACK_EDGE_COLOR, 'fill-extrusion-opacity': 0.3, ...SLAB_HEIGHT },
+  pillars: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-opacity': 0.9, ...SLAB_HEIGHT },
   stackOutline: { 'line-color': STACK_EDGE_COLOR, 'line-width': 1.2, 'line-opacity': 0.55 },
 } satisfies Record<string, LinePaint | FillPaint | CirclePaint | ExtrusionPaint>;
 /** The indoor veil covers the whole camera range (the camera cannot leave CAMPUS_MAX_BOUNDS), with a margin. */
@@ -454,20 +455,26 @@ const compassRotatedStyle = ({ pressed }: { pressed: boolean }) => [styles.compa
 const DEFAULT_PADDING = { top: 40, bottom: 40, left: 35, right: 35 };
 const ATTRIBUTION_BOTTOM = 22;
 const HITBOX = { top: 16, right: 16, bottom: 16, left: 16 };
-/** Photo pins: a wider native hit area (a finger is wider than the 9px dot). */
-const PIN_HITBOX = { top: 26, right: 26, bottom: 26, left: 26 };
 /** A map tap this soon after a pin press is the same touch: ignored. */
 const PIN_TAP_GUARD_MS = 500;
 /** Touch target of a photo pin's Marker (pt). */
 const PIN_TOUCH = 48;
+/** Visible photo pin disc (pt). */
+const PHOTO_PIN = 28;
 
 /**
- * A transparent touch target over a photo pin (the dot itself is drawn by the native circle layer, so it never trails the map).
- * A Pressable fires only on a short tap, never on a pan, and its touch does not reach the map. Memoised on its values.
+ * A photo point: a small white disc with a drawn photo glyph (navy frame and lens), centred on the point, and a navy count
+ * badge when the point has two or more photos (or the route passes it twice). The 48pt Pressable around it is the touch
+ * target: it fires only on a short tap, never on a pan, and its touch does not reach the map. Memoised on its values.
  */
-const PhotoPinMarker = memo(function PhotoPinMarker({ id, lngLat, index, label, onOpen }: { id: string; lngLat: [number, number]; index: number; label: string; onOpen: (i: number) => boolean }) {
+const PhotoPinMarker = memo(function PhotoPinMarker({ id, lngLat, index, count, label, onOpen }: { id: string; lngLat: [number, number]; index: number; count: number; label: string; onOpen: (i: number) => boolean }) {
   return <Marker id={id} lngLat={lngLat} anchor="center">
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={() => { onOpen(index); }} style={styles.pinTouch} />
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={() => { onOpen(index); }} style={pinTouchStyle}>
+      <View pointerEvents="none" style={styles.photoPin}>
+        <View style={styles.photoGlyph}><View style={styles.photoLens} /></View>
+        {count > 1 && <View style={styles.photoCount}><Text style={styles.photoCountText}>{count > 99 ? '99+' : count}</Text></View>}
+      </View>
+    </Pressable>
   </Marker>;
 });
 
@@ -553,7 +560,13 @@ const styles = StyleSheet.create({
   bubbleTail: { width: 12, height: 12, marginTop: -7, backgroundColor: 'white', borderRightWidth: 1, borderBottomWidth: 1, borderColor: '#D5DCE5', transform: [{ rotate: '45deg' }] },
   selectedPin: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#142A44', borderWidth: 3, borderColor: 'white', alignItems: 'center', justifyContent: 'center', elevation: 4 },
   selectedDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'white' },
-  pinTouch: { width: PIN_TOUCH, height: PIN_TOUCH, borderRadius: PIN_TOUCH / 2, backgroundColor: 'rgba(255,255,255,0.01)' },
+  pinTouch: { width: PIN_TOUCH, height: PIN_TOUCH, alignItems: 'center', justifyContent: 'center' },
+  photoPin: { width: PHOTO_PIN, height: PHOTO_PIN, borderRadius: PHOTO_PIN / 2, backgroundColor: t.color.surface, borderWidth: 1, borderColor: t.color.border, alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#0B1F3A', shadowOpacity: 0.22, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
+  pinTouchPressed: { opacity: 0.6 },
+  photoGlyph: { width: 14, height: 11, borderRadius: 3, borderWidth: 1.8, borderColor: t.color.text, alignItems: 'center', justifyContent: 'center' },
+  photoLens: { width: 4.5, height: 4.5, borderRadius: 2.25, backgroundColor: t.color.text },
+  photoCount: { position: 'absolute', top: -6, right: -9, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: t.color.text, borderWidth: 1.5, borderColor: t.color.surface, alignItems: 'center', justifyContent: 'center' },
+  photoCountText: { color: 'white', fontSize: 10, lineHeight: 13, fontWeight: '800', fontVariant: ['tabular-nums'] },
   pressPin: { alignItems: 'center' },
   pressPinHead: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#142A44', borderWidth: 3, borderColor: 'white', alignItems: 'center', justifyContent: 'center', elevation: 5 },
   pressPinHole: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'white' },
@@ -570,3 +583,4 @@ const styles = StyleSheet.create({
   error: { position: 'absolute', bottom: 48, left: 60, right: 72, padding: 10, backgroundColor: '#FFF5DF', color: '#8A5200', borderRadius: 10, fontSize: 13 },
 });
 const compassNRotated = [styles.compassN, { color: '#F2473F' }];
+const pinTouchStyle = ({ pressed }: { pressed: boolean }) => [styles.pinTouch, pressed && styles.pinTouchPressed];

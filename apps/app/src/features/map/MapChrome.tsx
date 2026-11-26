@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Animated, FlatList, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { CampusBuilding, CampusPlace, TravelMode } from '../../contracts.ts';
 import { floating, theme as t } from '../../ui/theme.ts';
+import { STACK_ICON_SIZE, STACK_SCALE_Y, STACK_SQUARE, stackPlates } from './stackIcon.ts';
 import { Empty, Notice } from '../../ui/kit.tsx';
 import { TRAVEL_MODES } from './model.ts';
 import { OUTDOOR_GROUP, TREE_ROOT, UNKNOWN_LEVEL, buildingGroups, facilityGroups, floorText, levelGroups, type TreePath } from './placeTree.ts';
@@ -55,13 +56,13 @@ export function RoundButton({ label, onPress, children, busy = false, disabled =
     style={({ pressed }) => [c.round, selected && c.roundOn, pressed && { backgroundColor: t.color.sunken }]}>{busy ? <ActivityIndicator color={t.color.primary} /> : children}</Pressable>;
 }
 /**
- * 3D 보기 토글 아이콘(코어 LAYER_STACK_ICON과 같은 모양): 비스듬히 본 층판 셋, 아래는 옅게 위는 진하게. 켜지면 파랑.
- * SVG 없이 45° 돌린 납작한 사각형으로 그린다.
+ * 3D 보기 토글 아이콘(코어 LAYER_STACK_ICON과 같은 중심·크기, stackIcon.ts): 비스듬히 본 층판 셋을 4dp 간격으로 붙여 한 덩어리로.
+ * 아래는 옅게, 위는 진하게(켜지면 primary). SVG 없이 45° 돌린 정사각형을 세로로 눌러 마름모로 그린다.
  */
 export function Stack3DIcon({ on = false }: { on?: boolean }) {
   const color = on ? t.color.primary : t.color.text;
-  return <View style={c.stackIcon}>
-    {[0.35, 0.6, 1].map((opacity, i) => <View key={i} style={[c.stackPlate, { top: 14 - i * 6, opacity, backgroundColor: i === 2 ? color : 'transparent', borderColor: color }]} />)}
+  return <View style={c.stackIcon} accessible={false} pointerEvents="none">
+    {stackPlates().map((plate, i) => <View key={i} style={[c.stackPlate, { top: plate.cy - STACK_SQUARE / 2, opacity: plate.opacity, backgroundColor: color }]} />)}
   </View>;
 }
 export function SearchBar({ onSearch, onRoute }: { onSearch: () => void; onRoute: () => void }) {
@@ -445,14 +446,15 @@ const c = StyleSheet.create({
   dot: { width: 12, height: 12, borderRadius: 6, borderWidth: 3.5, backgroundColor: 'white' },
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: t.color.surface, alignItems: 'center', justifyContent: 'center', ...floating },
   roundOn: { borderWidth: 2, borderColor: t.color.primary, backgroundColor: '#EEF3FF' },
-  stackIcon: { width: 24, height: 24 },
-  stackPlate: { position: 'absolute', left: 5, width: 14, height: 9, borderWidth: 1.6, borderRadius: 1.5, transform: [{ scaleY: 0.55 }, { rotate: '45deg' }] },
+  stackIcon: { width: STACK_ICON_SIZE, height: STACK_ICON_SIZE },
+  stackPlate: { position: 'absolute', left: (STACK_ICON_SIZE - STACK_SQUARE) / 2, width: STACK_SQUARE, height: STACK_SQUARE, borderRadius: 1.2, transform: [{ scaleY: STACK_SCALE_Y }, { rotate: '45deg' }] },
   selectionPill: { gap: 12, paddingLeft: 14 },
   selectionMark: { width: 26, height: 26, borderRadius: 13, backgroundColor: t.color.soft, alignItems: 'center', justifyContent: 'center' },
   selectionMarkDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 2.5, borderColor: t.color.primary, backgroundColor: t.color.surface },
   selectionName: { fontSize: t.type.body, fontWeight: '800', color: t.color.text },
   selectionDetail: { fontSize: t.type.micro, color: t.color.muted },
-  floorCard: { alignSelf: 'stretch', backgroundColor: t.color.surface, borderRadius: t.radii.card + 4, paddingHorizontal: t.space.md, paddingTop: t.space.sm + 4, paddingBottom: t.space.xs, gap: t.space.sm + 2, borderWidth: 1, borderColor: t.color.border, ...floating },
+  // Sits inside the bottom card (MapScreen bottomCard), which already is the floating surface: no second card here.
+  floorCard: { alignSelf: 'stretch', gap: t.space.sm + 2 },
   floorHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   floorBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: t.color.soft, alignItems: 'center', justifyContent: 'center' },
   floorTitle: { fontSize: t.type.heading, fontWeight: '800', color: t.color.text, letterSpacing: -0.2 },

@@ -38,32 +38,36 @@ export function RoadviewScreen({ visible, frames, initialIndex = 0, route = null
   const stops = useMemo(() => frames.map((f) => f.lngLat).filter((p): p is [number, number] => p !== null), [frames]);
   const go = (to: number) => { if (to >= 0 && to < frames.length) { setIndex(to); setOthersOpen(false); } };
   const pick = (p: RoutePhoto) => { if (frame) setChosen((c) => ({ ...c, [frame.key]: p })); };
+  // A point without a photo shows the map alone, quietly (no "no photo" message); the photo returns on top at the next point
+  // that has one. A photo that fails to load keeps its place and says so (PHOTO_LOAD_FAILED_TEXT).
+  const hasPhoto = photo !== null;
+  const split = hasPhoto && !full;
+  const chrome = frame ? <>
+    <View style={[s.top, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
+      <RvButton label="로드뷰 닫기" onPress={() => onClose(index)}><Text style={s.btnText}>✕</Text></RvButton>
+      <View style={s.titlePill} pointerEvents="none">
+        <Text numberOfLines={1} style={s.titleText}>{frame.place.name}</Text>
+        {frame.counter && <Text numberOfLines={1} style={s.counterText}>{frame.counter}</Text>}
+      </View>
+    </View>
+    {frames.length > 1 && <>
+      <View style={[s.side, { left: 8 }]} pointerEvents="box-none"><RvButton label="이전 단계" disabled={index === 0} onPress={() => go(index - 1)}><Text style={s.sideGlyph}>‹</Text></RvButton></View>
+      <View style={[s.side, { right: 8 }]} pointerEvents="box-none"><RvButton label="다음 단계" disabled={index >= frames.length - 1} onPress={() => go(index + 1)}><Text style={s.sideGlyph}>›</Text></RvButton></View>
+    </>}
+  </> : null;
 
   return <Modal visible={visible} animationType="fade" presentationStyle="fullScreen" onRequestClose={() => (full ? setFull(false) : onClose(index))} supportedOrientations={['portrait', 'landscape']}>
     <View style={s.root}>
       {!frame || !shown ? <View style={[s.empty, { paddingTop: insets.top + 24 }]}>
-        <Text style={s.emptyText}>이 지점은 아직 로드뷰 사진이 없습니다.</Text>
-        <RvButton label="닫기" onPress={() => onClose(0)}><Text style={s.btnText}>닫기</Text></RvButton>
+        <RvButton label="로드뷰 닫기" onPress={() => onClose(0)}><Text style={s.btnText}>✕</Text></RvButton>
       </View> : <>
-        <View style={[s.photoArea, full ? { flex: 1 } : { height: '55%' }]}>
-          {photo && !failed
+        {hasPhoto && <View style={[s.photoArea, full ? { flex: 1 } : { height: '55%' }]}>
+          {!failed
             ? <Image source={{ uri: photo.fullUrl }} placeholder={{ uri: photo.thumbUrl }} contentFit={full ? 'contain' : 'cover'} cachePolicy="memory-disk" style={s.fill}
               onError={() => setFailed(true)} accessibilityLabel={`${frame.place.name}, ${headingLabel(photo.heading_deg)} 방향 사진`} />
-            : <View style={[s.fill, s.noPhoto]}><Text style={s.emptyText}>{photo ? PHOTO_LOAD_FAILED_TEXT : '이 지점은 아직 사진이 없습니다.'}</Text></View>}
+            : <View style={[s.fill, s.noPhoto]}><Text style={s.emptyText}>{PHOTO_LOAD_FAILED_TEXT}</Text></View>}
           {shown.arrow && <ArrowOverlay arrow={shown.arrow} />}
-
-          <View style={[s.top, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
-            <RvButton label="로드뷰 닫기" onPress={() => onClose(index)}><Text style={s.btnText}>✕</Text></RvButton>
-            <View style={s.titlePill} pointerEvents="none">
-              <Text numberOfLines={1} style={s.titleText}>{frame.place.name}</Text>
-              {frame.counter && <Text numberOfLines={1} style={s.counterText}>{frame.counter}</Text>}
-            </View>
-          </View>
-
-          {frames.length > 1 && <>
-            <View style={[s.side, { left: 8 }]} pointerEvents="box-none"><RvButton label="이전 단계" disabled={index === 0} onPress={() => go(index - 1)}><Text style={s.sideGlyph}>‹</Text></RvButton></View>
-            <View style={[s.side, { right: 8 }]} pointerEvents="box-none"><RvButton label="다음 단계" disabled={index >= frames.length - 1} onPress={() => go(index + 1)}><Text style={s.sideGlyph}>›</Text></RvButton></View>
-          </>}
+          {chrome}
 
           <View style={s.bottomBar} pointerEvents="box-none">
             <View style={{ flex: 1, gap: 8 }} pointerEvents="box-none">
@@ -82,20 +86,21 @@ export function RoadviewScreen({ visible, frames, initialIndex = 0, route = null
             </View>
             <RvButton label={full ? '분할 화면으로 돌아가기' : '전체화면으로 보기'} onPress={() => setFull((f) => !f)}><ExpandGlyph inward={full} /></RvButton>
           </View>
-        </View>
+        </View>}
 
-        {!full && <View style={s.lower}>
+        {(split || !hasPhoto) && <View style={s.lower}>
           <RoadviewMiniMap lngLat={frame.lngLat} headingDeg={photo?.heading_deg ?? null} {...(photo?.hfov_deg ? { hfovDeg: photo.hfov_deg } : {})} route={route} stops={stops} label={`${frame.place.name} 미니 지도`} />
           <View style={[s.card, { marginBottom: insets.bottom + 12 }]} accessible accessibilityLiveRegion="polite">
             <View style={s.cardHead}>
               <Text style={s.cardTitle} numberOfLines={1}>{frame.place.name}</Text>
               <View style={[s.tag, frame.place.indoor ? s.tagIndoor : s.tagOutdoor]}><Text style={s.tagText}>{frame.place.indoor ? '실내' : '실외'}</Text></View>
             </View>
-            <Text style={s.cardLine}>{placeLine(frame.place)} · {viewingText(photo)}</Text>
+            <Text style={s.cardLine}>{hasPhoto ? `${placeLine(frame.place)} · ${viewingText(photo)}` : placeLine(frame.place)}</Text>
             <Text style={s.cardStep}>{frame.stepText}</Text>
             {shown.arrow && <Text style={s.cardLine}>{arrowSentence(shown.arrow)}</Text>}
             {shown.badge && <Text style={s.badge}>! {shown.badge}</Text>}
           </View>
+          {!hasPhoto && chrome}
         </View>}
       </>}
     </View>
@@ -117,7 +122,7 @@ function ExpandGlyph({ inward }: { inward: boolean }) {
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0E1520' },
   fill: { width: '100%', height: '100%' },
-  empty: { flex: 1, padding: 24, gap: 24, justifyContent: 'center' },
+  empty: { flex: 1, paddingHorizontal: 12 },
   emptyText: { color: '#FFFFFF', fontSize: 17, lineHeight: 25, textAlign: 'center' },
   noPhoto: { alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: '#1D2733' },
   photoArea: { width: '100%', backgroundColor: '#000000', overflow: 'hidden' },

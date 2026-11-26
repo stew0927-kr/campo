@@ -1,11 +1,14 @@
 import { LAYER_STACK_ICON } from '@campo/core';
 
-/** The layer-stack icon of core (three floors stacked apart), the same one the survey app shows. */
+/**
+ * The layer-stack icon of core (three thin floors in one block), the same one the survey app and the user app show. A hairline
+ * stroke only softens the edges: a wider one would close the 0.4 gap between the plates' tips.
+ */
 function StackIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       {LAYER_STACK_ICON.map((p, i) => (
-        <path key={i} d={p.d} fill="currentColor" fillOpacity={p.opacity} stroke="currentColor" strokeWidth={1.2} strokeLinejoin="round" />
+        <path key={i} d={p.d} fill="currentColor" fillOpacity={p.opacity} stroke="currentColor" strokeWidth={0.4} strokeLinejoin="round" />
       ))}
     </svg>
   );

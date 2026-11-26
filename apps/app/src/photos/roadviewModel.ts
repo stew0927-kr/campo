@@ -4,6 +4,7 @@
 import { DEFAULT_HFOV_DEG, normalizeDeg, type CampusGraph } from '@campo/core';
 import type { CampusPlace, CampusRouteView, PhotoCatalog, RoutePhoto, RouteStepPhoto } from '../contracts.ts';
 import { isEmptyCatalog } from './catalog.ts';
+import { isValidLngLat, validLngLatTuple } from '../features/map/markerCoords.ts';
 import { headingLabel } from './demoPhotoArt.ts';
 import { otherPhotosAt } from './routePhotos.ts';
 import { nodeLineIndex } from './routeAlongPhotos.ts';
@@ -227,7 +228,7 @@ const coordKey = ([lng, lat]: [number, number]) => `${lng.toFixed(7)},${lat.toFi
 export function stepMarkerGroups(stepPhotos: readonly RouteStepPhoto[], stepCount: number, backFrom: number | null = null): MarkerGroup[] {
   const groups = new Map<string, MarkerGroup>();
   stepPhotos.forEach((s, index) => {
-    if (s.photo === null || s.lngLat === null) return;
+    if (s.photo === null || s.lngLat === null || validLngLatTuple(s.lngLat) === null) return;
     const key = coordKey(s.lngLat);
     const leg = legOf(s.stepIndex, backFrom);
     const name = s.stepIndex >= stepCount ? '도착' : `${s.stepIndex + 1}단계`;
@@ -269,6 +270,7 @@ export function photoSpots(graph: CampusGraph | null, catalog: PhotoCatalog | nu
     const photos = catalog!.byNodeId(node.id);
     if (photos.length === 0) continue;
     const [lng, lat] = node.geometry.coordinates as [number, number];
+    if (!isValidLngLat(lng, lat)) continue;
     out.push({ nodeId: node.id, lngLat: [lng, lat], count: photos.length, thumbUrl: otherPhotosAt(photos, 0, null)[0]!.thumbUrl });
   }
   return out;

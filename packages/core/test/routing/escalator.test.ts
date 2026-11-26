@@ -421,7 +421,7 @@ describe('escalators (SPEC-v0.2 2.7, 3.8)', () => {
     // An escalator next to plain stairs: separate steps.
     const mixed = route(buildGraph(escalatorBank({ stairsTo3: true })), E.hall(1), E.hall(3), 'shortest');
     expect(mixed.steps.map((s) => s.kind)).toEqual(['walk', 'escalator', 'stairs', 'walk']);
-    expect(mixed.steps.map((s) => s.text).slice(1, 3)).toEqual(['에스컬레이터를 타고 2층으로 올라가세요', '계단으로 1층 올라가세요']);
+    expect(mixed.steps.map((s) => s.text).slice(1, 3)).toEqual(['에스컬레이터를 타고 2층으로 올라가세요', '계단으로 3층까지 올라가세요']);
 
     // Direction words: incline first, then display floors, else none.
     const blind = buildGraph(stripLevels(escalatorBank({ branchAtMiddle: false })).campus);

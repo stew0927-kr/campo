@@ -61,7 +61,7 @@ export function nameBuckets(data: FeatureCollection<Point, BuildingNameProps>): 
 export const NAME_LAYOUT: NonNullable<SymbolLayerSpecification['layout']> = {
   'text-field': ['get', 'name'],
   'text-font': NAME_FONT,
-  'text-size': 12,
+  'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 10, 18, 11],
   'text-max-width': 7,
   'text-line-height': 1.2,
   'text-rotation-alignment': 'viewport',

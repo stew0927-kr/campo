@@ -21,6 +21,9 @@ import { ActionCell, ActionRow, Button, Notice } from '../../ui/kit.tsx';
 import { MapCanvas } from './MapCanvas.tsx';
 import { DEMO_CAMPUS } from './demoCampus.ts';
 import indoorFixture from './indoorFixture.json';
+import { isValidLngLat } from './markerCoords.ts';
+/** A position whose coordinates are not finite never reaches the map (a native Marker throws on NaN). */
+const safePosition = <P extends { lng: number; lat: number }>(p: P | null): P | null => (p !== null && isValidLngLat(p.lng, p.lat) ? p : null);
 import { endpointFor, insideOutline, placeDetail, placesInScope, pointPlace, requestFor, searchPlaces } from './model.ts';
 import { slopeSections } from '../../route/slopeSections.ts';
 import { getBuildingOutlineForLevel } from '@campo/core';
@@ -235,7 +238,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     if (demo === 'none' && route && to && data.graph?.nodes.has(to.id)) dispatch({ type: 'estimate', nodeId: to.id, timeSec: route.timeSec });
   }, [route, to, demo, data.graph, dispatch]);
   useEffect(() => {
-    if (gps.mode === 'INDOOR' || !sensors.running || !gps.rerouteRequested || !gps.position || !to || gps.position.skipped || gps.position.free || lastReroute.current === gps.fixCount) return;
+    if (gps.mode === 'INDOOR' || !sensors.running || !gps.rerouteRequested || !gps.position || !isValidLngLat(gps.position.lng, gps.position.lat) || !to || gps.position.skipped || gps.position.free || lastReroute.current === gps.fixCount) return;
     lastReroute.current = gps.fixCount;
     const next = pointPlace(gps.position, '현재 위치');
     setFrom(next); setRequest({ from: endpointFor(next), to: endpointFor(to), mode });
@@ -726,7 +729,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   return <View style={st.root} onLayout={(event) => setAreaHeight(event.nativeEvent.layout.height)}>
     <View style={st.mapArea}>
       <MapCanvas center={data.campus?.center ?? { lat: 37.5572, lng: 127.045 }} label={demo !== 'none' ? '가상 시험 캠퍼스' : building?.name ?? '한양대학교 서울캠퍼스'} route={shownRoute} from={from} to={to} places={scopePlaces} graph={data.graph} buildingId={buildingId} level={level}
-        position={navOn && sensors.running ? gps.position : myLocation} flow={flow}
+        position={safePosition(navOn && sensors.running ? gps.position : myLocation)} flow={flow}
         focus={focus} selected={screen === 'home' ? selected : null} fitPadding={{ top: fitTop, bottom: 48, left: 36, right: 36 }}
         photoSpots={shownPhotos.photoSpots} onPhotoSpot={showSpot} stepGroups={shownPhotos.stepGroups} onStepGroup={tapStepGroup}
         preview={screen === 'pick' ? null : screen === 'nav' ? preview ?? (shownPhotos.autoPreview ? navPreview : null) : preview} onOpenPreview={openRoadview}

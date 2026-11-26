@@ -90,7 +90,7 @@ describe('findRoute: gate → B동 2층 201호', () => {
     expect(kinds(r)).toEqual(['walk', 'ramp', 'walk', 'portal', 'walk', 'elevator', 'walk', 'bridge', 'walk']);
     expect(texts(r)).toEqual(expect.arrayContaining([
       'A동 4층 출입구로 들어가세요',
-      '엘리베이터를 타고 3층으로 가세요',
+      '엘리베이터로 3층까지 내려가세요',
       'A동 3층 연결통로를 건너 B동 2층으로 가세요',
     ]));
   });
@@ -99,7 +99,7 @@ describe('findRoute: gate → B동 2층 201호', () => {
     const r = route(GATE, ROOM_201, 'shortest');
     expect(r.stairsCount).toBe(1);
     expect(kinds(r)).toEqual(['walk', 'portal', 'walk', 'stairs', 'walk']);
-    expect(texts(r)).toEqual(expect.arrayContaining(['B동 1층 출입구로 들어가세요', '계단으로 1층 올라가세요']));
+    expect(texts(r)).toEqual(expect.arrayContaining(['B동 1층 출입구로 들어가세요', '계단으로 2층까지 올라가세요']));
   });
 });
 
@@ -197,7 +197,7 @@ describe('elevator', () => {
   it('pays the boarding time once per ride, not once per floor', () => {
     const r = route('n_A_1_hall', 'n_A_4_hall', 'step_free');
     expect(kinds(r)).toEqual(['walk', 'elevator', 'walk']);
-    expect(texts(r)).toContain('엘리베이터를 타고 4층으로 가세요');
+    expect(texts(r)).toContain('엘리베이터로 4층까지 올라가세요');
     expect(r.edgeIds.filter((id) => id.startsWith('e_A_elevA_'))).toHaveLength(3);
     // board once, one hop per elevator edge, alight once: 40 + 3 × 4 + 3
     expect(r.timeSec).toBeCloseTo(r.distanceM / WALK_SPEED_MPS + ELEVATOR_BOARD_SEC + 3 * ELEVATOR_HOP_SEC + ELEVATOR_ALIGHT_SEC, 0);

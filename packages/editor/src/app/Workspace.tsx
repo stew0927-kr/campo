@@ -57,7 +57,7 @@ import type { PhotoRow } from '../photos/photoModel.ts';
 import { measuredFloorLevels, plinthFloors } from '@campo/core';
 import { deckLayers } from '../map/deck3d.ts';
 import { fetchTerrain } from '../api.ts';
-import { PC_ONLY, SERVER_MODE } from '../storage.ts';
+import { LOCAL_SAVE_NOTICE, PC_ONLY, SERVER_MODE, SERVER_SAVED_TAIL, saveTargetNotice } from '../storage.ts';
 import { sampleTerrainGrid, terrainBase, terrainTop, type TerrainGrid, type TerrainWall } from '../model/terrain3d.ts';
 import { fineGround, type TerrainTile } from '../model/terrainFootprint.ts';
 import type { RoadSegmentJson } from '../model/roadRibbon.ts';
@@ -871,9 +871,9 @@ export function Workspace({ session }: { session: Session }) {
         const removedText = result.removed.length > 0 ? `, 지운 파일 ${result.removed.length}개` : '';
         if (SERVER_MODE) {
           const skippedText = result.skipped && result.skipped.length > 0 ? ` 서버에 두지 않는 ${result.skipped.join(', ')}은(는) 올리지 않았습니다(PC 편집기 전용).` : '';
-          info(`서버에 저장했습니다(바뀐 파일 ${result.written.length}개${removedText}). 앱은 다음 실행 때 받아 갑니다.${skippedText}`);
+          info(`서버에 저장했습니다(바뀐 파일 ${result.written.length}개${removedText}). ${SERVER_SAVED_TAIL}${skippedText}`);
         } else {
-          info(`저장했습니다. 쓴 파일 ${result.written.length}개${removedText}. 커밋은 Git에서 해 주세요.`);
+          info(`이 PC에 저장했습니다. 쓴 파일 ${result.written.length}개${removedText}. ${LOCAL_SAVE_NOTICE}`);
         }
       }
     } catch (err) {
@@ -1284,6 +1284,7 @@ export function Workspace({ session }: { session: Session }) {
         nodes={counts.nodes}
         edges={counts.edges}
         dirty={dirty}
+        saveTarget={saveTargetNotice()}
         notice={notice}
         hint={ui.tool in TOOL_OPTIONS ? toolDef(ui.tool).hint : null}
         elevation={SERVER_MODE

@@ -3,9 +3,9 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { LAYER_STACK_ICON, type SensorFix } from '@campo/core';
+import type { SensorFix } from '@campo/core';
 import { loadBundledCampus } from '../src/campus/loadBundledCampus.ts';
-import { STACK_PLATE_H, STACK_PLATE_W, STACK_STEP, STACK_ICON_SIZE, stackPlates } from '../src/features/map/stackIcon.ts';
+import { STACK_GAP, STACK_OPACITY, STACK_PLATE_H, STACK_PLATE_W, STACK_STEP, STACK_ICON_SIZE, diamond, stackPlates } from '../src/features/map/stackIcon.ts';
 import { RIM_H_M, edgeBands, stack3d } from '../src/features/map/stack3d.ts';
 import { PHOTOS_OFF, photoLayers, photosOn, showPhotos, togglePhotos } from '../src/features/map/routePhotos.ts';
 import {
@@ -24,34 +24,44 @@ const KIT = source('../src/ui/kit.tsx');
 const REAL_DIR = fileURLToPath(new URL('../../../data/campuses/hanyang-seoul', import.meta.url));
 const real = async () => loadBundledCampus(await bundleOf(REAL_DIR, 'hanyang-seoul'));
 
-describe('[1] 3D 버튼 아이콘: 촘촘히 쌓인 층판 셋', () => {
-  it('판 셋이 4dp 간격으로 붙고(판 세로 3.6 < 간격, 겹치지 않음), 24dp 안에 여백을 두고 들어간다', () => {
+describe('[1] 3D 버튼 아이콘: 두꺼운 층판 셋이 둥근 모서리로 촘촘히 겹친 덩어리(rh-1.svg)', () => {
+  it('SVG와 같은 기하: 판 중심 8·12·16, 판은 2:1 마름모로 두껍고(세로 9.8), 간격(4)보다 훨씬 두꺼워 겹친다', () => {
     const plates = stackPlates();
-    expect(plates).toHaveLength(3);
-    expect(STACK_STEP).toBeGreaterThanOrEqual(3);
-    expect(STACK_STEP).toBeLessThanOrEqual(4);
-    expect(STACK_PLATE_H).toBeLessThan(STACK_STEP);
-    for (let i = 1; i < plates.length; i++) expect(plates[i - 1]!.cy - plates[i]!.cy).toBe(STACK_STEP);
+    expect(plates.map((p) => p.cy)).toEqual([16, 12, 8]);
+    expect(STACK_STEP).toBe(4);
+    expect(STACK_PLATE_H).toBeGreaterThan(2 * STACK_STEP); // "선 3개"가 아니라 판
+    expect(STACK_PLATE_W / STACK_PLATE_H).toBeCloseTo(2, 6);
     const top = plates.at(-1)!.cy - STACK_PLATE_H / 2, bottom = plates[0]!.cy + STACK_PLATE_H / 2;
     expect(top).toBeGreaterThanOrEqual(2);
     expect(bottom).toBeLessThanOrEqual(STACK_ICON_SIZE - 2);
     expect((STACK_ICON_SIZE - STACK_PLATE_W) / 2).toBeGreaterThanOrEqual(2);
   });
-  it('아래 판은 옅게, 위 판은 진하게(켜지면 primary), 접근성 라벨은 그대로', () => {
-    expect(stackPlates().map((p) => p.opacity)).toEqual([0.35, 0.6, 1]);
-    expect(CHROME).toContain('const color = on ? t.color.primary : t.color.text;');
-    expect(SCREEN).toContain("label={threeD ? '3D 보기 끄기' : '3D 보기, 건물 층을 세워서 보기'}");
+  it('판 사이 틈은 약 0.4~0.5dp: 위 두 판 밑에 같은 비율의 틈 판(halo)을 깐다, 맨 아래 판은 없음', () => {
+    expect(STACK_GAP).toBeGreaterThanOrEqual(0.4);
+    expect(STACK_GAP).toBeLessThanOrEqual(0.6);
+    const [bottom, middle, top] = stackPlates();
+    expect(bottom!.haloW).toBe(0);
+    for (const p of [middle!, top!]) {
+      expect(p.haloW / p.haloH).toBeCloseTo(2, 6);
+      // 변에 수직인 틈 = (halo 세로 - 판 세로)/2 × cos(atan(1/2)) = 2/√5
+      expect(((p.haloH - STACK_PLATE_H) / 2) * (2 / Math.sqrt(5))).toBeCloseTo(STACK_GAP, 6);
+    }
   });
-  it('코어 LAYER_STACK_ICON(편집기·현장 앱)도 같은 중심·크기', () => {
-    const parse = (d: string) => [...d.matchAll(/[\d.]+/g)].map(Number);
-    const fromCore = LAYER_STACK_ICON.map((p) => parse(p.d)); // M x top L right cy L x bottom L left cy
-    stackPlates().forEach((plate, i) => {
-      const [, top, right, cy, , bottom, left] = fromCore[i]!;
-      expect(cy).toBeCloseTo(plate.cy, 6);
-      expect(bottom! - top!).toBeCloseTo(STACK_PLATE_H, 6);
-      expect(right! - left!).toBeCloseTo(STACK_PLATE_W, 6);
-    });
-    expect(LAYER_STACK_ICON.map((p) => p.opacity)).toEqual([0.35, 0.6, 1]);
+  it('마름모 변환: 정사각형 한 변 w/√2, 세로 비율 h/w', () => {
+    const d = diamond(STACK_PLATE_W, STACK_PLATE_H);
+    expect(d.side * Math.SQRT2).toBeCloseTo(STACK_PLATE_W, 6);
+    expect(d.scaleY).toBeCloseTo(0.5, 6);
+  });
+  it('위 판이 가장 진하고 아래로 옅다(같은 회색, 켜지면 primary), 틈 판은 버튼 바탕색, 접근성 라벨은 그대로', () => {
+    const o = stackPlates().map((p) => p.opacity);
+    expect(o).toEqual([...STACK_OPACITY]);
+    expect(o[0]).toBeLessThan(o[1]!);
+    expect(o[1]).toBeLessThan(o[2]!);
+    expect(o[2]).toBe(1);
+    expect(CHROME).toContain('const color = on ? t.color.primary : t.color.muted;');
+    expect(CHROME).toContain('const gap = on ? ROUND_ON_BG : t.color.surface;');
+    expect(CHROME).toContain('backgroundColor: ROUND_ON_BG }');
+    expect(SCREEN).toContain("label={threeD ? '3D 보기 끄기' : '3D 보기, 건물 층을 세워서 보기'}");
   });
 });
 
@@ -92,12 +102,12 @@ describe('[2] 3D 건물 모형: 유리판처럼 비치게', () => {
     expect(MAP).toContain('<GeoJSONSource id="app-3d-floors" data={stack?.slabs ?? EMPTY}>');
     expect(MAP).toContain('<GeoJSONSource id="app-indoor-mask" data={mask ?? EMPTY}>');
   });
-  it('슬래브는 옅게(0.2/0.1, 실외 0.3), 경계 띠와 기둥은 진하게', () => {
+  it('슬래브는 옅게(0.2/0.1, 실외 0.3), 경계 띠와 세로 선분은 진하게', () => {
     expect(MAP).toContain("slabsNear: { 'fill-extrusion-color': STACK_FLOOR_COLOR, 'fill-extrusion-opacity': 0.2");
     expect(MAP).toContain("slabsFar: { 'fill-extrusion-color': STACK_FLOOR_COLOR, 'fill-extrusion-opacity': 0.1");
     expect(MAP).toContain("'fill-extrusion-opacity': 0.3, ...SLAB_HEIGHT");
     expect(MAP).toContain("rimsNear: { 'fill-extrusion-color': STACK_EDGE_COLOR, 'fill-extrusion-opacity': 0.55");
-    expect(MAP).toContain("pillars: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-opacity': 0.9");
+    expect(MAP).toContain("links: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-opacity': 0.95");
   });
 });
 

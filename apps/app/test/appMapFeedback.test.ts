@@ -9,7 +9,7 @@ import { buildingLabels } from '../src/features/map/buildings.ts';
 import { buildingNameFeatures, nameBuckets, nameZoomBucket, NAME_COLOR, NAME_LAYOUT, NAME_PAINT, NAME_PICKED_COLOR, spanMinZoom } from '../src/features/map/buildingNames.ts';
 import { metersPerPixel } from '../src/features/map/mapLabels.ts';
 import { navCamera, navCards, pointAlong, stepHeading } from '../src/features/map/navModel.ts';
-import { asEditBuilding, isStackable, squareAround, stack3d, STAIR_PAIR_M } from '../src/features/map/stack3d.ts';
+import { asEditBuilding, isStackable, LINK_FOOT_M, LINK_W_M, squareAround, stack3d, STAIR_PAIR_M } from '../src/features/map/stack3d.ts';
 import { PRESS_FAR_TEXT, pressPinInfo } from '../src/features/map/centerPick.ts';
 import { computeRoute } from '../src/route/routeEngine.ts';
 import { bundleOf, fixtureRuntime } from './helpers.ts';
@@ -121,13 +121,14 @@ describe('[6] 3D 보기: 층별 수직 분리', () => {
     expect(s.slabs.features[0]!.properties.baseM).toBeCloseTo(3.9, 6);
     expect(s.outlines.features.length).toBe(rt.graph.buildings.size - 1);
   });
-  it('엘리베이터(같은 elevator_id)와 계단(인접 층 같은 자리)을 고른 층부터 세로 기둥으로 잇고 색을 나눈다', async () => {
+  it('엘리베이터(같은 elevator_id)와 계단(인접 층 같은 자리)을 고른 층부터 얇은 세로 선분으로 잇고 색을 나눈다', async () => {
     const rt = await real();
     const b = [...rt.graph.buildings.values()].find((x) => x.properties.name === '제1공학관')!;
     const s = stack3d(rt.graph, b.id, 1);
-    const lifts = s.pillars.features.filter((f) => f.properties.kind === 'elevator');
-    const stairs = s.pillars.features.filter((f) => f.properties.kind === 'stairs');
-    expect(lifts.length).toBe(2); // elevA, elevB
+    const lines = s.links.features.filter((f) => f.properties.part === 'line');
+    const lifts = lines.filter((f) => f.properties.kind === 'elevator');
+    const stairs = lines.filter((f) => f.properties.kind === 'stairs');
+    expect(lifts.length).toBe(2); // elevA, elevB: 샤프트마다 끊김 없는 선분 하나
     expect(stairs.length).toBeGreaterThan(0);
     for (const f of [...lifts, ...stairs]) {
       expect(f.properties.baseM).toBeGreaterThanOrEqual(0);
@@ -137,20 +138,46 @@ describe('[6] 3D 보기: 층별 수직 분리', () => {
     expect(lifts[0]!.properties.baseM).toBe(0);
     expect(STAIR_PAIR_M).toBeGreaterThan(0);
   });
+  it('계단 선분은 층마다 위층 바닥에서 끝나 그 위 선분과 같은 높이에서 만난다(겹치거나 끊기지 않음)', async () => {
+    const rt = await real();
+    const b = [...rt.graph.buildings.values()].find((x) => x.properties.name === '제1공학관')!;
+    const stairs = stack3d(rt.graph, b.id, 1).links.features.filter((f) => f.properties.kind === 'stairs' && f.properties.part === 'line');
+    const bases = new Set(stairs.map((f) => f.properties.baseM));
+    const tops = stairs.map((f) => f.properties.topM).filter((m) => m < Math.max(...stairs.map((f) => f.properties.topM)));
+    for (const top of tops) expect([...bases].some((base) => Math.abs(top - base) <= 0.1)).toBe(true);
+  });
+  it('선분은 아주 가늘고(0.08~0.15 m), 정류장·계단참에는 낮고 작은 바닥 표식만', async () => {
+    expect(LINK_W_M).toBeGreaterThanOrEqual(0.08);
+    expect(LINK_W_M).toBeLessThanOrEqual(0.15);
+    const rt = await real();
+    const b = [...rt.graph.buildings.values()].find((x) => x.properties.name === '제1공학관')!;
+    const s = stack3d(rt.graph, b.id, 1);
+    const side = (f: (typeof s.links.features)[number]) => {
+      const [a, , c] = f.geometry.coordinates[0]!;
+      return (c![1]! - a![1]!) * 110_540;
+    };
+    for (const f of s.links.features.filter((x) => x.properties.part === 'line')) expect(side(f)).toBeCloseTo(LINK_W_M, 3);
+    const feet = s.links.features.filter((x) => x.properties.part === 'foot');
+    expect(feet.length).toBeGreaterThan(0);
+    for (const f of feet) {
+      expect(side(f)).toBeCloseTo(LINK_FOOT_M, 3);
+      expect(f.properties.topM - f.properties.baseM).toBeLessThanOrEqual(0.1);
+    }
+  });
   it('아무 건물도 고르지 않으면 층이 둘 이상인 건물을 1층 기준으로 옅게 세운다(지하 생략, 기둥 없음)', async () => {
     const rt = await real();
     const s = stack3d(rt.graph, null, null);
-    expect(s.pillars.features).toEqual([]);
+    expect(s.links.features).toEqual([]);
     expect(s.outlines.features).toEqual([]);
     expect(s.slabs.features.every((f) => f.properties.baseM >= 0 && f.properties.level >= 1)).toBe(true);
     expect(new Set(s.slabs.features.map((f) => f.properties.buildingId)).size).toBeGreaterThan(3);
   });
-  it('기둥은 작은 정사각형(닫힌 고리)', () => {
+  it('선분·표식은 작은 정사각형(닫힌 고리)', () => {
     const ring = squareAround([127, 37.5], 2)[0]!;
     expect(ring).toHaveLength(5);
     expect(ring[0]).toEqual(ring[4]);
   });
-  it('지도: fill-extrusion 슬래브·기둥, 3D 토글은 FAB 옆, 기울기 50', () => {
+  it('지도: fill-extrusion 슬래브·세로 선분, 3D 토글은 FAB 옆, 기울기 50', () => {
     expect(MAP).toContain('type="fill-extrusion"');
     expect(MAP).toContain("'fill-extrusion-base': ['get', 'baseM'], 'fill-extrusion-height': ['get', 'topM']");
     expect(SCREEN).toContain('<Stack3DIcon on={threeD} />');

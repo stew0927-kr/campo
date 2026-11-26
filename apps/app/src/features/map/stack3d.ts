@@ -4,7 +4,8 @@
 // MapLibre 네이티브의 선·점·아이콘(그리고 React Native Marker)은 고도를 줄 수 없어 항상 지면(0 m)에 그려진다. 그래서 건물·층을
 // 고른 3D 보기에서는 고른 층을 지면에 두고(그 층의 도면 선·시설 아이콘이 그 층 위에 정확히 놓이게) 그 위층들을 실제 층고대로
 // 쌓는다. 고른 층보다 아래층은 지면 아래라 세우지 않는다(fill-extrusion은 0 m 아래로 내려가지 않는다).
-// - 고른 건물: 위층 슬래브(옅게, 층 사이 틈) + 엘리베이터 기둥(같은 elevator_id 정류장) + 계단 기둥(인접 층 같은 자리의 계단참).
+// - 고른 건물: 위층 슬래브(옅게, 층 사이 틈) + 엘리베이터·계단 세로 선분(links: 폭 LINK_W_M의 아주 가는 수직 기둥, 편집기 3D의
+//   보라·주황 세로선과 같은 인상) + 정류장·계단참 자리의 작은 바닥 표식(foot).
 // - 다른 건물: 슬래브 대신 외곽선만.
 // - 아무 건물도 고르지 않았으면: 층이 둘 이상인 건물을 모두 1층을 지면에 두고 옅게 세운다(기둥 없음).
 //
@@ -18,9 +19,14 @@ import type { FeatureCollection, Polygon, Position } from 'geojson';
 export const SLAB_GAP_M = 0.6;
 /** 계단참 두 개가 이 거리(m) 안이면 같은 계단(아래층 ↔ 위층)으로 본다. */
 export const STAIR_PAIR_M = 6;
-/** 기둥 한 변(m). */
-export const ELEVATOR_PILLAR_M = 1.6;
-export const STAIR_PILLAR_M = 1.1;
+/**
+ * 세로 선분의 한 변(m). MapLibre 네이티브 선 레이어는 고도를 줄 수 없어, 아주 가는 정사각 기둥을 fill-extrusion으로 세워 "선"처럼 보이게 한다.
+ * 슬래브 경계 띠(RIM_W_M)보다 가늘다.
+ */
+export const LINK_W_M = 0.15;
+/** 정류장·계단참 자리의 바닥 표식: 한 변(m), 높이(m). 선분보다 넓고 아주 낮은 판이라 "여기서 타고 내린다"만 읽힌다. */
+export const LINK_FOOT_M = 0.7;
+export const LINK_FOOT_H_M = 0.08;
 /** 유리판 경계 띠: 변을 가운데 두고 폭(m), 슬래브 위·아래 끝에서의 높이(m). */
 export const RIM_W_M = 0.35;
 export const RIM_H_M = 0.22;
@@ -29,16 +35,18 @@ export const STACK_PITCH_DEG = 50;
 
 export const STACK_FLOOR_COLOR = STACK_COLORS.floor;
 export const STACK_EDGE_COLOR = STACK_COLORS.edge;
-export const PILLAR_COLORS = { elevator: PICTOGRAM_COLORS.elevator, stairs: PICTOGRAM_COLORS.stairs } as const;
+export const LINK_COLORS = { elevator: PICTOGRAM_COLORS.elevator, stairs: PICTOGRAM_COLORS.stairs } as const;
 
 /** tier 0: 고른 층 바로 위 층(또는 건물을 고르지 않았을 때의 모든 층), 1: 그보다 위 층(더 옅게). */
 export interface SlabProps { buildingId: string; level: Level; baseM: number; topM: number; picked: boolean; tier: 0 | 1 }
 /** 슬래브 윗변·아랫변의 경계 띠 하나. */
 export interface RimProps { buildingId: string; tier: 0 | 1; baseM: number; topM: number }
-export interface PillarProps { buildingId: string; kind: 'elevator' | 'stairs'; baseM: number; topM: number; color: string }
+/** 세로 연결 한 조각: `line` = 층 사이를 잇는 가는 세로 선분, `foot` = 정류장·계단참 자리의 작은 바닥 표식. */
+export interface LinkProps { buildingId: string; kind: 'elevator' | 'stairs'; part: 'line' | 'foot'; baseM: number; topM: number; color: string }
 export interface Stack3D {
   slabs: FeatureCollection<Polygon, SlabProps>;
-  pillars: FeatureCollection<Polygon, PillarProps>;
+  /** 엘리베이터(보라)·계단(주황) 세로 선분과 바닥 표식. */
+  links: FeatureCollection<Polygon, LinkProps>;
   /** 슬래브 경계 띠(유리판의 테두리). */
   rims: FeatureCollection<Polygon, RimProps>;
   /** 고른 건물이 있을 때 다른 건물의 외곽선. */
@@ -76,10 +84,10 @@ function relativeFloors(b: BuildingFeature, anchor: Level | null): { level: Leve
  */
 export function stack3d(graph: CampusGraph | null, buildingId: string | null, level: Level | null, pickedId: string | null = null): Stack3D {
   const slabs: Stack3D['slabs']['features'] = [];
-  const pillars: Stack3D['pillars']['features'] = [];
+  const links: Stack3D['links']['features'] = [];
   const outlines: Stack3D['outlines']['features'] = [];
   const rims: Stack3D['rims']['features'] = [];
-  const empty = (): Stack3D => ({ slabs: { type: 'FeatureCollection', features: slabs }, pillars: { type: 'FeatureCollection', features: pillars }, rims: { type: 'FeatureCollection', features: rims }, outlines: { type: 'FeatureCollection', features: outlines } });
+  const empty = (): Stack3D => ({ slabs: { type: 'FeatureCollection', features: slabs }, links: { type: 'FeatureCollection', features: links }, rims: { type: 'FeatureCollection', features: rims }, outlines: { type: 'FeatureCollection', features: outlines } });
   if (!graph) return empty();
   const selected = buildingId ? graph.buildings.get(buildingId) : undefined;
   for (const b of graph.buildings.values()) {
@@ -103,7 +111,7 @@ export function stack3d(graph: CampusGraph | null, buildingId: string | null, le
         rims.push({ type: 'Feature', properties: { buildingId: b.id, tier, baseM: round(topM - band), topM }, geometry: { type: 'Polygon', coordinates: [quad] } });
       }
     }
-    if (selected) pillars.push(...verticalLinks(graph, b.id, floors));
+    if (selected) links.push(...verticalLinks(graph, b.id, floors));
   }
   return empty();
 }
@@ -132,13 +140,16 @@ export function edgeBands(outline: readonly (readonly Position[])[], widthM: num
 }
 
 /**
- * 고른 건물의 세로 연결: 같은 elevator_id 정류장(쌓은 층 중 가장 낮은 층 바닥 → 가장 높은 층 천장), 인접 층 같은 자리(STAIR_PAIR_M
- * 안)의 계단참(아래층 바닥 → 위층 천장). 층 번호는 높이를 찾는 데만 쓴다.
+ * 고른 건물의 세로 연결(층 번호는 높이를 찾는 데만 쓴다).
+ * - 엘리베이터: 같은 elevator_id 정류장들의 가운데에 가장 낮은 정류장 층 바닥 → 가장 높은 정류장 층 바닥까지 끊김 없는 선분 하나,
+ *   정류장마다 그 층 바닥에 작은 표식.
+ * - 계단: 인접 층 같은 자리(STAIR_PAIR_M 안)의 계단참 쌍마다 아래층 바닥 → 위층 바닥 선분. 위·아래 쌍이 같은 계단참을 공유하면
+ *   같은 높이에서 만나 층을 건너 이어진다. 계단참마다 바닥 표식.
  */
-export function verticalLinks(graph: CampusGraph, buildingId: string, floors: readonly { level: Level; baseM: number; topM: number }[]): Stack3D['pillars']['features'] {
+export function verticalLinks(graph: CampusGraph, buildingId: string, floors: readonly { level: Level; baseM: number; topM: number }[]): Stack3D['links']['features'] {
   const byLevel = new Map(floors.map((f) => [f.level, f]));
   const order = floors.map((f) => f.level);
-  const out: Stack3D['pillars']['features'] = [];
+  const out: Stack3D['links']['features'] = [];
   const shafts = new Map<string, { level: Level; at: Position }[]>();
   const landings = new Map<Level, Position[]>();
   for (const n of graph.nodes.values()) {
@@ -148,13 +159,25 @@ export function verticalLinks(graph: CampusGraph, buildingId: string, floors: re
     if (p.node_type === 'elevator_stop' && p.elevator_id) shafts.set(p.elevator_id, [...(shafts.get(p.elevator_id) ?? []), { level: p.level, at }]);
     else if (p.node_type === 'stair_landing') landings.set(p.level, [...(landings.get(p.level) ?? []), at]);
   }
+  const line = (kind: LinkProps['kind'], at: Position, baseM: number, topM: number) => out.push({ type: 'Feature',
+    properties: { buildingId, kind, part: 'line', baseM: round(baseM), topM: round(topM), color: LINK_COLORS[kind] }, geometry: { type: 'Polygon', coordinates: squareAround(at, LINK_W_M) } });
+  const foot = (kind: LinkProps['kind'], at: Position, baseM: number) => out.push({ type: 'Feature',
+    properties: { buildingId, kind, part: 'foot', baseM: round(baseM), topM: round(baseM + LINK_FOOT_H_M), color: LINK_COLORS[kind] }, geometry: { type: 'Polygon', coordinates: squareAround(at, LINK_FOOT_M) } });
   for (const stops of shafts.values()) {
     const levels = [...new Set(stops.map((s) => s.level))].sort((a, b) => order.indexOf(a) - order.indexOf(b));
     if (levels.length < 2) continue;
     const low = byLevel.get(levels[0]!)!, high = byLevel.get(levels[levels.length - 1]!)!;
     const center: Position = [stops.reduce((s, x) => s + x.at[0]!, 0) / stops.length, stops.reduce((s, x) => s + x.at[1]!, 0) / stops.length];
-    out.push({ type: 'Feature', properties: { buildingId, kind: 'elevator', baseM: round(low.baseM), topM: round(high.topM), color: PILLAR_COLORS.elevator }, geometry: { type: 'Polygon', coordinates: squareAround(center, ELEVATOR_PILLAR_M) } });
+    line('elevator', center, low.baseM, high.baseM + LINK_FOOT_H_M);
+    for (const level of levels) foot('elevator', center, byLevel.get(level)!.baseM);
   }
+  const footed = new Set<string>();
+  const footOnce = (at: Position, level: Level) => {
+    const key = `${level}:${at[0]}:${at[1]}`;
+    if (footed.has(key)) return;
+    footed.add(key);
+    foot('stairs', at, byLevel.get(level)!.baseM);
+  };
   for (let i = 0; i + 1 < order.length; i++) {
     const lower = landings.get(order[i]!) ?? [], upper = landings.get(order[i + 1]!) ?? [];
     const used = new Set<number>();
@@ -164,8 +187,10 @@ export function verticalLinks(graph: CampusGraph, buildingId: string, floors: re
       if (best < 0) continue;
       used.add(best);
       const b = upper[best]!;
-      const center: Position = [(a[0]! + b[0]!) / 2, (a[1]! + b[1]!) / 2];
-      out.push({ type: 'Feature', properties: { buildingId, kind: 'stairs', baseM: round(byLevel.get(order[i]!)!.baseM), topM: round(byLevel.get(order[i + 1]!)!.topM), color: PILLAR_COLORS.stairs }, geometry: { type: 'Polygon', coordinates: squareAround(center, STAIR_PILLAR_M) } });
+      // 선분은 위층 계단참 자리에 세운다: 그 위 쌍의 선분도 같은 자리(그 층의 아래 계단참)에서 시작하면 끊김 없이 이어진다.
+      line('stairs', b, byLevel.get(order[i]!)!.baseM, byLevel.get(order[i + 1]!)!.baseM + LINK_FOOT_H_M);
+      footOnce(a, order[i]!);
+      footOnce(b, order[i + 1]!);
     }
   }
   return out;

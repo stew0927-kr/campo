@@ -270,6 +270,8 @@ button.check-item:hover { background: var(--chrome); }
 }
 .status-mode { font-weight: 600; color: #fff; }
 .status-dirty { color: #ffc9a8; }
+/* PC 편집기: 저장이 이 PC에만 된다는 표시. 어두운 상태 막대 위에서 눈에 띄게(호박색 바탕, 검은 글자 대비 12:1). */
+.status-save-target { flex: 0 0 auto; padding: 0 8px; border-radius: 999px; background: #ffd25e; color: #1d1a10; font-weight: 700; }
 .status-message { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: right; color: #b9c3cc; }
 .notice-info { color: #fff; }
 .notice-error { color: #ffb4ad; }

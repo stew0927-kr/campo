@@ -1,6 +1,7 @@
 // 사진 안내에서 화면과 스크린리더가 그대로 쓰는 한국어 문구(존댓말). 화면에서 새로 만들지 않고 여기 것을 쓴다.
 // React를 import하지 않는 순수 모듈.
 import type { PhotoArrow } from '../contracts.ts';
+import { turnGuide, type TurnGuide } from './turnGuide.ts';
 
 /** ±45° 밖(±90° 안)에서 고른 사진에 붙는 배지. */
 export const APPROXIMATE_BADGE = '정면이 아닐 수 있습니다';
@@ -21,27 +22,27 @@ export function photoCounterText(index: number, total: number, place?: string | 
 export const otherPhotosButtonText = (count: number): string => `이 지점 다른 사진(${count})`;
 
 /**
- * 화살표를 말로: "사진 정면 방향으로 가세요", "사진 정면에서 약간 오른쪽(약 30°)으로 가세요", "뒤로 돌아서 가세요".
- * 각도는 5° 단위로 반올림한다(나침반 오차가 그보다 크다).
+ * 화살표를 말로(turnGuide): "앞으로 25m 직진하세요.", "25m 직진 후 왼쪽으로 가세요.", "바로 오른쪽으로 가세요.".
+ * `guide`(경로선에서 잰 직진 거리·꺾임)가 있으면 그 문장, 없으면 화살표 각도만으로("앞으로 직진하세요." / "바로 왼쪽으로 가세요.").
+ * 사용자가 직접 고른 뒤쪽 사진(U턴)만 "뒤로 돌아서(약 155°) 가세요."(각도 5° 단위).
  */
-export function arrowSentence(arrow: PhotoArrow): string {
-  const deg = Math.round(Math.abs(arrow.rotateDeg) / 5) * 5;
-  if (arrow.label === '정면') return '사진 정면 방향으로 가세요.';
-  if (arrow.label === '뒤로' || arrow.mode === 'behind') return `뒤로 돌아서(약 ${deg}°) 가세요.`;
-  return `사진 정면에서 ${arrow.label}(약 ${deg}°)으로 가세요.`;
+export function arrowSentence(arrow: PhotoArrow, guide: TurnGuide | null = null): string {
+  if (arrow.mode === 'behind') return `뒤로 돌아서(약 ${Math.round(Math.abs(arrow.rotateDeg) / 5) * 5}°) 가세요.`;
+  return (guide ?? turnGuide(null, arrow.rotateDeg)!).sentence;
 }
 
-/** 스크린리더 레이블: "사진 3/7, 공학관 2층 엘리베이터 앞. 사진 정면에서 오른쪽(약 30°)으로 가세요. 사진 오른쪽 두 번째 문." */
+/** 스크린리더 레이블: "사진 3/7, 공학관 2층 엘리베이터 앞. 25m 직진 후 오른쪽으로 가세요. 사진 오른쪽 두 번째 문." */
 export function photoAccessibilityLabel(input: {
   index: number;
   total: number;
   place?: string | null;
   arrow: PhotoArrow | null;
+  guide?: TurnGuide | null;
   hint?: string | null;
   badge?: string | null;
 }): string {
   const parts = [`사진 ${input.index + 1}/${input.total}${input.place ? `, ${input.place}` : ''}.`];
-  if (input.arrow) parts.push(arrowSentence(input.arrow));
+  if (input.arrow) parts.push(arrowSentence(input.arrow, input.guide ?? null));
   if (input.hint) parts.push(`${input.hint}.`);
   if (input.badge) parts.push(`${input.badge}.`);
   return parts.join(' ');

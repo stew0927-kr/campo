@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { CampusRuntime } from '../src/campus/types.ts';
 import type { CampusRouteView, PhotoRow, RoutePhoto } from '../src/contracts.ts';
 import { EMPTY_PHOTO_CATALOG, isEmptyCatalog, photoCatalogFromRows } from '../src/photos/catalog.ts';
+import { turnGuide } from '../src/photos/turnGuide.ts';
 import { APPROXIMATE_BADGE, ARRIVAL_TEXT, arrowSentence, otherPhotosButtonText, photoAccessibilityLabel, photoCounterText } from '../src/photos/photoText.ts';
 import { arrowForPhoto, nodePositions, otherPhotosAt, routeStepPhotos } from '../src/photos/routePhotos.ts';
 import { markerIndexOf, photoMarkerFeatures, photoViewerPages, thumbImages, thumbKeyOf, withPhoto } from '../src/photos/viewerModel.ts';
@@ -193,7 +194,7 @@ describe('지도 마커와 뷰어 페이지', () => {
     expect(pages[0]!.stepText).toBe(route.steps[0]!.text);
     expect(pages[0]!.step.photo?.photoId).toBe('best');
     expect(pages[0]!.others.map((p) => p.photoId)).toEqual(['near', 'far', 'none-head']);
-    expect(pages[0]!.accessibilityLabel).toMatch(new RegExp(`^사진 1/${total}, 정문\\. 사진 정면`));
+    expect(pages[0]!.accessibilityLabel).toMatch(new RegExp(`^사진 1/${total}, 정문\\. 앞으로 직진하세요\\.`));
     expect(pages.at(-1)!.stepText).toBe(ARRIVAL_TEXT);
     expect(pages.at(-1)!.counter).toBe(`${total} / ${total} · 4층`); // 이름을 모르면 층 표시
     expect(photoViewerPages(null, stepPhotos, catalog)).toEqual([]);
@@ -216,14 +217,17 @@ describe('사진 안내 문구', () => {
     expect(photoCounterText(2, 7, '공학관 2층 엘리베이터 앞')).toBe('3 / 7 · 공학관 2층 엘리베이터 앞');
     expect(photoCounterText(0, 1)).toBe('1 / 1');
     expect(otherPhotosButtonText(2)).toBe('이 지점 다른 사진(2)');
-    expect(arrowSentence({ mode: 'inFrame', rotateDeg: 3, xRatio: 0.52, label: '정면' })).toBe('사진 정면 방향으로 가세요.');
-    expect(arrowSentence({ mode: 'inFrame', rotateDeg: 28, xRatio: 0.9, label: '약간 오른쪽' })).toBe('사진 정면에서 약간 오른쪽(약 30°)으로 가세요.');
-    expect(arrowSentence({ mode: 'edge', rotateDeg: -92, label: '왼쪽' })).toBe('사진 정면에서 왼쪽(약 90°)으로 가세요.');
+    // 화살표 각도만으로(직진 거리를 모를 때): 45° 안은 직진, 넘으면 바로 꺾기. "정면"·"약간 왼쪽"은 쓰지 않는다.
+    expect(arrowSentence({ mode: 'inFrame', rotateDeg: 3, xRatio: 0.52, label: '정면' })).toBe('앞으로 직진하세요.');
+    expect(arrowSentence({ mode: 'inFrame', rotateDeg: 28, xRatio: 0.9, label: '약간 오른쪽' })).toBe('앞으로 직진하세요.');
+    expect(arrowSentence({ mode: 'edge', rotateDeg: -92, label: '왼쪽' })).toBe('바로 왼쪽으로 가세요.');
     expect(arrowSentence({ mode: 'behind', rotateDeg: 178, label: '뒤로' })).toBe('뒤로 돌아서(약 180°) 가세요.');
+    // 경로선에서 잰 직진 거리가 있으면 그 문장.
+    expect(arrowSentence({ mode: 'inFrame', rotateDeg: 5, xRatio: 0.5, label: '정면' }, turnGuide({ distanceM: 24, turnDeg: -88 }, 5))).toBe('25m 직진 후 왼쪽으로 가세요.');
     expect(photoAccessibilityLabel({
-      index: 2, total: 7, place: '공학관 2층 엘리베이터 앞', arrow: { mode: 'inFrame', rotateDeg: 30, xRatio: 0.9, label: '약간 오른쪽' },
-      hint: '사진 오른쪽 두 번째 문', badge: null,
-    })).toBe('사진 3/7, 공학관 2층 엘리베이터 앞. 사진 정면에서 약간 오른쪽(약 30°)으로 가세요. 사진 오른쪽 두 번째 문.');
+      index: 2, total: 7, place: '공학관 2층 엘리베이터 앞', arrow: { mode: 'inFrame', rotateDeg: 10, xRatio: 0.6, label: '정면' },
+      guide: turnGuide({ distanceM: 31, turnDeg: 90 }, 10), hint: '사진 오른쪽 두 번째 문', badge: null,
+    })).toBe('사진 3/7, 공학관 2층 엘리베이터 앞. 30m 직진 후 오른쪽으로 가세요. 사진 오른쪽 두 번째 문.');
     expect(photoAccessibilityLabel({ index: 0, total: 2, arrow: null })).toBe('사진 1/2.');
   });
 });

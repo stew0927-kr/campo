@@ -38,14 +38,20 @@ const roadview = (page) => page.getByRole('dialog');
 /** Exact visible text (route leg titles: '오는 길' is also part of '돌아오는 길'). */
 const exactText = (page, value) => page.getByText(value, { exact: true }).filter({ visible: true });
 const searchBox = (page) => searchSheet(page).getByRole('textbox', { name: '장소 검색어' });
+/** Developer menu: no badge on the map any more; dev builds open it by long-pressing the 3D button. */
+async function openDev(page) {
+  const box = await page.getByRole('button', { name: /^3D 보기/ }).first().boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down(); await page.waitForTimeout(800); await page.mouse.up();
+}
 /** Developer data switch; the sheet is collapsed first so the floating menu is never under it. */
 async function useDemo(page, name, example = null) {
   const collapse = button(page, '시트 접기');
   if (await collapse.count()) await collapse.first().click();
-  await button(page, '개발 데이터').click(); await button(page, name).click();
+  await openDev(page); await button(page, name).click();
   if (!example) return;
   if (await collapse.count()) await collapse.first().click();
-  await button(page, '개발 데이터').click(); await button(page, example).click();
+  await openDev(page); await button(page, example).click();
 }
 /** Value shown above a Stat label in the route sheet (e.g. 계단 → "0곳"). */
 const stat = (page, label) => page.evaluate((name) => [...document.querySelectorAll('span')].find((el) => el.textContent === name && el.offsetParent !== null)?.previousElementSibling?.textContent ?? null, label);
@@ -203,7 +209,7 @@ try {
     await text(p, '현재 위치를 출발지로 선택했습니다').waitFor();
   });
   await scenario('home search focuses a place, sets endpoints and routes with bottom travel modes', async (p) => {
-    await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
+    await openDev(p); await button(p, '야외 가상 경로 시험').click();
     await button(p, '장소 검색 열기').click();
     let dialog = searchSheet(p); await dialog.getByRole('textbox', { name: '장소 검색어' }).fill('가상 시험 지점 1');
     await dialog.getByRole('button', { name: /가상 시험 지점 1/ }).click();
@@ -222,7 +228,7 @@ try {
     await button(p, '길찾기').click(); await button(p, '출발: 검색해서 선택해 주세요').waitFor();
   });
   await scenario('selection back, half-screen search, building switch and floor picker', async (p) => {
-    await button(p, '개발 데이터').click(); await button(p, '실내·계단·엘리베이터 시험').click();
+    await openDev(p); await button(p, '실내·계단·엘리베이터 시험').click();
     // 1. A place picked from a search with words: ← drops it and reopens that search; ← again (hardware) → plain map.
     await button(p, '장소 검색 열기').click();
     await searchSheet(p).getByRole('textbox', { name: '장소 검색어' }).fill('408');
@@ -261,7 +267,7 @@ try {
     await text(p, '검사 건물 강조').waitFor();
   });
   await scenario('manual demo route, map selection cancel and map point start', async (p) => {
-    await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
+    await openDev(p); await button(p, '야외 가상 경로 시험').click();
     await button(p, '길찾기').click();
     for (const [field, name] of [['출발', '가상 시험 지점 1'], ['도착', '가상 시험 지점 3']]) {
       await button(p, new RegExp(`^${field}:`)).click(); const dialog = searchSheet(p);
@@ -279,8 +285,8 @@ try {
     await absent(button(p, '지도 선택 취소')); await button(p, /^출발: (?!검색해서)/).waitFor();
   });
   await scenario('indoor route, floor controls and cross-tab intent clears the developer fixture', async (p) => {
-    await button(p, '개발 데이터').click(); await button(p, '실내·계단·엘리베이터 시험').click();
-    await button(p, '개발 데이터').click(); await button(p, '정문 → 가상 408호 선택').click();
+    await openDev(p); await button(p, '실내·계단·엘리베이터 시험').click();
+    await openDev(p); await button(p, '정문 → 가상 408호 선택').click();
     await button(p, '엘리베이터 우선').click(); await button(p, '길찾기').click();
     await text(p, '검사 경로 좌표').waitFor(); await text(p, '층 (엘리베이터)').waitFor();
     // Route planning stays on the outdoor map even when the end is a room (the building is opened by the user).
@@ -336,7 +342,7 @@ try {
     assert.equal(await button(p, '길찾기').isDisabled(), true);
   }, undefined, 'bad-node');
   await scenario('out-of-campus route failure shows guidance without a stale route', async (p) => {
-    await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
+    await openDev(p); await button(p, '야외 가상 경로 시험').click();
     await button(p, '길찾기').click(); await button(p, '도착: 검색해서 선택해 주세요').click();
     await searchSheet(p).getByRole('textbox').fill('결과없는장소');
     await text(p, '검색 결과가 없습니다').waitFor();
@@ -660,7 +666,7 @@ try {
     await button(p, '위치 안내 시작').click(); await p.getByLabel('단계별 위치 안내').waitFor();
     await absent(text(p, '검사 말풍선')); await checked(chip, false);
     await chip.click(); await checked(chip, true);
-    await text(p, '검사 말풍선').waitFor(); await text(p, '지도의 사진을 누르면 크게 볼 수 있어요.').waitFor();
+    await text(p, '검사 말풍선').waitFor(); await text(p, '지도의 사진이나 말풍선을 누르면 로드뷰로 볼 수 있어요.').waitFor();
     // Off again: gone at once.
     await chip.click(); await absent(text(p, '검사 말풍선')); await chip.click(); await text(p, '검사 말풍선').waitFor();
     await p.getByLabel('검사 로드뷰 말풍선').getByRole('button').click(); await roadview(p).waitFor();

@@ -1,7 +1,7 @@
-// 위치 안내 화면의 작은 부품: 경과 시간 시계, 경로 '사진 보기' 칩, 안내 종료 요약 카드.
+// 위치 안내 화면의 작은 부품: 경과 시간 시계, 경로 '사진 보기' 토글(조이스틱형), 안내 종료 요약 카드.
 // 값 계산은 navSummary.ts / routePhotos.ts(순수 모듈)에 있고, 여기서는 그리기만 한다.
-import { memo, useEffect, useState, type ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
+import { AccessibilityInfo, Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button } from '../../ui/kit.tsx';
 import { theme as t } from '../../ui/theme.ts';
 import { elapsedSec, formatClimb, formatClock, formatDistance, formatDuration, NOT_MEASURED, type Measure, type NavSummary } from './navSummary.ts';
@@ -24,13 +24,50 @@ export const NavClock = memo(function NavClock({ startMs }: { startMs: number })
   </View>;
 });
 
-/** Small chip: photo glyph + count. Off: quiet outline; on: the route's soft blue. A switch for screen readers. */
+/** 사진 보기 토글의 치수(dp): 알약형 트랙 64×32 안에서 지름 28 손잡이가 좌우로 움직인다. */
+export const PHOTO_TOGGLE = { trackW: 64, trackH: 32, knob: 28, inset: 2, durationMs: 180 } as const;
+/** 손잡이가 움직이는 거리(dp): 트랙 폭 − 손잡이 − 양쪽 여백. */
+export const PHOTO_TOGGLE_TRAVEL = PHOTO_TOGGLE.trackW - PHOTO_TOGGLE.knob - PHOTO_TOGGLE.inset * 2;
+
+/**
+ * 경로 사진 보기 토글: 위에서 내려다본 조이스틱처럼 둥근 손잡이(가운데 오목한 캡)가 알약형 트랙 안에서 좌우로 미끄러진다.
+ * 꺼짐: 왼쪽·회색 손잡이, 옅은 회색 트랙 / 켜짐: 오른쪽·primary 손잡이, soft 파랑 트랙. 사진 장수는 트랙 오른쪽 글자로 남긴다.
+ * 손잡이 이동과 트랙 색 전환은 180ms ease-out(네이티브 드라이버), '동작 줄이기'가 켜져 있으면 바로 바뀐다.
+ * 행 전체가 누름 영역(높이 44 이상). 스크린리더에는 switch + checked.
+ */
 export function PhotoChip({ on, count, onPress }: { on: boolean; count: number; onPress: () => void }) {
-  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: on }} accessibilityLabel={`경로 사진 보기, 사진 ${count}장`} hitSlop={6} onPress={onPress}
-    style={({ pressed }) => [s.chip, on && s.chipOn, pressed && (on ? s.chipOnPressed : s.chipPressed)]}>
-    <PhotoGlyph color={on ? t.color.primary : t.color.muted} />
-    <Text style={[s.chipText, on && s.chipTextOn]}>{count}장</Text>
+  const progress = useRef(new Animated.Value(on ? 1 : 0)).current;
+  const reduceMotion = useReduceMotion();
+  useEffect(() => {
+    Animated.timing(progress, { toValue: on ? 1 : 0, duration: reduceMotion ? 0 : PHOTO_TOGGLE.durationMs, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, [on, reduceMotion, progress]);
+  const knobX = progress.interpolate({ inputRange: [0, 1], outputRange: [0, PHOTO_TOGGLE_TRAVEL] });
+  return <Pressable accessibilityRole="switch" accessibilityState={{ checked: on }} accessibilityLabel={`경로 사진 보기, 사진 ${count}장`} onPress={onPress}
+    hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }} style={s.toggle}>
+    {({ pressed }) => <>
+      <View style={s.track}>
+        {/* 켜짐 트랙은 꺼짐 트랙 위에 겹쳐 불투명도로만 바꾼다(색 보간은 네이티브 드라이버가 못 한다). */}
+        <Animated.View style={[s.trackOn, { opacity: progress }]} />
+        <Animated.View style={[s.knob, { transform: [{ translateX: knobX }, { scale: pressed ? 0.92 : 1 }] }]}>
+          <Animated.View style={[s.knobOn, { opacity: progress }]} />
+          <View style={[s.cap, on && s.capOn]} />
+        </Animated.View>
+      </View>
+      <Text style={[s.toggleText, on && s.toggleTextOn]}>사진 {count}장</Text>
+    </>}
   </Pressable>;
+}
+
+/** 시스템 '동작 줄이기' 설정(켜져 있으면 토글 애니메이션을 건너뛴다). */
+function useReduceMotion(): boolean {
+  const [reduce, setReduce] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (alive) setReduce(v); }).catch(() => {});
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduce);
+    return () => { alive = false; sub.remove(); };
+  }, []);
+  return reduce;
 }
 
 /**
@@ -77,9 +114,6 @@ function ClockGlyph({ size, color }: { size: number; color: string }) {
     <View style={{ position: 'absolute', left: c - stroke / 2, top: c - stroke / 2, width: short + stroke / 2, height: stroke, backgroundColor: color, borderRadius: stroke }} />
   </View>;
 }
-function PhotoGlyph({ color }: { color: string }) {
-  return <View style={[s.photoFrame, { borderColor: color }]}><View style={[s.photoLens, { backgroundColor: color }]} /></View>;
-}
 /** Two stops joined by a line, slanted: a stretch walked. */
 function DistanceGlyph() {
   return <View style={s.glyph16}>
@@ -99,14 +133,17 @@ function ClimbGlyph() {
 const s = StyleSheet.create({
   clock: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingHorizontal: 10, height: 32, borderRadius: t.radii.pill, backgroundColor: t.color.soft },
   clockText: { fontSize: t.type.small, fontWeight: '800', color: t.color.primary, fontVariant: ['tabular-nums'], letterSpacing: 0.2 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 32, paddingHorizontal: 12, borderRadius: t.radii.pill, borderWidth: 1, borderColor: t.color.border, backgroundColor: t.color.surface },
-  chipOn: { backgroundColor: t.color.soft, borderColor: t.color.primary },
-  chipPressed: { backgroundColor: t.color.sunken },
-  chipOnPressed: { backgroundColor: '#DCE6FF' },
-  chipText: { fontSize: t.type.small, fontWeight: '700', color: t.color.muted, fontVariant: ['tabular-nums'] },
-  chipTextOn: { color: t.color.primary },
-  photoFrame: { width: 14, height: 11, borderRadius: 3, borderWidth: 1.6, alignItems: 'center', justifyContent: 'center' },
-  photoLens: { width: 4, height: 4, borderRadius: 2 },
+  toggle: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, paddingVertical: 6 },
+  track: { width: PHOTO_TOGGLE.trackW, height: PHOTO_TOGGLE.trackH, borderRadius: PHOTO_TOGGLE.trackH / 2, padding: PHOTO_TOGGLE.inset, backgroundColor: t.color.border, justifyContent: 'center', overflow: 'hidden' },
+  trackOn: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: PHOTO_TOGGLE.trackH / 2, backgroundColor: '#D3E0FF' },
+  // Knob seen from above: a round stick top with a recessed cap in the middle and a soft drop shadow.
+  knob: { width: PHOTO_TOGGLE.knob, height: PHOTO_TOGGLE.knob, borderRadius: PHOTO_TOGGLE.knob / 2, backgroundColor: t.color.muted, alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#0B1F3A', shadowOpacity: 0.22, shadowRadius: 3, shadowOffset: { width: 0, height: 1.5 }, elevation: 3 },
+  knobOn: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: PHOTO_TOGGLE.knob / 2, backgroundColor: t.color.primary },
+  cap: { width: 12, height: 12, borderRadius: 6, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.55)', backgroundColor: 'rgba(255,255,255,0.18)' },
+  capOn: { borderColor: 'rgba(255,255,255,0.85)', backgroundColor: 'rgba(255,255,255,0.26)' },
+  toggleText: { fontSize: t.type.small, fontWeight: '700', color: t.color.muted, fontVariant: ['tabular-nums'] },
+  toggleTextOn: { color: t.color.primary },
   summary: { gap: t.space.md },
   summaryHead: { gap: 2 },
   summaryTitle: { fontSize: 20, lineHeight: 27, fontWeight: '800', color: t.color.text, letterSpacing: -0.3 },

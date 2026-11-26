@@ -166,7 +166,7 @@ export interface CampusData {
 
 /** useCampusData가 돌려주는 값: CampusData + 다시 읽기. */
 export interface CampusDataApi extends CampusData {
-  /** 번들된 캠퍼스 데이터를 다시 파싱한다(지금은 앱에 들어 있는 데이터라 새로 내려받지는 않는다). */
+  /** 캠퍼스 지도를 다시 읽는다: 서버 지도 캐시를 비우고 다시 받는다(받기 전·실패면 지금 지도/앱 번들 그대로). 번들을 넘긴 화면은 그 번들만 다시 파싱한다. */
   reload: () => void;
 }
 

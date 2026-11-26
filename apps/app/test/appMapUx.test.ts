@@ -1,13 +1,16 @@
 // 지도 UX 개편의 순수 로직: 배율 단계, 미터/픽셀 근사, 겹침 제거, 시설 아이콘 추출, 매핑 건물·층 선택, 반화면 검색 시트 높이.
 // RN 화면(CampusMap, MapGlyphs)은 import하지 않는다(typecheck로 확인).
 import { describe, expect, it } from 'vitest';
-import { fixtureRuntime } from './helpers.ts';
+import { bundleOf, fixtureRuntime } from './helpers.ts';
+import { loadBundledCampus } from '../src/campus/loadBundledCampus.ts';
+import { fileURLToPath } from 'node:url';
 import type { CampusPlace } from '../src/contracts.ts';
 import {
+  BUILDING_LABEL_MIN_SPAN_PX, BUILDING_LABEL_MIN_ZOOM, MAX_BUILDING_LABELS, buildingLabelSize,
   ICON_DETAIL_MIN_ZOOM, INDOOR_LABEL_MIN_ZOOM, LABEL_MAX_WIDTH_PX, MAX_LABELS, OUTDOOR_LABEL_MIN_ZOOM, PRIORITY,
   buildMarkers, declutter, estimateLabelWidth, floorFacilityNodes, markerKind, metersPerPixel, toScreen, zoomStage, type MapMarker, type MapView,
 } from '../src/features/map/mapLabels.ts';
-import { buildingCenter, buildingShapes, floorChoice, levelChip, mappedBuildings } from '../src/features/map/buildings.ts';
+import { buildingCenter, buildingLabels, buildingShapes, floorChoice, levelChip, mappedBuildings } from '../src/features/map/buildings.ts';
 import { releaseSnap, searchSheetHeights, SEARCH_SHEET_DEFAULT_SHARE, SEARCH_SHEET_EXPANDED_SHARE } from '../src/features/map/sheetModel.ts';
 
 const place = (id: string, lng: number, lat: number, nodeType = 'door', name = id): CampusPlace => ({ id, name, nodeType, buildingId: 'b', level: 1, lng, lat });
@@ -163,5 +166,79 @@ describe('half-screen search sheet', () => {
     expect(releaseSnap('default', -300, 0, h)).toBe('expanded');
     expect(releaseSnap('expanded', 20, 0, h)).toBe('expanded');
     expect(releaseSnap('default', 10, 1.2, h)).toBe('collapsed');
+  });
+});
+
+describe('building name labels on the outdoor map', () => {
+  const REAL_DIR = fileURLToPath(new URL('../../../data/campuses/hanyang-seoul', import.meta.url));
+  const placedNames = (markers: MapMarker[], v: MapView) => declutter(markers, v, { stage: zoomStage(v.zoom, false) }).filter((p) => p.marker.kind === 'building');
+
+  it('makes one label per named building at its centre, with its size, and marks only mapped buildings as tappable', async () => {
+    const rt = await fixtureRuntime();
+    const labels = buildingLabels(rt.graph, ['bldg_A']);
+    expect(labels.length).toBe([...rt.graph!.buildings.values()].filter((b) => b.properties.name?.trim()).length);
+    for (const label of labels) {
+      expect(label.name).toBe(rt.graph!.buildings.get(label.id)!.properties.name.trim());
+      expect(label).toMatchObject(buildingCenter(rt.graph, label.id, [])!);
+      expect(label.spanM).toBeGreaterThan(0);
+      expect(label.tappable).toBe(label.id === 'bldg_A');
+    }
+    expect(buildingLabels(null)).toEqual([]);
+    expect(buildingLabels(rt.graph).every((l) => !l.tappable)).toBe(true);
+  });
+  it('flags the building whose floor picker is open for a thicker border', async () => {
+    const rt = await fixtureRuntime();
+    const ids = [...rt.graph!.buildings.keys()];
+    const shapes = buildingShapes(rt.graph, ids, null, ids[0]!);
+    expect(shapes.features.map((f) => f.properties?.['picked'])).toEqual(ids.map((id) => id === ids[0]));
+    expect(buildingShapes(rt.graph, ids).features.every((f) => f.properties?.['picked'] === false)).toBe(true);
+  });
+  it('sizes a label for one or two lines and never wider than the cap', () => {
+    const short = buildingLabelSize('본관'), long = buildingLabelSize('정몽구 미래자동차연구센터'), huge = buildingLabelSize('아주아주아주아주 긴 건물 이름이 계속 이어집니다 정말로');
+    expect(short.height).toBeLessThan(long.height); expect(huge.height).toBe(long.height);
+    expect(long.width).toBeLessThanOrEqual(huge.width); expect(short.width).toBeLessThan(long.width);
+  });
+  it('is label-only: no icon box, hidden below the minimum zoom, and below higher-priority markers', () => {
+    const b = (id: string, lng: number, lat: number, name: string, spanM = 80): MapMarker => ({ id, kind: 'building', lng, lat, name, priority: PRIORITY.building, tone: 'normal', place: null, spanM, tappable: true });
+    const near = view(17), mk = [b('b1', near.lng, near.lat, '본관')];
+    expect(PRIORITY.building).toBeGreaterThan(PRIORITY.place);
+    expect(placedNames(mk, near).map((p) => p.marker.id)).toEqual(['b1']);
+    expect(placedNames(mk, view(BUILDING_LABEL_MIN_ZOOM - 0.1))).toEqual([]);
+    // Too small on screen: the 20 m shed has no name at zoom 16 but gets one when zoomed in.
+    const shed = [b('s', near.lng, near.lat, '창고', 20)];
+    expect(20 / metersPerPixel(near.lat, 16)).toBeLessThan(BUILDING_LABEL_MIN_SPAN_PX);
+    expect(placedNames(shed, view(16))).toEqual([]); expect(placedNames(shed, view(18)).length).toBe(1);
+    // A selected place keeps its spot; the building name that would sit on it is dropped.
+    const sel: CampusPlace = { ...place('sel', near.lng, near.lat, 'door', '선택'), buildingId: null };
+    const markers = buildMarkers({ places: [sel], selected: sel, buildings: [{ id: 'b1', name: '본관', lng: near.lng, lat: near.lat, spanM: 80, tappable: false }] });
+    expect(declutter(markers, near, { stage: 'labels' }).map((p) => p.marker.id)).toEqual(['sel']);
+    // Icons filling the cap do not stop building names.
+    const many = Array.from({ length: 80 }, (_, i) => place(`p${i}`, near.lng + (i % 10) * 0.0004, near.lat + Math.floor(i / 10) * 0.0004 + 0.002, 'door'));
+    const withNames = buildMarkers({ places: many, buildings: [{ id: 'b1', name: '본관', lng: near.lng, lat: near.lat, spanM: 80, tappable: false }] });
+    expect(declutter(withNames, near, { stage: 'icons' }).some((p) => p.marker.id === 'b1')).toBe(true);
+  });
+  it('never overlaps names (any rotation, any zoom) and thins them out when zoomed out (real campus data)', async () => {
+    const rt = loadBundledCampus(await bundleOf(REAL_DIR, 'hanyang-seoul'));
+    const labels = buildingLabels(rt.graph, rt.buildings.map((x) => x.id));
+    expect(labels.length).toBeGreaterThan(5);
+    const markers = buildMarkers({ places: [], buildings: labels });
+    const center = rt.info.center;
+    const counts: number[] = [];
+    for (const zoom of [15.4, 15.5, 16, 16.5, 17, 18, 19]) {
+      for (const bearing of [0, 37, 90, 200]) {
+        const v: MapView = { lng: center.lng, lat: center.lat, zoom, bearing, width: 390, height: 700 };
+        const placed = placedNames(markers, v);
+        expect(placed.length).toBeLessThanOrEqual(MAX_BUILDING_LABELS);
+        const boxes = placed.map((p) => { const { width, height } = buildingLabelSize(p.marker.name!); return { l: p.x - width / 2, r: p.x + width / 2, t: p.y - height / 2, b: p.y + height / 2 }; });
+        for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i]!, c = boxes[j]!;
+          expect(a.l < c.r && c.l < a.r && a.t < c.b && c.t < a.b, `${placed[i]!.marker.name} / ${placed[j]!.marker.name} @${zoom}°${bearing}`).toBe(false);
+        }
+        if (bearing === 0) counts.push(placed.length);
+      }
+    }
+    // [15.4, 15.5, 16, 16.5, ...]: nothing below the minimum zoom; zoomed out shows fewer (large buildings first) than zoomed in.
+    expect(counts[0]).toBe(0);
+    expect(counts[1]).toBeGreaterThan(0); expect(counts[1]!).toBeLessThan(labels.length); expect(counts[1]!).toBeLessThan(counts[3]!);
   });
 });

@@ -18,7 +18,7 @@ export const theme = {
    * each at least 4.5:1 on white (WCAG AA). Start/end/primary stay reserved for endpoints and the current selection.
    */
   facility: {
-    door: '#5E6E82', elevator: '#0E7490', stairs: '#9A5B00', restroom: '#2F6FD6', entrance: '#18744D', place: '#5E6E82',
+    door: '#5E6E82', elevator: '#0E7490', stairs: '#9A5B00', restroom: '#2F6FD6', entrance: '#18744D', place: '#5E6E82', building: '#33465C',
   },
   space: { xs: 4, sm: 8, md: 16, lg: 24 },
   /** Radius follows hierarchy: floating pills > sheets > cards > buttons. */

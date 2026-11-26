@@ -61,8 +61,9 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
     // The first sheet is left clean: no "어디로 가시나요?" heading or guide caption. The restroom quick button floats on the map.
     expect(html).not.toContain('어디로 가시나요?'); expect(html).not.toContain('위치 권한 없이도 길을 찾을 수 있습니다');
     expect(html).toContain('가장 가까운 화장실'); expect(html).toContain('시트 접기');
-    // The building switch floats on the map; the sheet keeps a building list entry instead of the 실외|실내 segment.
-    expect(html).toContain('data-label="건물에서 층 고르기"'); expect(html).toContain('건물 목록'); expect(html).toContain('실외 지도');
+    // No floating building switch: buildings are tapped on the map itself. The sheet keeps a building list entry instead of the 실외|실내 segment,
+    // and the only floating action left is the locate button.
+    expect(html).not.toContain('건물에서 층 고르기'); expect(html).toContain('건물 목록'); expect(html).toContain('실외 지도');
     // No search sheet until the search is opened.
     expect(html).not.toContain('data-label="검색 닫기"');
   });

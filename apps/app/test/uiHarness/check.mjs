@@ -31,7 +31,7 @@ async function absent(locator) { await settle(locator.page()); assert.equal(awai
 const checked = async (locator, value) => assert.equal(await locator.getAttribute('aria-checked'), String(value));
 const isSelected = async (locator, value = true) => assert.equal(await locator.getAttribute('aria-selected'), String(value));
 const radio = (page, name) => page.getByRole('radio', { name, exact: true });
-const toggle = (page) => page.getByRole('switch', { name: '건물에서 층 고르기' });
+const toggle = (page) => page.getByRole('switch', { name: '건물에서 층 고르기' }); // gone: buildings are tapped on the map itself
 const wheelchair = (page) => page.getByRole('switch', { name: '휠체어 가능' });
 const roundTrip = (page) => page.getByRole('switch', { name: '왕복 보기(돌아오는 길 포함)' });
 const roadview = (page) => page.getByRole('dialog');
@@ -192,7 +192,8 @@ try {
     await button(p, '현재 위치를 출발지로').click(); await text(p, '위치 권한이 없어도 출발지와 목적지를 직접 선택').waitFor();
     assert.equal(await searchSheet(p).count(), 0);
     await button(p, '길찾기 닫기').click();
-    await p.getByRole('switch', { name: '건물에서 층 고르기' }).click(); await text(p, '등록된 실내 건물·층 데이터가 없습니다').waitFor();
+    // No floating building switch any more: the sheet itself says there is no indoor data.
+    assert.equal(await toggle(p).count(), 0); await text(p, '등록된 실내 건물·층 데이터가 없습니다').waitFor();
   });
   await scenario('granted GPS centres the map and can become the start', async (p) => {
     await p.evaluate(() => { window.__campoGps = { lat: 37.5572, lng: 127.045 }; });
@@ -247,17 +248,17 @@ try {
     await text(p, '검사 카메라 이동 2회').waitFor(); assert.equal(await button(p, '선택 취소').count(), 0);
     await text(p, '검사 실내: bldg_A 4층').waitFor();
     await button(p, '실외 지도로 나가기').click(); await text(p, '실외 지도').waitFor();
-    // 3. The building switch highlights mapped buildings; a tap opens the floor card, a floor enters it.
-    const toggle = p.getByRole('switch', { name: '건물에서 층 고르기' });
-    await toggle.click(); assert.equal(await toggle.getAttribute('aria-checked'), 'true'); await text(p, '검사 건물 강조').waitFor();
+    // 3. No switch: mapped buildings are highlighted on the plain map; a tap opens the floor card, a floor enters it.
+    assert.equal(await toggle(p).count(), 0); await text(p, '검사 건물 강조').waitFor();
     await button(p, '검사 건물 누르기: bldg_B').click(); await button(p, '층 선택 닫기').waitFor();
     await back(p); assert.equal(await button(p, '층 선택 닫기').count(), 0);
     await button(p, '검사 건물 누르기: bldg_B').click(); await button(p, 'B동 2층').click();
     await text(p, 'B동 · 2층').waitFor(); await text(p, '검사 실내: bldg_B 2층').waitFor();
     // Another highlighted building can be picked from inside; a one-floor building opens at once.
     await button(p, '검사 건물 누르기: bldg_C').click(); await text(p, '검사 실내: bldg_C 5층').waitFor();
-    await toggle.click(); assert.equal(await toggle.getAttribute('aria-checked'), 'false'); await text(p, '실외 지도').waitFor();
-    assert.equal(await text(p, '검사 건물 강조').count(), 0);
+    // Leaving the building goes back to the outdoor map, where the buildings stay tappable.
+    await button(p, '실외 지도로 나가기').click(); await text(p, '실외 지도').waitFor();
+    await text(p, '검사 건물 강조').waitFor();
   });
   await scenario('manual demo route, map selection cancel and map point start', async (p) => {
     await button(p, '개발 데이터').click(); await button(p, '야외 가상 경로 시험').click();
@@ -284,10 +285,9 @@ try {
     await text(p, '검사 경로 좌표').waitFor(); await text(p, '층 (엘리베이터)').waitFor();
     // Route planning stays on the outdoor map even when the end is a room (the building is opened by the user).
     await text(p, '실외 지도').waitFor(); assert.equal(await button(p, '실외 지도로 나가기').count(), 0);
-    assert.equal(await p.getByRole('switch', { name: '건물에서 층 고르기' }).getAttribute('aria-checked'), 'false');
     await button(p, '건물 목록').click(); await button(p, /^A동, 4개 층/).click();
     await button(p, 'A동 4층').click(); await text(p, 'A동 · 4층').waitFor(); await text(p, '검사 실내: bldg_A 4층').waitFor();
-    assert.equal(await p.getByRole('switch', { name: '건물에서 층 고르기' }).getAttribute('aria-checked'), 'true');
+    assert.equal(await toggle(p).count(), 0);
     await button(p, '휠체어').click(); assert.equal(await button(p, '휠체어').getAttribute('aria-selected'), 'true'); await text(p, '검사 경로 좌표').waitFor();
     await tab(p, '논술').click(); await button(p, '고사장 상세 보기').first().click(); await handoffSearch(p, '가상 시험관 가상 301호');
     await text(p, '실제 캠퍼스 길 데이터가 아직 없습니다').waitFor();
@@ -395,9 +395,8 @@ try {
   });
   await scenario('search: after leaving a floor and visiting another tab the searched building is kept', async (p) => {
     await useDemo(p, '실내·계단·엘리베이터 시험');
-    await toggle(p).click(); await button(p, '검사 건물 누르기: bldg_B').click(); await button(p, 'B동 2층').click();
+    await button(p, '검사 건물 누르기: bldg_B').click(); await button(p, 'B동 2층').click();
     await text(p, '검사 실내: bldg_B 2층').waitFor(); await button(p, '실외 지도로 나가기').click(); await text(p, '실외 지도').waitFor();
-    await checked(toggle(p), false);
     await button(p, '장소 검색 열기').click(); await searchSheet(p).getByRole('button', { name: /^C동,/ }).click();
     await text(p, '검사 카메라 이동 1회').waitFor(); await button(p, '검색 닫기').click(); await text(p, '검사 검색 건물: bldg_C').waitFor();
     await tab(p, '논술').click(); await selected(p, '논술'); await tab(p, '지도·길찾기').click(); await selected(p, '지도·길찾기');
@@ -467,43 +466,45 @@ try {
     assert.equal(await back(p), true); await button(p, '장소 검색 열기').waitFor(); await absent(button(p, '선택 취소')); await absent(text(p, '검사 경로 좌표'));
   });
 
-  /* ---------- 3. Building switch and floor card ---------- */
-  await scenario('building switch: ON highlights only mapped buildings, OFF removes them', async (p) => {
+  /* ---------- 3. Building taps (no switch) and floor card ---------- */
+  await scenario('buildings: no switch; mapped buildings are tappable on the plain map, not while picking a point or navigating', async (p) => {
     await useDemo(p, '실내·계단·엘리베이터 시험');
-    await checked(toggle(p), false); await absent(text(p, '검사 건물 강조'));
-    await toggle(p).click(); await checked(toggle(p), true); await text(p, '검사 건물 강조 3곳').waitFor();
+    assert.equal(await toggle(p).count(), 0); await text(p, '검사 건물 강조 3곳').waitFor();
     await text(p, '파란 테두리 건물을 누르면 층을 골라 실내를 볼 수 있어요.').waitFor();
     assert.equal(await button(p, /^검사 건물 누르기:/).count(), 3);
-    await toggle(p).click(); await checked(toggle(p), false); await absent(text(p, '검사 건물 강조')); await absent(button(p, /^검사 건물 누르기:/));
+    // Picking a point on the map: buildings neither highlight nor take taps.
+    await button(p, '길찾기').click(); await button(p, /^출발:/).click(); await button(p, '지도에서 출발 선택').click(); await text(p, '지도를 움직여 위치를 지정하세요').waitFor();
+    await absent(text(p, '검사 건물 강조')); await absent(button(p, /^검사 건물 누르기:/));
+    await button(p, '지도 선택 취소').click(); await text(p, '검사 건물 강조 3곳').waitFor();
   });
   await scenario('floor card: ✕, 지도에서 계속 보기 and back close it; a floor enters and is marked current', async (p) => {
-    await useDemo(p, '실내·계단·엘리베이터 시험'); await toggle(p).click();
+    await useDemo(p, '실내·계단·엘리베이터 시험');
     const press = () => button(p, '검사 건물 누르기: bldg_B').click();
     await press(); await p.getByLabel('B동 층 선택').waitFor(); assert.equal(await button(p, /^B동 \d층$/).count(), 2);
     await button(p, '층 선택 닫기').click(); await absent(p.getByLabel('B동 층 선택'));
     await press(); await button(p, '지도에서 계속 보기').click(); await absent(button(p, '층 선택 닫기'));
-    await press(); await back(p); await absent(button(p, '층 선택 닫기')); await checked(toggle(p), true); await absent(text(p, '검사 실내'));
+    await press(); await text(p, '검사 선택 건물: bldg_B').waitFor(); await back(p); await absent(button(p, '층 선택 닫기')); await absent(text(p, '검사 선택 건물')); await absent(text(p, '검사 실내'));
     await press(); await button(p, 'B동 1층').click(); await absent(button(p, '층 선택 닫기'));
     await text(p, 'B동 · 1층').waitFor(); await text(p, '검사 실내: bldg_B 1층').waitFor();
-    await isSelected(button(p, 'B동 1층, 지금 보는 층')); await isSelected(button(p, 'B동 2층'), false); await checked(toggle(p), true);
+    await isSelected(button(p, 'B동 1층, 지금 보는 층')); await isSelected(button(p, 'B동 2층'), false);
     await press(); await isSelected(button(p, 'B동 1층, 지금 보는 층')); await isSelected(button(p, 'B동 2층'), false);
     await button(p, 'B동 2층').click(); await text(p, '검사 실내: bldg_B 2층').waitFor(); await isSelected(button(p, 'B동 2층, 지금 보는 층'));
   });
-  await scenario('inside a building: switch to another, a one-floor building enters at once, OFF goes outdoors', async (p) => {
-    await useDemo(p, '실내·계단·엘리베이터 시험'); await toggle(p).click();
+  await scenario('inside a building: switch to another, a one-floor building enters at once, 실외 지도로 나가기 goes outdoors', async (p) => {
+    await useDemo(p, '실내·계단·엘리베이터 시험');
     await button(p, '검사 건물 누르기: bldg_A').click(); await button(p, 'A동 3층').click(); await text(p, '검사 실내: bldg_A 3층').waitFor();
     await button(p, '검사 건물 누르기: bldg_C').click(); await text(p, '검사 실내: bldg_C 5층').waitFor(); await text(p, 'C동 · 5층').waitFor();
     await absent(button(p, '층 선택 닫기'));
     await button(p, '검사 건물 누르기: bldg_A').click(); await absent(button(p, /지금 보는 층$/)); await button(p, 'A동 1층').click();
     await text(p, '검사 실내: bldg_A 1층').waitFor();
-    await toggle(p).click(); await checked(toggle(p), false); await text(p, '실외 지도').waitFor();
-    await absent(text(p, '검사 실내')); await absent(text(p, '검사 건물 강조'));
+    await button(p, '실외 지도로 나가기').click(); await text(p, '실외 지도').waitFor();
+    await absent(text(p, '검사 실내')); await text(p, '검사 건물 강조 3곳').waitFor();
     // The sheet's building list is the screen-reader path: it moves the camera and enters a one-floor building.
     await button(p, '건물 목록').click(); await button(p, /^C동, 1개 층/).click();
-    await text(p, '검사 실내: bldg_C 5층').waitFor(); await text(p, '검사 카메라 이동 1회').waitFor(); await checked(toggle(p), true);
+    await text(p, '검사 실내: bldg_C 5층').waitFor(); await text(p, '검사 카메라 이동 1회').waitFor();
   });
   await scenario('buildings without floors and places with an unknown floor (test fixture)', async (p) => {
-    await useDemo(p, '실내·계단·엘리베이터 시험'); await toggle(p).click(); await text(p, '검사 건물 강조 4곳').waitFor();
+    await useDemo(p, '실내·계단·엘리베이터 시험'); await text(p, '검사 건물 강조 4곳').waitFor();
     await button(p, '검사 건물 누르기: bldg_D').click(); await text(p, '이 건물의 층 정보가 아직 없습니다.').waitFor();
     await absent(button(p, '층 선택 닫기')); await absent(text(p, '검사 실내'));
     await button(p, '장소 검색 열기').click(); await searchSheet(p).getByRole('button', { name: /^B동,/ }).click();
@@ -513,11 +514,9 @@ try {
     // No floor chip is current when the floor is unknown.
     await isSelected(button(p, 'B동 1층'), false); await isSelected(button(p, 'B동 2층'), false);
   }, undefined, null, 'fixture=edge');
-  await scenario('real data without indoor buildings: switch explains and the building list stays disabled', async (p) => {
-    await toggle(p).click(); await checked(toggle(p), true);
+  await scenario('real data without indoor buildings: the sheet explains and the building list stays disabled', async (p) => {
     await text(p, '등록된 실내 건물·층 데이터가 없습니다').waitFor(); await text(p, '검사 건물 강조 0곳').waitFor();
     assert.equal(await button(p, '건물 목록').isDisabled(), true); await absent(button(p, /^검사 건물 누르기:/));
-    await toggle(p).click(); await checked(toggle(p), false);
   });
 
   /* ---------- 4. Nearest restroom ---------- */

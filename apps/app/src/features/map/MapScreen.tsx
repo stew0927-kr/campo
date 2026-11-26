@@ -23,7 +23,7 @@ import { endpointFor, insideOutline, placeDetail, placesInScope, pointPlace, req
 import { slopeSections } from '../../route/slopeSections.ts';
 import { getBuildingOutlineForLevel } from '@campo/core';
 import { useSensorFixes } from './useSensorFixes.ts';
-import { BackIcon, BuildingToggle, EndpointCard, EndpointDot, FloatChip, FloorChips, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
+import { BackIcon, EndpointCard, EndpointDot, FloatChip, FloorChips, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
 import { buildingCenter, floorChoice, mappedBuildings } from './buildings.ts';
 import { RoadviewScreen } from './RoadviewScreen.tsx';
 import { ROADVIEW_DEMO_CAMPUS, ROADVIEW_DEMO_CATALOG, RV } from './roadviewDemo.ts';
@@ -46,7 +46,6 @@ const minutes = (sec: number) => sec === 0 ? 0 : Math.max(1, Math.ceil(sec / 60)
 /** Camera zoom used when the map moves to a whole building (search list, building list). */
 const BUILDING_ZOOM = 18;
 /** Indoor tap on a spot that is not a registered place / outside the building. */
-const INDOOR_PICK_HINT = '실내에서는 등록된 지점을 선택해 주세요.';
 const INDOOR_OUTSIDE_HINT = "지금은 이 건물 실내만 선택할 수 있습니다. 건물 밖은 '실외 지도로 나가기'를 누른 뒤 골라 주세요.";
 
 /**
@@ -74,8 +73,6 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const [selected, setSelected] = useState<CampusPlace | null>(null);
   /** Where the current selection came from: the search query to reopen on ←, or null (map tap, list, empty query). */
   const [selectQuery, setSelectQuery] = useState<string | null>(null);
-  /** '건물에서 층 고르기' switch. Being inside a building also counts as on. */
-  const [buildingMode, setBuildingMode] = useState(false);
   /** Building whose floor picker card is open over the map. */
   const [floorPicker, setFloorPicker] = useState<string | null>(null);
   /** Inline building list in the sheet (건물 목록 / 건물 바꾸기). */
@@ -159,7 +156,8 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const screen = mapPick ? 'pick' : request && nav && route ? 'nav' : request ? 'route' : view;
   const mapped = useMemo(() => mappedBuildings(data.places, data.buildings), [data.places, data.buildings]);
   const mappedIds = useMemo(() => mapped.map((b) => b.id), [mapped]);
-  const buildingsOn = buildingMode || buildingId !== null;
+  // Mapped buildings are always tappable on the map, except while picking a point on it and during navigation.
+  const buildingsTappable = screen !== 'pick' && screen !== 'nav';
   // The on-screen ← buttons and the Android back key close things in the same order, one step at a time:
   // roadview → bubble → search → dev menu → floor picker → map pick → route → route input → selection (→ its search).
   const back = useCallback(() => {
@@ -201,7 +199,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     // An event's real destination must never resolve against the developer fixture.
     if (demo !== 'none') { switchData('none'); return; }
     clearGps(); setNav(null); setRequest(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null); setSelected(null); setSelectQuery(null); setDevOpen(false);
-    setBuildingMode(false); setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
+    setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
     setView('plan');
     const target = intent.destination;
     const { destination: resolved, start, missingFlow } = planIntent(data.runtime, target);
@@ -260,29 +258,24 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   /** A building opened in the search list: move the map there and keep a light mark after the search closes. */
   function searchedBuilding(id: string) { moveToBuilding(id); setSearchBuilding(id); }
   function enterBuilding(id: string, floor: number) {
-    setBuildingMode(true); setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
+    setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
     setBuildingId(id); setLevel(floor);
   }
   /** A highlighted building tapped on the map (or chosen in the building list): one floor → enter, several → floor card. */
   function pressBuilding(id: string) {
     const target = data.buildings.find((item) => item.id === id);
     if (!target) return;
-    setBuildingMode(true); setPreview(null); setDevOpen(false); setSearchBuilding(null);
+    setPreview(null); setDevOpen(false); setSearchBuilding(null);
     const choice = floorChoice(target);
     if (choice.kind === 'enter') enterBuilding(id, choice.level);
     else if (choice.kind === 'pick') setFloorPicker(id);
     else setMessage('이 건물의 층 정보가 아직 없습니다.');
   }
-  /** The floating building switch. Off: close the floor card and go back to the outdoor map. */
-  function setBuildingsOn(on: boolean) {
+  /** 실외 지도로 나가기: close the floor card and the list, and leave the building. */
+  function exitBuilding() {
     setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
-    if (on) {
-      setBuildingMode(true);
-      if (mapped.length === 0) setMessage('등록된 실내 건물·층 데이터가 없습니다. 임의의 실내 경로는 만들지 않습니다.');
-    } else {
-      setBuildingMode(false); setBuildingId(null); setLevel(null);
-      setMessage((old) => (old === INDOOR_PICK_HINT || old === INDOOR_OUTSIDE_HINT ? null : old));
-    }
+    setBuildingId(null); setLevel(null);
+    setMessage((old) => (old === INDOOR_OUTSIDE_HINT ? null : old));
   }
   function closePlan() { clearGps(); setNav(null); setFrom(null); setTo(null); setRequest(null); setMapPick(null); setFlow(null); setRestroom(null); setRestroomGender('any'); setRoundTrip(false); setView('home'); }
   function swap() {
@@ -352,7 +345,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     clearGps(); setNav(null); setDemo(next); setFrom(null); setTo(null); setRequest(null); setQuery(''); setSearch(null); setMapPick(null); setBuildingId(null); setLevel(null); setFlow(null);
     setRestroom(null); setRestroomGender('any'); setRoundTrip(false); setPreview(null); setRoadview(null);
     setSelected(null); setSelectQuery(null); setView('home'); setDevOpen(false); setMyLocation(null); gps.reset();
-    setBuildingMode(false); setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
+    setFloorPicker(null); setBuildingList(false); setSearchBuilding(null);
   }
   /** One permission + position read shared by the locate button and the "current location" endpoint. */
   async function currentPoint(): Promise<RoutePoint | null> {
@@ -426,14 +419,14 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     {message && <Notice>{message}</Notice>}
     {gpsBusy && <View style={st.busy}><ActivityIndicator color={t.color.primary} /><Text style={st.busyText}>위치를 확인하고 있습니다…</Text></View>}
   </>;
-  // The 실외|실내 segment is replaced by the floating building switch; the sheet keeps a building list as the
+  // Buildings are entered by tapping them on the map (or their name); the sheet keeps a building list as the
   // discoverable, screen-reader friendly way in (current building · floor, 건물 바꾸기, floors, 실외 지도로 나가기).
   const indoorControls = <View style={{ gap: 10 }}>
     <View style={st.rowBetween}>
       <Text style={st.sectionTitle}>{buildingId === null ? '실외 지도' : `${building?.name ?? '실내'} · ${floorLabel(level)}`}</Text>
       <TextButton title={buildingList ? '건물 목록 닫기' : buildingId === null ? '건물 목록' : '건물 바꾸기'} disabled={mapped.length === 0} onPress={() => setBuildingList((value) => !value)} />
     </View>
-    {buildingsOn && buildingId === null && !buildingList && <Text style={st.caption}>{mapped.length ? '파란 테두리 건물을 누르면 층을 골라 실내를 볼 수 있어요.' : '등록된 실내 건물·층 데이터가 없습니다. 임의의 실내 경로는 만들지 않습니다.'}</Text>}
+    {buildingId === null && !buildingList && <Text style={st.caption}>{mapped.length ? '파란 테두리 건물을 누르면 층을 골라 실내를 볼 수 있어요.' : '등록된 실내 건물·층 데이터가 없습니다. 임의의 실내 경로는 만들지 않습니다.'}</Text>}
     {buildingList && <View>{mapped.map((item) => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`${item.name}, ${item.levels.length}개 층${item.id === buildingId ? ', 지금 보는 건물' : ''}`} accessibilityState={{ selected: item.id === buildingId }}
       onPress={() => { setBuildingList(false); moveToBuilding(item.id); pressBuilding(item.id); }} style={({ pressed }) => [st.listRow, pressed && { backgroundColor: t.color.sunken }]}>
       <Text style={[st.listName, item.id === buildingId && { color: t.color.primary }]}>{item.name}</Text>
@@ -441,7 +434,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     </Pressable>)}</View>}
     {buildingId !== null && !buildingList && <>
       <FloorChips name={building?.name ?? ''} levels={building?.levels ?? []} current={level} onLevel={setLevel} />
-      <TextButton title="실외 지도로 나가기" onPress={() => setBuildingsOn(false)} />
+      <TextButton title="실외 지도로 나가기" onPress={exitBuilding} />
     </>}
   </View>;
 
@@ -478,7 +471,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     {!restroom && <ModeChips value={mode} onChange={changeMode} />}
     {demo !== 'none' && <StatusLine>개발용 가상 경로입니다. 실제 한양대 길이나 건물이 아닙니다.</StatusLine>}
     {data.status === 'ready' && data.counts.edges === 0 && <StatusLine>길찾기 데이터를 준비하고 있습니다.</StatusLine>}
-    {buildingId !== null && <TextButton title="실외 지도로 나가기" onPress={() => setBuildingsOn(false)} />}
+    {buildingId !== null && <TextButton title="실외 지도로 나가기" onPress={exitBuilding} />}
     <Text style={st.caption}>{!from || !to ? '출발지와 도착지를 정하면 바로 경로를 찾아 드립니다. 입력란을 눌러 현재 위치, 지도, 검색 중에서 골라 주세요.' : '이동 방식을 고른 뒤 길찾기를 눌러 주세요.'}</Text>
   </Sheet>;
 
@@ -601,7 +594,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     onMapPick={() => { if (search && search !== 'place') startMapPick(search); }}
     onFloor={(id, floor) => {
       if (id === null) { setBuildingId(null); setLevel(null); return; }
-      setBuildingMode(true); setSearchBuilding(null); setBuildingId(id); setLevel(floor);
+      setSearchBuilding(null); setBuildingId(id); setLevel(floor);
     }} />;
   // A building tapped on the map: the bottom sheet shrinks to the building's name and one sideways line of floor chips.
   const floorSheet = picker && pickerChoice?.kind === 'pick' && (screen === 'home' || screen === 'plan' || screen === 'route') ? <View style={[st.floorSheet, { paddingHorizontal: layout.padding }]}>
@@ -619,7 +612,8 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
         preview={screen === 'pick' ? null : screen === 'nav' ? navPreview : preview} onOpenPreview={openRoadview}
         stepFocus={screen === 'nav' ? stepFocus : null}
         onCenter={(point) => { mapCenter.current = point; if (mapPick) setPickCenter(point); }}
-        highlightBuildings={buildingsOn && screen !== 'pick'} mappedBuildingIds={mappedIds} onBuildingPress={pressBuilding} markedBuildingId={search === null && buildingsOn ? null : searchBuilding}
+        highlightBuildings={buildingsTappable} mappedBuildingIds={mappedIds} onBuildingPress={pressBuilding} pickedBuildingId={buildingsTappable ? floorPicker : null}
+        markedBuildingId={search === null && buildingsTappable ? null : searchBuilding}
         onPoint={(point) => {
           // Picking moves the map under the fixed centre pin; a tap does not pick.
           if (mapPick || screen === 'nav') return;
@@ -667,7 +661,6 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       </View>}
       {screen !== 'pick' && search === null && <View style={st.bottomStack} pointerEvents="box-none">
         <View style={st.fabs} pointerEvents="box-none">
-          <BuildingToggle value={buildingsOn} onChange={setBuildingsOn} />
           {demo === 'none' && <RoundButton label="내 위치로 이동" busy={gpsBusy} onPress={() => void locateMe()}><LocateIcon color={myLocation ? t.color.primary : t.color.text} /></RoundButton>}
         </View>
       </View>}

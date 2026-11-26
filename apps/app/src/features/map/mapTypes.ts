@@ -43,12 +43,14 @@ export interface MapProps {
   preview?: RoadviewPreview | null;
   /** entry: index into the route's roadview frames, or null for a stand-alone photo point. */
   onOpenPreview?: (entry: number | null) => void;
-  /** '건물에서 층 고르기' 토글이 켜졌을 때 실내 매핑 건물을 강조하고 누를 수 있게 한다. */
+  /** 실내 매핑 건물을 은은하게 구분하고 누를 수 있게 한다(기본 지도). 위치 고르기·위치 안내 중에는 끈다. */
   highlightBuildings?: boolean;
   /** 실내 매핑 데이터가 있어 들어갈 수 있는 건물 id(장소가 1곳 이상). */
   mappedBuildingIds?: readonly string[];
   /** 강조된 건물을 눌렀을 때(장소 점·경로 탭과 겹치지 않게 전파를 멈춘다). */
   onBuildingPress?: (buildingId: string) => void;
+  /** 지금 층 선택이 열린 건물: 테두리를 진하고 굵게 강조한다. */
+  pickedBuildingId?: string | null;
   /** 검색에서 골라 카메라를 옮긴 건물: 은은한 점선 테두리로 문맥을 남긴다. */
   markedBuildingId?: string | null;
   /** 경로의 한 구간(급경사 카드)을 주황 선으로 강조한다. `key`가 바뀌면 카메라가 그 구간으로 맞춰 이동한다. */

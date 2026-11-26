@@ -25,6 +25,21 @@ export const LABEL_MAX_WIDTH_PX = 132;
 export const MAX_ICONS = 48;
 export const MAX_LABELS = 16;
 
+/* ---------- 건물 이름표(지도 위 글자, 네이버지도 식) ---------- */
+/** 이 배율부터 건물 이름을 보인다(그 아래는 캠퍼스 밖 동네가 보이는 배율이라 글자만 어지럽다). */
+export const BUILDING_LABEL_MIN_ZOOM = 15.5;
+/** 건물 긴 변이 화면에서 이만큼(px)은 되어야 이름을 얹는다: 축소하면 큰 건물만, 확대하면 작은 건물까지 차례로 나온다. */
+export const BUILDING_LABEL_MIN_SPAN_PX = 48;
+/** 이름표끼리·다른 표식과 띄우는 간격(px). */
+export const BUILDING_LABEL_GAP_PX = 6;
+/** 한 화면에 그리는 건물 이름표 상한(캠퍼스 건물 수보다 넉넉하게). */
+export const MAX_BUILDING_LABELS = 24;
+export const BUILDING_FONT_PX = 12;
+export const BUILDING_LINE_PX = 15;
+/** 한 줄 최대 폭(px). 넘으면 두 줄까지 줄바꿈하고 그 뒤는 말줄임. */
+export const BUILDING_LABEL_MAX_WIDTH_PX = 84;
+export const BUILDING_LABEL_MAX_LINES = 2;
+
 export type ZoomStage = 'overview' | 'icons' | 'labels';
 
 /** 배율 → 표시 단계. 실외는 이름표를 조금 일찍 보인다. */
@@ -70,7 +85,7 @@ export function toScreen(lng: number, lat: number, view: MapView): { x: number; 
 
 /* ---------- 시설 종류 ---------- */
 
-export type MarkerKind = 'door' | 'elevator' | 'stairs' | 'restroom' | 'entrance' | 'place';
+export type MarkerKind = 'door' | 'elevator' | 'stairs' | 'restroom' | 'entrance' | 'place' | 'building';
 /** 강조색: 출발 / 도착 / 지금 고른 장소 / 보통. */
 export type MarkerTone = 'start' | 'end' | 'selected' | 'normal';
 
@@ -81,7 +96,7 @@ const KIND_BY_NODE: Partial<Record<NodeType | 'gps' | 'point', MarkerKind>> = {
 export const ICON_NODE_TYPES: readonly NodeType[] = ['door', 'elevator_stop', 'stair_landing', 'restroom', 'entrance'];
 
 export const MARKER_KIND_LABEL: Record<MarkerKind, string> = {
-  door: '강의실', elevator: '엘리베이터', stairs: '계단', restroom: '화장실', entrance: '출입구', place: '장소',
+  door: '강의실', elevator: '엘리베이터', stairs: '계단', restroom: '화장실', entrance: '출입구', place: '장소', building: '건물',
 };
 
 export function markerKind(nodeType: string): MarkerKind {
@@ -100,10 +115,17 @@ export interface MapMarker {
   tone: MarkerTone;
   /** 눌렀을 때 고를 수 있는 등록 장소(없으면 누를 수 없다). */
   place: CampusPlace | null;
+  /** kind 'building'만: 건물 외곽선의 긴 변(m). 화면에서 너무 작으면 이름을 얹지 않는다. */
+  spanM?: number;
+  /** kind 'building'만: 눌러서 층 선택을 열 수 있는가. */
+  tappable?: boolean;
 }
 
 /** 우선순위: 출발/도착 > 지금 고른 장소 > 경로가 지나는 지점 > 화장실/엘리베이터/계단/출입구 > 강의실·일반 지점. */
-export const PRIORITY = { endpoint: 0, selected: 1, route: 2, facility: 3, room: 4, place: 5 } as const;
+export const PRIORITY = { endpoint: 0, selected: 1, route: 2, facility: 3, room: 4, place: 5, building: 6 } as const;
+
+/** 건물 이름표 재료: 건물 가운데, 이름, 외곽선 긴 변(m). */
+export interface BuildingLabel { id: string; name: string; lng: number; lat: number; spanM: number; tappable: boolean }
 
 export interface FacilityNode { id: string; kind: MarkerKind; lng: number; lat: number; name: string | null }
 
@@ -148,10 +170,12 @@ export interface MarkerInput {
   selected?: CampusPlace | null;
   /** 경로가 지나는 지점 id. */
   routeNodeIds?: readonly string[] | null;
+  /** 건물 이름표(바깥 지도에서만 넘긴다). 우선순위가 가장 낮아 다른 표식이 먼저 자리를 잡는다. */
+  buildings?: readonly BuildingLabel[];
 }
 
 /** 장소와 시설 지점을 하나의 마커 목록으로 합친다(같은 id는 하나). 출발·도착·선택은 목록에 없어도 넣는다. */
-export function buildMarkers({ places, facilities = [], from = null, to = null, selected = null, routeNodeIds = null }: MarkerInput): MapMarker[] {
+export function buildMarkers({ places, facilities = [], from = null, to = null, selected = null, routeNodeIds = null, buildings = [] }: MarkerInput): MapMarker[] {
   const route = new Set(routeNodeIds ?? []);
   const byId = new Map<string, MapMarker>();
   const toneOf = (id: string): MarkerTone => (id === from?.id ? 'start' : id === to?.id ? 'end' : id === selected?.id ? 'selected' : 'normal');
@@ -171,6 +195,11 @@ export function buildMarkers({ places, facilities = [], from = null, to = null, 
     const kind = byId.get(place.id)?.kind ?? markerKind(place.nodeType);
     byId.set(place.id, { id: place.id, kind, lng: place.lng, lat: place.lat, name: place.name, priority: priorityOf(place.id, kind), tone: toneOf(place.id), place });
   }
+  for (const b of buildings) {
+    // 건물 id는 장소·시설 지점 id와 겹치지 않지만, 겹치면 앞의 표식을 지키고 이름표는 만들지 않는다.
+    if (byId.has(b.id)) continue;
+    byId.set(b.id, { id: b.id, kind: 'building', lng: b.lng, lat: b.lat, name: b.name, priority: PRIORITY.building, tone: 'normal', place: null, spanM: b.spanM, tappable: b.tappable });
+  }
   return [...byId.values()];
 }
 
@@ -185,6 +214,15 @@ export function estimateLabelWidth(text: string): number {
   let w = 0;
   for (const ch of text) w += /[ㄱ-힣一-鿿]/.test(ch) ? 12 : 6.8;
   return Math.min(LABEL_MAX_WIDTH_PX, Math.ceil(w + 6 + 5 + 16));
+}
+
+/** 건물 이름표 크기(px) 추정: 한글 12px, 그 밖 7px. 한 줄 최대 폭에서 줄바꿈해 두 줄까지(그 뒤는 말줄임). 실제보다 살짝 넉넉하다. */
+export function buildingLabelSize(text: string): { width: number; height: number } {
+  let w = 0;
+  for (const ch of text) w += /[ㄱ-힣一-鿿]/.test(ch) ? BUILDING_FONT_PX : 7;
+  const lines = Math.min(BUILDING_LABEL_MAX_LINES, Math.max(1, Math.ceil(w / BUILDING_LABEL_MAX_WIDTH_PX)));
+  const width = lines === 1 ? Math.ceil(w) : BUILDING_LABEL_MAX_WIDTH_PX;
+  return { width: width + 6, height: lines * BUILDING_LINE_PX + 4 };
 }
 
 /** 표식 위로 이름표를 띄우는 높이(px). 출발·도착은 배지 위, 선택은 핀 위. */
@@ -237,6 +275,8 @@ interface MarkerIndex {
   lng: Float64Array;
   lat: Float64Array;
   pinned: Uint8Array;
+  /** 건물 이름표(아이콘 없이 글자만): 아이콘 상한·아이콘 상자 계산에 넣지 않는다. */
+  labelOnly: Uint8Array;
   /** 경위도 격자(배치 순서 번호를 오름차순으로 담는다). 좌표가 유한한 마커만 들어간다. */
   minLng: number; minLat: number; cellLng: number; cellLat: number; cols: number; rows: number;
   cells: Int32Array[];
@@ -257,11 +297,11 @@ function indexMarkers(markers: readonly MapMarker[]): MarkerIndex {
   for (let i = 0; i < n; i++) order[i] = i;
   // 이전과 같은 순서: 우선순위 오름차순, 같으면 원래 순서(안정 정렬과 같다).
   order.sort((a, b) => markers[a]!.priority - markers[b]!.priority || a - b);
-  const lng = new Float64Array(n), lat = new Float64Array(n), pinned = new Uint8Array(n);
+  const lng = new Float64Array(n), lat = new Float64Array(n), pinned = new Uint8Array(n), labelOnly = new Uint8Array(n);
   let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity, finite = 0;
   for (let r = 0; r < n; r++) {
     const m = markers[order[r]!]!;
-    lng[r] = m.lng; lat[r] = m.lat; pinned[r] = m.tone !== 'normal' ? 1 : 0;
+    lng[r] = m.lng; lat[r] = m.lat; pinned[r] = m.tone !== 'normal' ? 1 : 0; labelOnly[r] = m.kind === 'building' ? 1 : 0;
     if (Number.isFinite(m.lng) && Number.isFinite(m.lat)) {
       finite++;
       if (m.lng < minLng) minLng = m.lng; if (m.lng > maxLng) maxLng = m.lng;
@@ -285,7 +325,7 @@ function indexMarkers(markers: readonly MapMarker[]): MarkerIndex {
   const fill = new Int32Array(cols * rows);
   // 배치 순서대로 넣으므로 칸마다 이미 오름차순이다.
   for (let r = 0; r < n; r++) { const k = cellOf[r]!; if (k >= 0) cells[k]![fill[k]!++] = r; }
-  const index: MarkerIndex = { order, lng, lat, pinned, minLng: finite ? minLng : 0, minLat: finite ? minLat : 0, cellLng, cellLat, cols, rows, cells, finite };
+  const index: MarkerIndex = { order, lng, lat, pinned, labelOnly, minLng: finite ? minLng : 0, minLat: finite ? minLat : 0, cellLng, cellLat, cols, rows, cells, finite };
   markerIndexes.set(markers, index);
   return index;
 }
@@ -379,10 +419,27 @@ export function declutter(markers: readonly MapMarker[], view: MapView, { stage,
   const icons = new BoxGrid();
   const labels = new BoxGrid();
   const placed: PlacedMarker[] = [];
-  let iconCount = 0, labelCount = 0;
+  let iconCount = 0, labelCount = 0, buildingCount = 0;
+  const buildingsShown = view.zoom >= BUILDING_LABEL_MIN_ZOOM;
   for (let i = 0; i < total; i++) {
     const r = ranks ? ranks[i]! : i;
     const pinned = index.pinned[r] === 1;
+    if (index.labelOnly[r] === 1) {
+      // 건물 이름표: 글자만(아이콘 없음), 건물 가운데에 얹는다. 우선순위가 가장 낮아 앞의 표식이 먼저 자리를 잡았다.
+      if (!buildingsShown || buildingCount >= MAX_BUILDING_LABELS) continue;
+      const bm = markers[index.order[r]!]!;
+      if (!bm.name || (bm.spanM ?? 0) / mpp < BUILDING_LABEL_MIN_SPAN_PX) continue;
+      const bx = (((index.lng[r]! - view.lng) * METERS_PER_DEG_LNG_EQUATOR * cosLat) * cosB - ((index.lat[r]! - view.lat) * METERS_PER_DEG_LAT) * sinB) / mpp;
+      const by = -(((index.lng[r]! - view.lng) * METERS_PER_DEG_LNG_EQUATOR * cosLat) * sinB + ((index.lat[r]! - view.lat) * METERS_PER_DEG_LAT) * cosB) / mpp;
+      if (stats) stats.projected++;
+      if (!(Math.abs(bx) <= halfW && Math.abs(by) <= halfH)) continue;
+      const { width, height } = buildingLabelSize(bm.name);
+      const lb: Box = { left: bx - width / 2, top: by - height / 2, right: bx + width / 2, bottom: by + height / 2 };
+      if (labels.hits(lb, BUILDING_LABEL_GAP_PX, stats) || icons.hits(lb, 2, stats)) continue;
+      labels.add(lb); buildingCount++;
+      placed.push({ marker: bm, x: bx, y: by, label: true });
+      continue;
+    }
     // 아이콘이 다 찼으면 강조 표식만 더 놓인다: 나머지는 투영할 필요도 없다.
     if (!pinned && iconCount >= maxIcons) continue;
     const east = (index.lng[r]! - view.lng) * METERS_PER_DEG_LNG_EQUATOR * cosLat;

@@ -128,13 +128,14 @@ export function measuredFloorLevels(estimates: readonly { key: string; hM: numbe
 }
 
 /**
- * The 3D view's toggle icon, shared by the editor and the survey app (24 grid): three diamond floors stacked with a gap,
- * bottom faint, top solid, so it reads as floors seen from above at an angle.
+ * The 3D view's toggle icon, shared by the editor and the survey app (24 grid): three flat diamond floors (18 x 3.6) stacked
+ * 4 apart, so they read as one block of floor plates without overlapping; bottom faint, top solid. The user app draws the
+ * same centres and sizes with views (apps/app/src/features/map/stackIcon.ts).
  */
 export const LAYER_STACK_ICON: readonly { d: string; opacity: number }[] = [
-  { d: 'M12 16L21 19L12 22L3 19Z', opacity: 0.35 },
-  { d: 'M12 9L21 12L12 15L3 12Z', opacity: 0.6 },
-  { d: 'M12 2L21 5L12 8L3 5Z', opacity: 1 },
+  { d: 'M12 14.2L21 16L12 17.8L3 16Z', opacity: 0.35 },
+  { d: 'M12 10.2L21 12L12 13.8L3 12Z', opacity: 0.6 },
+  { d: 'M12 6.2L21 8L12 9.8L3 8Z', opacity: 1 },
 ];
 
 /** Colours of the 3D views (both apps): the floor shown, floors above the ground, basements, the ground plate, the plinth. */

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Map as MapLibreMap, NavigationControl, ScaleControl, setWorkerUrl, type GeoJSONSource, type MapMouseEvent, type StyleSpecification } from 'maplibre-gl';
+import { Map as MapLibreMap, Marker, NavigationControl, ScaleControl, setWorkerUrl, type GeoJSONSource, type MapMouseEvent, type StyleSpecification } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { TerraDraw, TerraDrawLineStringMode, TerraDrawPolygonMode, type TerraDrawMouseEvent } from 'terra-draw';
@@ -33,6 +33,7 @@ import { PathLayer } from '@deck.gl/layers';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { curveLine } from '../model/curve.ts';
 import type { PathShape } from '../model/connect.ts';
+import type { PhotoPin } from '../photos/photoModel.ts';
 import { drapePath, pickSurface, type Ground } from '../model/terrain3d.ts';
 import { registerBeltIcons, registerBreaklineTooth, registerPictograms, registerRoutePins } from './icons.ts';
 import { breaklineSideOf, type BreakLineSide } from '@campo/core/elevation';
@@ -207,6 +208,14 @@ interface Props {
    * seen on the relief too; what is stored stays a plain [lng, lat]. Null: the flat map.
    */
   surface: { ground: Ground; top: number } | null;
+  /**
+   * 사진 토글(관리자 웹 /map/): 지금 범위의 사진 지점 핀(같은 지점 여러 장은 장수 배지 하나). 핀을 누르면 onPhotoPin.
+   * Undefined or empty: no pins.
+   */
+  photoPins?: readonly PhotoPin[];
+  /** The pin whose panel is open (drawn pressed). */
+  photoPinOpen?: string | null;
+  onPhotoPin?: (nodeId: string) => void;
 }
 
 /** How far the map tilts in the 3D views, and how long the tilt (and the way back to flat) takes. */
@@ -1356,6 +1365,32 @@ export function MapView(props: Props) {
       }
     });
   }, [state, scope, highlight, broken, routeFocus]);
+
+  // 사진 핀: DOM markers (a count badge and a real <button> to press are simplest as HTML). They take the click themselves,
+  // so a press never reaches the map's tools.
+  const photoMarkers = useRef<Marker[]>([]);
+  useEffect(() => {
+    const pins = props.photoPins ?? [];
+    const open = props.photoPinOpen ?? null;
+    whenReady((map) => {
+      for (const m of photoMarkers.current) m.remove();
+      photoMarkers.current = pins.map((pin) => {
+        const el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'photo-pin';
+        el.setAttribute('aria-label', `사진 지점 ${pin.nodeId}, 사진 ${pin.photos.length}장. 눌러서 사진 관리`);
+        el.setAttribute('aria-pressed', String(pin.nodeId === open));
+        el.dataset['node'] = pin.nodeId;
+        el.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="12" cy="13" r="3.4" fill="currentColor"/><path d="M8.5 6l1.4-2.2h4.2L15.5 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>`
+          + (pin.photos.length > 1 ? `<span class="photo-pin-count">${pin.photos.length > 99 ? '99+' : pin.photos.length}</span>` : '');
+        const stop = (e: Event) => e.stopPropagation();
+        el.addEventListener('mousedown', stop);
+        el.addEventListener('click', (e) => { e.stopPropagation(); latest.current.onPhotoPin?.(pin.nodeId); });
+        return new Marker({ element: el, anchor: 'center' }).setLngLat(pin.coord).addTo(map);
+      });
+    });
+  }, [props.photoPins, props.photoPinOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { for (const m of photoMarkers.current) m.remove(); photoMarkers.current = []; }, []);
 
   // Another campus brings its own area: the limits follow campus.json.
   useEffect(() => {

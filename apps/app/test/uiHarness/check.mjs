@@ -641,17 +641,35 @@ try {
     // The last steps are indoors: the map shows that building floor.
     await text(p, /^검사 실내: bldg_A/).waitFor();
     await button(p, '이전 안내').click(); await text(p, new RegExp(`^${total - 1} / ${total}`)).waitFor();
-    // Back key ends the guidance first, then the route stays.
+    // The clock in the panel header counts from the start (MM:SS).
+    await p.getByRole('timer', { name: /^안내 시작 후 / }).waitFor(); await text(p, /^\d{2}:\d{2}$/).waitFor();
+    // Back key ends the guidance first: the summary shows (demo data: no GPS, so distance and climb are not measured), the route stays.
     assert.equal(await back(p), true); await absent(p.getByLabel('단계별 위치 안내')); await text(p, '검사 경로 좌표').waitFor();
+    await text(p, '위치 안내를 마쳤습니다').waitFor(); assert.equal(await exactText(p, '측정 안 됨').count(), 2);
+    await p.getByLabel(/^걸린 시간 \d+초$/).waitFor();
+    // Back again closes the summary.
+    assert.equal(await back(p), true); await absent(text(p, '위치 안내를 마쳤습니다'));
     await button(p, '위치 안내 시작').click(); await button(p, '위치 안내 종료').first().click(); await absent(p.getByLabel('단계별 위치 안내'));
-    await absent(text(p, '검사 실내')); await button(p, '위치 안내 시작').waitFor();
+    await absent(text(p, '검사 실내')); await text(p, '위치 안내를 마쳤습니다').waitFor(); await absent(button(p, '위치 안내 시작'));
+    await button(p, '확인').click(); await absent(text(p, '위치 안내를 마쳤습니다')); await button(p, '위치 안내 시작').waitFor();
   });
-  await scenario('guidance: a step with a site photo shows a photo pin that opens the photo large', async (p) => {
+  await scenario('guidance: route only by default; the photo chip shows the step photo pin that opens the photo large', async (p) => {
     await useDemo(p, '실내·실외 로드뷰 시험', '정문 → 가상 201호 강의실'); await text(p, '검사 경로 좌표').waitFor();
+    const chip = p.getByRole('switch', { name: /^경로 사진 보기, 사진 \d+장$/ });
+    await checked(chip, false); await absent(button(p, /^검사 경로 사진 묶음/));
     await button(p, '위치 안내 시작').click(); await p.getByLabel('단계별 위치 안내').waitFor();
+    await absent(text(p, '검사 말풍선')); await checked(chip, false);
+    await chip.click(); await checked(chip, true);
     await text(p, '검사 말풍선').waitFor(); await text(p, '지도의 사진을 누르면 크게 볼 수 있어요.').waitFor();
+    // Off again: gone at once.
+    await chip.click(); await absent(text(p, '검사 말풍선')); await chip.click(); await text(p, '검사 말풍선').waitFor();
     await p.getByLabel('검사 로드뷰 말풍선').getByRole('button').click(); await roadview(p).waitFor();
     await button(p, '로드뷰 닫기').click(); await absent(roadview(p)); await p.getByLabel('단계별 위치 안내').waitFor();
+    // Kept on the route screen after the guidance (same route), off again for a new route.
+    await button(p, '위치 안내 종료').first().click(); await button(p, '확인').click(); await checked(chip, true);
+    await button(p, /^검사 경로 사진 묶음/).first().waitFor();
+    await button(p, '출발·도착 수정').click(); await button(p, '출발·도착 바꾸기').click(); await text(p, '검사 경로 좌표').waitFor();
+    await checked(chip, false); await absent(button(p, /^검사 경로 사진 묶음/));
   });
   await scenario('roadview: open, move by index, full screen, close and back key, step bubbles', async (p) => {
     await useDemo(p, '실내·실외 로드뷰 시험', '정문 → 가상 201호 강의실'); await text(p, '검사 경로 좌표').waitFor();
@@ -683,6 +701,7 @@ try {
     for (let i = 2; i <= 5; i++) { await button(p, '다음 단계').click(); counters.push(await rv.getByText(new RegExp(`^(가는|오는) 길 · ${i} / 5`)).textContent()); }
     assert.ok(counters.some((c) => c.startsWith('가는 길')) && counters.at(-1).startsWith('오는 길 · 5 / 5'), counters.join(' | '));
     await button(p, '로드뷰 닫기').click();
+    await p.getByRole('switch', { name: /^경로 사진 보기/ }).click();
     const group = button(p, '검사 경로 사진 묶음: 가는 길 · 2단계 / 오는 길 · 4단계');
     await group.click(); await button(p, '가는 길 · 2단계 로드뷰 보기').click(); await roadview(p).getByText(/^가는 길 · 2 \/ 5/).waitFor();
     await button(p, '로드뷰 닫기').click();

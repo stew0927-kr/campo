@@ -14,7 +14,7 @@ const flatten = (style: any): CSSProperties => {
   // React Native defaults the DOM lacks: solid borders and object transforms.
   if (out.borderWidth === undefined && (out.borderTopWidth || out.borderBottomWidth || out.borderLeftWidth || out.borderRightWidth)) out = { borderWidth: 0, ...out };
   if ((out.borderWidth || out.borderTopWidth || out.borderBottomWidth || out.borderLeftWidth || out.borderRightWidth) && !out.borderStyle) out.borderStyle = 'solid';
-  if (Array.isArray(out.transform)) out.transform = out.transform.map((item: Record<string, unknown>) => Object.entries(item).map(([key, value]) => `${key}(${typeof value === 'number' && key !== 'scale' ? `${value}px` : value})`).join(' ')).join(' ');
+  if (Array.isArray(out.transform)) out.transform = out.transform.map((item: Record<string, unknown>) => Object.entries(item).map(([key, value]) => `${key}(${typeof value === 'number' && !key.startsWith('scale') ? `${value}px` : value})`).join(' ')).join(' ');
   for (const key of ['shadowColor', 'shadowOpacity', 'shadowRadius', 'shadowOffset', 'elevation']) delete out[key];
   return out;
 };

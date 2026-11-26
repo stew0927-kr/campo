@@ -221,6 +221,15 @@ export function DeleteBuildingDialog({ items, onConfirm, onCancel }: { items: De
   );
 }
 
+/** 사진 삭제 확인: 서버의 행과 버킷 파일을 함께 지운다(되돌릴 수 없다). */
+export function DeletePhotoDialog({ photoId, onConfirm, onCancel }: { photoId: string; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <Modal title="사진 삭제" submitLabel="삭제" error={undefined} onSubmit={onConfirm} onCancel={onCancel}>
+      <p>사진 <strong>{photoId}</strong>를 서버에서 지웁니다. 앱에서도 이 사진이 사라지며, 지도 편집과 달리 Ctrl+Z로 되돌릴 수 없습니다.</p>
+    </Modal>
+  );
+}
+
 /** 현장 기록 불러오기 refused: why, and every reason (schema errors, or all of the changeset's conflicts at once). */
 export function SurveyRefusedDialog({ error, reasons, onClose }: { error: string; reasons: string[]; onClose: () => void }) {
   return (

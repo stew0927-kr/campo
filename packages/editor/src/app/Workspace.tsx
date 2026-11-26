@@ -50,6 +50,10 @@ import { OutlineForm } from '../ui/OutlineForm.tsx';
 import { PlazaEditForm, PlazaMergeForm } from '../ui/PlazaForms.tsx';
 import { View3DButton } from '../ui/View3DButton.tsx';
 import { TerrainButton } from '../ui/TerrainButton.tsx';
+import { PhotoButton, PhotoPanel } from '../ui/PhotoPanel.tsx';
+import { DeletePhotoDialog } from '../ui/Dialogs.tsx';
+import { usePhotos } from '../photos/usePhotos.ts';
+import type { PhotoRow } from '../photos/photoModel.ts';
 import { measuredFloorLevels, plinthFloors } from '@campo/core';
 import { deckLayers } from '../map/deck3d.ts';
 import { fetchTerrain } from '../api.ts';
@@ -217,6 +221,10 @@ export function Workspace({ session }: { session: Session }) {
 
   const info = (text: string) => setNotice({ text, tone: 'info' });
   const fail = (text: string) => setNotice({ text, tone: 'error' });
+  /** 사진 토글(관리자 웹 /map/ 서버 빌드): 지금 범위의 사진 지점 핀, 핀을 누르면 그 지점 사진 교체·삭제. */
+  const photos = usePhotos(session.campusId, state.nodes, ui.scope);
+  const [photoDelete, setPhotoDelete] = useState<PhotoRow | null>(null);
+  const photoPin = photos.open ? photos.pins.pins.find((p) => p.nodeId === photos.open) ?? null : null;
   const patchUi = (patch: Partial<UiState> | ((ui: UiState) => Partial<UiState>)) => setUi((u) => ({ ...u, ...(typeof patch === 'function' ? patch(u) : patch) }));
   const sync = () => setState(history.current());
 
@@ -1198,6 +1206,9 @@ export function Workspace({ session }: { session: Session }) {
           tilt={view3d || terrain3d}
           deck={deck}
           surface={surface}
+          photoPins={photos.pins.pins}
+          photoPinOpen={photos.open}
+          onPhotoPin={(nodeId) => photos.setOpen(photos.open === nodeId ? null : nodeId)}
           onBoxSelect={onBoxSelect}
           beginDrag={beginDrag}
           beginHandleDrag={beginHandleDrag}
@@ -1243,6 +1254,17 @@ export function Workspace({ session }: { session: Session }) {
           range={terrain3d && terrainGrid ? terrainRange(terrainGrid) : null}
           onToggle={toggleTerrain}
         />
+        <PhotoButton manager={photos} onUnavailable={info} />
+        {photos.on && (photos.message || photos.pins.elsewhere > 0 || photos.pins.missing > 0) && (
+          <p className={`photo-status${photos.message?.tone === 'error' ? ' photo-status-error' : ''}`} role="status">
+            {photos.message?.text ?? [
+              photos.pins.elsewhere > 0 ? `다른 층·범위의 사진 ${photos.pins.elsewhere}장` : null,
+              photos.pins.missing > 0 ? `지도에 없는 지점의 사진 ${photos.pins.missing}장` : null,
+            ].filter(Boolean).join(' · ')}
+          </p>
+        )}
+        {photoPin && <PhotoPanel pin={photoPin} manager={photos} floor={scopeLabel(ui.scope, state)} onDelete={setPhotoDelete} />}
+        {photoDelete && <DeletePhotoDialog photoId={photoDelete.id} onCancel={() => setPhotoDelete(null)} onConfirm={() => { const row = photoDelete; setPhotoDelete(null); void photos.remove(row); }} />}
         {floorBuilding && !crossFrom && (
           <FloorPicker
             building={floorBuilding}

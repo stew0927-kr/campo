@@ -17,6 +17,16 @@ export function ActionRow({ children }: { children: ReactNode }) {
   const layout = screenLayout(window.width, window.height, window.fontScale);
   return <View style={{ flexDirection: layout.stackActions ? 'column' : 'row', gap: 8, alignItems: 'stretch' }}>{children}</View>;
 }
+/**
+ * One button's cell in an ActionRow: an equal share of the row, or the full width when the row stacks (narrow screens, large
+ * text). A plain `flex: 1` wrapper collapses to no height in the stacked column (flex-basis 0 in a column), so the buttons
+ * overlapped and spilled under the tab bar on 360dp phones.
+ */
+export function ActionCell({ children }: { children: ReactNode }) {
+  const window = useWindowDimensions();
+  const layout = screenLayout(window.width, window.height, window.fontScale);
+  return <View style={layout.stackActions ? s.cellStacked : s.cellRow}>{children}</View>;
+}
 export function Card({ children }: { children: ReactNode }) { return <View style={s.card}>{children}</View>; }
 export function Heading({ children }: { children: ReactNode }) { return <Text accessibilityRole="header" style={s.heading}>{children}</Text>; }
 export function Body({ children }: { children: ReactNode }) { return <Text style={s.body}>{children}</Text>; }
@@ -55,6 +65,7 @@ export const s = StyleSheet.create({
   secondary: { backgroundColor: t.color.soft }, secondaryPressed: { backgroundColor: '#DCE6FF' },
   buttonText: { color: 'white', fontSize: t.type.body, fontWeight: '700', textAlign: 'center', flexShrink: 1, lineHeight: 21 },
   link: { color: t.color.primary, fontSize: 14, fontWeight: '700', textAlign: 'center', flexShrink: 1, lineHeight: 20 },
+  cellRow: { flex: 1, minWidth: 0 }, cellStacked: { alignSelf: 'stretch' },
   chips: { gap: 8, paddingVertical: 2 },
   chip: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, borderRadius: t.radii.pill, borderWidth: 1, borderColor: t.color.border, backgroundColor: t.color.surface },
   selected: { backgroundColor: t.color.text, borderColor: t.color.text },

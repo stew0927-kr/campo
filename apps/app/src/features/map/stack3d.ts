@@ -7,6 +7,10 @@
 // - 고른 건물: 위층 슬래브(옅게, 층 사이 틈) + 엘리베이터 기둥(같은 elevator_id 정류장) + 계단 기둥(인접 층 같은 자리의 계단참).
 // - 다른 건물: 슬래브 대신 외곽선만.
 // - 아무 건물도 고르지 않았으면: 층이 둘 이상인 건물을 모두 1층을 지면에 두고 옅게 세운다(기둥 없음).
+//
+// 유리판처럼 보이게(편집기 deck3d의 wireframe 슬래브와 같은 인상): 슬래브는 아주 옅게 칠하고, 슬래브의 윗변·아랫변을 따라 가는 띠
+// (rims, 폭 RIM_W_M·높이 RIM_H_M)를 진하게 세워 층판 경계를 읽게 한다. MapLibre의 선 레이어는 지면에만 그려지고 fill-extrusion-color의
+// 알파는 무시되므로(레이어 opacity 하나만 쓴다) 경계는 띠로, 층별 농도는 tier(바로 위 층 0 / 그 위 1)별 레이어로 나눠 준다.
 import { PICTOGRAM_COLORS, STACK_COLORS, buildingStack, type CampusGraph, type BuildingFeature, type EditBuilding, type Level } from '@campo/core';
 import type { FeatureCollection, Polygon, Position } from 'geojson';
 
@@ -17,6 +21,9 @@ export const STAIR_PAIR_M = 6;
 /** 기둥 한 변(m). */
 export const ELEVATOR_PILLAR_M = 1.6;
 export const STAIR_PILLAR_M = 1.1;
+/** 유리판 경계 띠: 변을 가운데 두고 폭(m), 슬래브 위·아래 끝에서의 높이(m). */
+export const RIM_W_M = 0.35;
+export const RIM_H_M = 0.22;
 /** 3D 보기에서 카메라 기울기(도). */
 export const STACK_PITCH_DEG = 50;
 
@@ -24,11 +31,16 @@ export const STACK_FLOOR_COLOR = STACK_COLORS.floor;
 export const STACK_EDGE_COLOR = STACK_COLORS.edge;
 export const PILLAR_COLORS = { elevator: PICTOGRAM_COLORS.elevator, stairs: PICTOGRAM_COLORS.stairs } as const;
 
-export interface SlabProps { buildingId: string; level: Level; baseM: number; topM: number; picked: boolean }
+/** tier 0: 고른 층 바로 위 층(또는 건물을 고르지 않았을 때의 모든 층), 1: 그보다 위 층(더 옅게). */
+export interface SlabProps { buildingId: string; level: Level; baseM: number; topM: number; picked: boolean; tier: 0 | 1 }
+/** 슬래브 윗변·아랫변의 경계 띠 하나. */
+export interface RimProps { buildingId: string; tier: 0 | 1; baseM: number; topM: number }
 export interface PillarProps { buildingId: string; kind: 'elevator' | 'stairs'; baseM: number; topM: number; color: string }
 export interface Stack3D {
   slabs: FeatureCollection<Polygon, SlabProps>;
   pillars: FeatureCollection<Polygon, PillarProps>;
+  /** 슬래브 경계 띠(유리판의 테두리). */
+  rims: FeatureCollection<Polygon, RimProps>;
   /** 고른 건물이 있을 때 다른 건물의 외곽선. */
   outlines: FeatureCollection<Polygon, { buildingId: string }>;
 }
@@ -66,7 +78,8 @@ export function stack3d(graph: CampusGraph | null, buildingId: string | null, le
   const slabs: Stack3D['slabs']['features'] = [];
   const pillars: Stack3D['pillars']['features'] = [];
   const outlines: Stack3D['outlines']['features'] = [];
-  const empty = (): Stack3D => ({ slabs: { type: 'FeatureCollection', features: slabs }, pillars: { type: 'FeatureCollection', features: pillars }, outlines: { type: 'FeatureCollection', features: outlines } });
+  const rims: Stack3D['rims']['features'] = [];
+  const empty = (): Stack3D => ({ slabs: { type: 'FeatureCollection', features: slabs }, pillars: { type: 'FeatureCollection', features: pillars }, rims: { type: 'FeatureCollection', features: rims }, outlines: { type: 'FeatureCollection', features: outlines } });
   if (!graph) return empty();
   const selected = buildingId ? graph.buildings.get(buildingId) : undefined;
   for (const b of graph.buildings.values()) {
@@ -76,11 +89,19 @@ export function stack3d(graph: CampusGraph | null, buildingId: string | null, le
     }
     if (!isStackable(b)) continue;
     const floors = relativeFloors(b, selected ? level : 1);
+    let above = 0;
     for (const f of floors) {
       // 고른 층은 지면의 2D 도면(외곽선·선·아이콘)이 그대로 그 층이다: 슬래브를 겹치지 않는다.
       if (selected && f.baseM <= 1e-6) continue;
       const top = Math.max(f.baseM + 0.2, f.topM - SLAB_GAP_M);
-      slabs.push({ type: 'Feature', properties: { buildingId: b.id, level: f.level, baseM: round(f.baseM), topM: round(top), picked: b.id === pickedId }, geometry: { type: 'Polygon', coordinates: f.outline } });
+      const tier: 0 | 1 = selected && above++ > 0 ? 1 : 0;
+      const baseM = round(f.baseM), topM = round(top);
+      slabs.push({ type: 'Feature', properties: { buildingId: b.id, level: f.level, baseM, topM, picked: b.id === pickedId, tier }, geometry: { type: 'Polygon', coordinates: f.outline } });
+      const band = Math.min(RIM_H_M, (topM - baseM) / 2);
+      for (const quad of edgeBands(f.outline, RIM_W_M)) {
+        rims.push({ type: 'Feature', properties: { buildingId: b.id, tier, baseM, topM: round(baseM + band) }, geometry: { type: 'Polygon', coordinates: [quad] } });
+        rims.push({ type: 'Feature', properties: { buildingId: b.id, tier, baseM: round(topM - band), topM }, geometry: { type: 'Polygon', coordinates: [quad] } });
+      }
     }
     if (selected) pillars.push(...verticalLinks(graph, b.id, floors));
   }
@@ -88,6 +109,27 @@ export function stack3d(graph: CampusGraph | null, buildingId: string | null, le
 }
 
 const round = (m: number) => Math.round(m * 100) / 100;
+
+/**
+ * 외곽선의 변마다 변을 가운데 둔 폭 `widthM`(m)의 가는 사각형(닫힌 고리). 3D 보기에서 이것을 슬래브 위·아래 끝 높이로 세우면
+ * 유리판의 테두리처럼 보인다. 길이가 거의 없는 변(같은 점 반복)은 건너뛴다. 안쪽 고리(구멍)의 변도 같다.
+ */
+export function edgeBands(outline: readonly (readonly Position[])[], widthM: number): Position[][] {
+  const out: Position[][] = [];
+  for (const ring of outline) {
+    for (let i = 0; i + 1 < ring.length; i++) {
+      const a = ring[i]!, b = ring[i + 1]!;
+      const kx = M_PER_DEG_LNG * Math.cos((a[1]! * Math.PI) / 180), ky = M_PER_DEG_LAT;
+      const dx = (b[0]! - a[0]!) * kx, dy = (b[1]! - a[1]!) * ky;
+      const len = Math.hypot(dx, dy);
+      if (len < 0.05) continue;
+      // 변에 수직인 단위 벡터(m) × 폭의 절반 → 도.
+      const ox = (-dy / len) * (widthM / 2) / kx, oy = (dx / len) * (widthM / 2) / ky;
+      out.push([[a[0]! + ox, a[1]! + oy], [b[0]! + ox, b[1]! + oy], [b[0]! - ox, b[1]! - oy], [a[0]! - ox, a[1]! - oy], [a[0]! + ox, a[1]! + oy]]);
+    }
+  }
+  return out;
+}
 
 /**
  * 고른 건물의 세로 연결: 같은 elevator_id 정류장(쌓은 층 중 가장 낮은 층 바닥 → 가장 높은 층 천장), 인접 층 같은 자리(STAIR_PAIR_M

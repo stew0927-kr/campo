@@ -5,6 +5,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { OSM_ATTRIBUTION, OSM_RASTER_STYLE } from '../../map/style.ts';
 import { viewCone } from '../../photos/roadviewModel.ts';
 import { routeLine } from './model.ts';
+import { validLngLatTuple } from './markerCoords.ts';
 import type { RoadviewMiniMapProps } from './roadviewTypes.ts';
 
 export function RoadviewMiniMapNative({ lngLat, headingDeg, hfovDeg, route, stops = [], label }: RoadviewMiniMapProps) {
@@ -26,7 +27,7 @@ export function RoadviewMiniMapNative({ lngLat, headingDeg, hfovDeg, route, stop
         <Layer id="rv-cone-fill" type="fill" paint={{ 'fill-color': '#1FBF7A', 'fill-opacity': 0.4 }} />
         <Layer id="rv-cone-edge" type="line" paint={{ 'line-color': '#119A5E', 'line-width': 1.5 }} />
       </GeoJSONSource>}
-      {lngLat && <Marker id="rv-here" lngLat={lngLat} anchor="center"><View style={s.here} /></Marker>}
+      {lngLat && validLngLatTuple(lngLat) && <Marker id="rv-here" lngLat={lngLat} anchor="center"><View style={s.here} /></Marker>}
     </Map>
     <Text pointerEvents="none" style={s.attribution}>{OSM_ATTRIBUTION}</Text>
   </View>;

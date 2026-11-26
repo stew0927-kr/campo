@@ -186,6 +186,8 @@ function sentence(g: CampusGraph, kind: RouteStepKind, legs: readonly Leg[], sta
       return `경사로를 따라 ${Math.round(distanceM)}m 가세요`;
     case 'elevator': {
       const floor = floorName(levelOf(end));
+      const verb = verbOf(travelDirection(legs, levelOf(start), levelOf(end)));
+      if (floor && verb) return `엘리베이터로 ${floor}까지 ${verb}`;
       return floor ? `엘리베이터를 타고 ${floor}${ro(floor)} 가세요` : '엘리베이터를 타고 이동하세요';
     }
     case 'stairs':
@@ -206,7 +208,7 @@ function sentence(g: CampusGraph, kind: RouteStepKind, legs: readonly Leg[], sta
 }
 
 /**
- * "계단으로 3층 올라가세요". Direction: the edges' `incline` read in travel
+ * "계단으로 3층까지 올라가세요" (the end floor). Direction: the edges' `incline` read in travel
  * direction (SPEC-v0.2 2.6), else the two end floors, else none ("이동하세요").
  * Floors: the gap between the end floors, else one per indoor steps edge
  * (SPEC §3: one indoor steps edge per floor), else no count ("계단을 올라가세요").
@@ -221,6 +223,9 @@ function stairsSentence(legs: readonly Leg[], start: NodeFeature, end: NodeFeatu
   else if (edges.length > 0 && edges.every((e) => e.properties.edge_type === 'indoor')) floors = edges.length;
 
   const verb = verbOf(travelDirection(legs, a, b));
+  // The target floor is stated when known ("1층까지"), so a floor count is never mistaken for it.
+  const target = floorName(b);
+  if (target) return `계단으로 ${target}까지 ${verb ?? '이동하세요'}`;
   if (floors > 0) return `계단으로 ${floors}층 ${verb ?? '이동하세요'}`;
   return `계단을 ${verb ?? '이용하세요'}`;
 }

@@ -13,6 +13,7 @@
 import { DEFAULT_HFOV_DEG, angleDiffDeg, arrowFor, bearingAlong, choosePhotoForStep, normalizeDeg, type HeadedPhoto, type LngLat } from '@campo/core';
 import type { CampusRouteView, PhotoCatalog, RoutePhoto, RouteStepPhoto } from '../contracts.ts';
 import { isEmptyCatalog } from './catalog.ts';
+import { validLngLat } from '../features/map/markerCoords.ts';
 
 /** 진행 방위와 사진 방위 차이가 이보다 크면(반대·크게 어긋남) 후보에서 뺀다. */
 export const ALONG_MAX_DEG = 90;
@@ -66,7 +67,7 @@ export function routeAlongPhotos(route: CampusRouteView | null, catalog: PhotoCa
   if (route === null || route.steps.length === 0 || isEmptyCatalog(catalog)) return [];
   const line: LngLat[] = route.polyline.map((p) => [p.lng, p.lat]);
   const lineAt = nodeLineIndex(route);
-  const point = (k: number): [number, number] | null => (k >= 0 && lineAt[k]! >= 0 ? [line[lineAt[k]!]![0], line[lineAt[k]!]![1]] : null);
+  const point = (k: number): [number, number] | null => (k >= 0 && lineAt[k]! >= 0 ? validLngLat(line[lineAt[k]!]![0], line[lineAt[k]!]![1]) : null);
   const out: RouteStepPhoto[] = [];
   /** 경로 순서 정렬 키(nodeIds 자리). */
   const order: number[] = [];

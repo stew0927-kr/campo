@@ -20,7 +20,7 @@ import {
   type NavState,
   type SensorFix,
 } from '@campo/core';
-import { EMPTY_GPS_SNAPSHOT, type GpsMatcherSnapshot } from '../contracts.ts';
+import { EMPTY_GPS_SNAPSHOT, type GpsMatcherSnapshot, type GpsPosition } from '../contracts.ts';
 
 export interface GpsMatcherSessionOptions {
   /** 따라갈 경로의 캠퍼스 지점 id(없으면 경로 이탈을 판정하지 않는다). */
@@ -56,6 +56,8 @@ export function createGpsMatcherSession(net: MatchNetwork, options: GpsMatcherSe
   let nav: NavState = initialNavState(0);
   let route: NavRoute | null = navRouteOf(options.routeNodeIds ?? null);
   let snapshot: GpsMatcherSnapshot = EMPTY_GPS_SNAPSHOT;
+  // 마지막으로 유한한 좌표였던 위치. 부적합 fix(NaN 좌표)가 와도 지도에는 NaN이 가지 않게 이것을 유지한다.
+  let lastValid: GpsPosition | null = null;
 
   const pushFix = (fix: SensorFix): GpsMatcherSnapshot => {
     // 실내에서는 그 층의 구간만 후보로 본다(층 번호는 후보 필터에만 쓰인다).
@@ -70,18 +72,16 @@ export function createGpsMatcherSession(net: MatchNetwork, options: GpsMatcherSe
       if (text !== null) messages.push(text);
     }
 
+    const position: GpsPosition | null = Number.isFinite(result.lat) && Number.isFinite(result.lng)
+      ? { lat: result.lat, lng: result.lng, confidence: result.confidence, stationary: result.stationary, free: result.free, skipped: result.skipped }
+      : lastValid;
+    lastValid = position;
+
     snapshot = {
       mode: nav.mode,
       buildingId: nav.buildingId,
       level: nav.level,
-      position: {
-        lat: result.lat,
-        lng: result.lng,
-        confidence: result.confidence,
-        stationary: result.stationary,
-        free: result.free,
-        skipped: result.skipped,
-      },
+      position,
       events: step.events,
       messages,
       rerouteRequested: step.events.some((event) => event.type === 'REROUTE'),
@@ -99,6 +99,7 @@ export function createGpsMatcherSession(net: MatchNetwork, options: GpsMatcherSe
     const restartMs = Number.isFinite(matcher.lastTMs) ? matcher.lastTMs : 0;
     nav = initialNavState(restartMs);
     snapshot = EMPTY_GPS_SNAPSHOT;
+    lastValid = null;
   };
 
   return { pushFix, setRoute, reset, snapshot: () => snapshot };

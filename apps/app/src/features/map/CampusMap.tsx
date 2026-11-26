@@ -1,10 +1,11 @@
 import { getBuildingOutlineForLevel } from '@campo/core';
-import { Camera, GeoJSONSource, Layer, Map, Marker, type CameraRef, type CircleLayerSpecification, type FillExtrusionLayerSpecification, type FillLayerSpecification, type FilterSpecification, type LineLayerSpecification } from '@maplibre/maplibre-react-native';
+import { Camera, GeoJSONSource, Layer, Map, Marker as RnMarker, type CameraRef, type CircleLayerSpecification, type FillExtrusionLayerSpecification, type FillLayerSpecification, type FilterSpecification, type LineLayerSpecification } from '@maplibre/maplibre-react-native';
 import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import { OSM_ATTRIBUTION, OSM_RASTER_STYLE } from '../../map/style.ts';
 import { CAMPUS_MAX_BOUNDS, CAMPUS_MAX_ZOOM, CAMPUS_MIN_ZOOM } from '../../map/campusCamera.ts';
+import { validLngLat, validLngLatTuple } from './markerCoords.ts';
 import { compassState, coordinateBounds, outsideMask, routeBounds, routeConnectors, routeLine } from './model.ts';
 import { floorLines } from './indoor.ts';
 import { outdoorLines, outdoorPlazas } from './outdoor.ts';
@@ -303,17 +304,17 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
       {stepGroups.length === 0 && photoSpots.map((spot, i) => <PhotoPinMarker key={`spot:${spot.nodeId}`} id={`photo-pin:spot:${spot.nodeId}`} lngLat={spot.lngLat} index={i} count={spot.count} label={`사진 지점, 사진 ${spot.count}장. 눌러서 로드뷰 보기`} onOpen={openSpot} onTouch={markPinTouch} />)}
       {stepGroups.map((group, i) => <PhotoPinMarker key={`group:${group.key}`} id={`photo-pin:group:${group.key}`} lngLat={group.lngLat} index={i} count={group.entries.length}
         label={group.entries.length > 1 ? `경로 사진, ${group.entries.map((e) => e.label).join(' / ')}. 눌러서 고르기` : `경로 사진, ${group.entries[0]?.label ?? ''}. 눌러서 로드뷰 보기`} onOpen={openGroup} onTouch={markPinTouch} />)}
-      {selected && visible(selected) && selected.id !== from?.id && selected.id !== to?.id && <Marker id="selected-place" lngLat={[selected.lng, selected.lat]} anchor="bottom"><View style={styles.selectedPin}><View style={styles.selectedDot} /></View></Marker>}
+      {selected && visible(selected) && selected.id !== from?.id && selected.id !== to?.id && <SafeMarker id="selected-place" lngLat={validLngLat(selected.lng, selected.lat)} anchor="bottom"><View style={styles.selectedPin}><View style={styles.selectedDot} /></View></SafeMarker>}
       {visible(from) && from && <EndpointPin id="route-start" kind="from" lng={from.lng} lat={from.lat} />}
       {visible(to) && to && <EndpointPin id="route-end" kind="to" lng={to.lng} lat={to.lat} />}
       {preview && <PreviewBubble key={preview.key} preview={preview} onOpen={onOpenPreview} onTouch={markPinTouch} />}
-      {pressPin && <Marker id="press-pin" lngLat={[pressPin.lng, pressPin.lat]} anchor="bottom">
+      {pressPin && <SafeMarker id="press-pin" lngLat={validLngLat(pressPin.lng, pressPin.lat)} anchor="bottom">
         <View accessible accessibilityLabel="길게 눌러 고른 위치" style={styles.pressPin} pointerEvents="none">
           <View style={styles.pressPinHead}><View style={styles.pressPinHole} /></View>
           <View style={styles.pressPinTip} />
         </View>
-      </Marker>}
-      {position && <Marker id="current-position" lngLat={[position.lng, position.lat]}><View style={styles.current} /></Marker>}
+      </SafeMarker>}
+      {position && <SafeMarker id="current-position" lngLat={validLngLat(position.lng, position.lat)}><View style={styles.current} /></SafeMarker>}
     </Map>
     {failed && <Text accessibilityLiveRegion="polite" style={styles.error}>배경 지도를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요. 수동 길찾기는 계속 이용할 수 있습니다.</Text>}
     <Text pointerEvents="none" style={styles.attribution}>{OSM_ATTRIBUTION}</Text>
@@ -474,15 +475,15 @@ const PHOTO_PIN = 28;
  * badge when the point has two or more photos (or the route passes it twice). The 48pt Pressable around it is the touch
  * target: it fires only on a short tap, never on a pan, and its touch does not reach the map. Memoised on its values.
  */
-const PhotoPinMarker = memo(function PhotoPinMarker({ id, lngLat, index, count, label, onOpen, onTouch }: { id: string; lngLat: [number, number]; index: number; count: number; label: string; onOpen: (i: number) => boolean; onTouch: () => void }) {
-  return <Marker id={id} lngLat={lngLat} anchor="center">
+const PhotoPinMarker = memo(function PhotoPinMarker({ id, lngLat, index, count, label, onOpen, onTouch }: { id: string; lngLat: [number, number] | null; index: number; count: number; label: string; onOpen: (i: number) => boolean; onTouch: () => void }) {
+  return <SafeMarker id={id} lngLat={validLngLatTuple(lngLat)} anchor="center">
     <Pressable accessibilityRole="button" accessibilityLabel={label} onPressIn={onTouch} onPress={() => { onOpen(index); }} hitSlop={PIN_SLOP} pressRetentionOffset={PIN_SLOP} style={pinTouchStyle}>
       <View pointerEvents="none" style={styles.photoPin}>
         <View style={styles.photoGlyph}><View style={styles.photoLens} /></View>
         {count > 1 && <View style={styles.photoCount}><Text style={styles.photoCountText}>{count > 99 ? '99+' : count}</Text></View>}
       </View>
     </Pressable>
-  </Marker>;
+  </SafeMarker>;
 });
 
 /**
@@ -492,17 +493,23 @@ const PhotoPinMarker = memo(function PhotoPinMarker({ id, lngLat, index, count, 
 const FacilityMarker = memo(function FacilityMarker({ marker, onPlace }: { marker: MapMarker; onPlace: (place: CampusPlace) => void }) {
   const place = marker.place;
   const kind = MARKER_KIND_LABEL[marker.kind];
-  return <Marker id={`facility:${marker.id}`} lngLat={[marker.lng, marker.lat]} anchor="center">
+  return <SafeMarker id={`facility:${marker.id}`} lngLat={validLngLat(marker.lng, marker.lat)} anchor="center">
     {place ? <Pressable accessibilityRole="button" accessibilityLabel={`${place.name}, ${kind}`} hitSlop={11} onPress={() => onPlace(place)}><FacilityIcon kind={marker.kind} /></Pressable>
       : <View accessible accessibilityLabel={kind}><FacilityIcon kind={marker.kind} /></View>}
-  </Marker>;
+  </SafeMarker>;
 });
 /** Name label above a marker; memoised like FacilityMarker. */
 const LabelMarker = memo(function LabelMarker({ marker }: { marker: MapMarker }) {
-  return <Marker id={`place-label:${marker.id}`} lngLat={[marker.lng, marker.lat]} anchor="bottom" offset={[0, -labelLift(marker.tone)]}>
+  return <SafeMarker id={`place-label:${marker.id}`} lngLat={validLngLat(marker.lng, marker.lat)} anchor="bottom" offset={[0, -labelLift(marker.tone)]}>
     <View pointerEvents="none"><MapLabel name={marker.name!} kind={marker.kind} tone={marker.tone} /></View>
-  </Marker>;
+  </SafeMarker>;
 });
+type RnMarkerProps = Parameters<typeof RnMarker>[0];
+/** Marker that renders nothing for a missing/non-finite coordinate: a native Marker throws on NaN and kills the screen. */
+function SafeMarker({ lngLat, ...rest }: Omit<RnMarkerProps, 'lngLat'> & { lngLat: [number, number] | null | undefined }) {
+  const safe = validLngLatTuple(lngLat);
+  return safe === null ? null : <RnMarker lngLat={safe} {...rest} />;
+}
 const DOT = 14;
 const STEM = 22;
 
@@ -511,26 +518,26 @@ const STEM = 22;
  * with the 출발/도착 badge. Two markers so the dot's centre, not the badge, sits on the point.
  */
 const EndpointPin = memo(function EndpointPin({ id, kind, lng, lat }: { id: string; kind: 'from' | 'to'; lng: number; lat: number }) {
-  const lngLat = useMemo((): [number, number] => [lng, lat], [lng, lat]);
+  const lngLat = useMemo(() => validLngLat(lng, lat), [lng, lat]);
   const color = kind === 'from' ? '#10A85E' : '#F2473F';
   const text = kind === 'from' ? '출발' : '도착';
   return <>
-    <Marker id={`${id}-label`} lngLat={lngLat} anchor="bottom" offset={[0, -DOT / 2]}>
+    <SafeMarker id={`${id}-label`} lngLat={lngLat} anchor="bottom" offset={[0, -DOT / 2]}>
       <View style={styles.pinLabel} pointerEvents="none">
         <View style={[styles.badge, { backgroundColor: color }]}><Text style={styles.badgeText}>{text}</Text></View>
         <View style={[styles.stem, { backgroundColor: color }]} />
       </View>
-    </Marker>
-    <Marker id={`${id}-dot`} lngLat={lngLat} anchor="center">
+    </SafeMarker>
+    <SafeMarker id={`${id}-dot`} lngLat={lngLat} anchor="center">
       <View accessible accessibilityLabel={`${text} 지점`} style={[styles.dot, { backgroundColor: color }]} />
-    </Marker>
+    </SafeMarker>
   </>;
 });
 
 /** Speech bubble with the roadview thumbnail. One entry: tap to open. Two or more: pick 가는 길 / 오는 길. */
 const PreviewBubble = memo(function PreviewBubble({ preview, onOpen, onTouch }: { preview: RoadviewPreview; onOpen: (entry: number | null) => void; onTouch: () => void }) {
   const single = preview.entries.length <= 1;
-  return <Marker id={`roadview-preview-${preview.key}`} lngLat={preview.lngLat} anchor="bottom" offset={[0, -12]}>
+  return <SafeMarker id={`roadview-preview-${preview.key}`} lngLat={validLngLatTuple(preview.lngLat)} anchor="bottom" offset={[0, -12]}>
     <View style={styles.bubbleWrap}>
       <Pressable accessibilityRole="button" accessibilityLabel={`${preview.title} 로드뷰 보기`} disabled={!single} onPressIn={onTouch} onPress={() => onOpen(preview.entries[0]?.index ?? null)} pressRetentionOffset={PIN_SLOP} style={styles.bubble}>
         {preview.thumbUrl ? <Image source={{ uri: preview.thumbUrl }} contentFit="cover" style={styles.bubbleThumb} /> : <View style={[styles.bubbleThumb, { backgroundColor: '#596579' }]} />}
@@ -544,7 +551,7 @@ const PreviewBubble = memo(function PreviewBubble({ preview, onOpen, onTouch }: 
       </Pressable>
       <View style={styles.bubbleTail} />
     </View>
-  </Marker>;
+  </SafeMarker>;
 });
 const styles = StyleSheet.create({
   frame: { flex: 1, backgroundColor: '#E8EEE9' }, map: { flex: 1 },

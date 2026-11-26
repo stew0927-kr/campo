@@ -28,7 +28,7 @@ describe('[1][3] 건물 이름: 네이티브 SymbolLayer', () => {
     expect(MAP).not.toMatch(/kind === 'building'/);
   });
   it('화면 기준 수평·정방향, 겹치면 숨김, 옅은 글자와 흰 halo, 선택 건물만 진하게', () => {
-    expect(NAME_LAYOUT).toMatchObject({ 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-rotation-alignment': 'viewport', 'text-pitch-alignment': 'viewport', 'text-keep-upright': true, 'text-allow-overlap': false, 'text-size': 12, 'symbol-sort-key': ['get', 'sort'] });
+    expect(NAME_LAYOUT).toMatchObject({ 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-rotation-alignment': 'viewport', 'text-pitch-alignment': 'viewport', 'text-keep-upright': true, 'text-allow-overlap': false, 'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 10, 18, 11], 'symbol-sort-key': ['get', 'sort'] });
     expect(NAME_PAINT).toMatchObject({ 'text-color': ['case', ['get', 'picked'], NAME_PICKED_COLOR, NAME_COLOR], 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.2 });
     expect(NAME_COLOR).toBe('#5C6672');
   });

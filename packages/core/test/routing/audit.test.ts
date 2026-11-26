@@ -582,7 +582,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
       const r = route(g, TOWER.hall(1), TOWER.hall(7), profile);
       expect(r.edgeIds, profile).toEqual([TOWER.hallToStop(1), ...ride, TOWER.hallToStop(7)]);
       expect(r.nodes, profile).toEqual([TOWER.hall(1), TOWER.stop(1), ...[2, 3, 4, 5, 6, 7].map(TOWER.stop), TOWER.hall(7)]);
-      expect(r.steps.filter((s) => s.kind === 'elevator').map((s) => s.text), profile).toEqual(['엘리베이터를 타고 7층으로 가세요']);
+      expect(r.steps.filter((s) => s.kind === 'elevator').map((s) => s.text), profile).toEqual(['엘리베이터로 7층까지 올라가세요']);
     }
     // Each stop has exactly one board link (stop → car), so getting off and back on pays the wait again.
     const boards = [...(g.graph.getLinks(TOWER.stop(4)) ?? [])].filter((l) => l.data.kind === 'board');
@@ -856,7 +856,7 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     const r = route(g, TOWER.hall(1), TOWER.hall(4), 'shortest');
     expect(r.stairsCount).toBe(3);
     expect(sentences(r).filter((s) => s.includes('계단'))).toEqual([
-      '계단으로 1층 올라가세요', '계단으로 1층 올라가세요', '계단으로 1층 올라가세요',
+      '계단으로 2층까지 올라가세요', '계단으로 3층까지 올라가세요', '계단으로 4층까지 올라가세요',
     ]);
   });
 
@@ -864,10 +864,10 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
     // Only floors 1 and 7 join the stairwell, so 1F → 7F is one uninterrupted climb.
     const g = buildGraph(tower7({ elevator: false, stairBranches: false }));
     const up = route(g, TOWER.hall(1), TOWER.hall(7), 'shortest');
-    expect(sentences(up)).toContain('계단으로 6층 올라가세요');
+    expect(sentences(up)).toContain('계단으로 7층까지 올라가세요');
     expect(up.steps.filter((s) => s.kind === 'stairs')).toHaveLength(1);
-    expect(sentences(route(g, TOWER.hall(7), TOWER.hall(1), 'shortest'))).toContain('계단으로 6층 내려가세요');
-    // Without any level values the words still come from incline (and the floor count from the six flights).
+    expect(sentences(route(g, TOWER.hall(7), TOWER.hall(1), 'shortest'))).toContain('계단으로 1층까지 내려가세요');
+    // Without any level values the words still come from incline; the target floor is unknown, so the count of the six flights stays, without '까지'.
     const blind = buildGraph(stripLevels(tower7({ elevator: false, stairBranches: false })).campus);
     expect(sentences(route(blind, TOWER.hall(1), TOWER.hall(7), 'shortest'))).toContain('계단으로 6층 올라가세요');
     expect(sentences(route(blind, TOWER.hall(7), TOWER.hall(1), 'shortest'))).toContain('계단으로 6층 내려가세요');
@@ -880,10 +880,19 @@ describe('routing checklist (SPEC-v0.2 3.7)', () => {
       delete p['incline'];
     }
     const g = buildGraph(noIncline);
-    expect(sentences(route(g, TOWER.hall(1), TOWER.hall(7), 'shortest'))).toContain('계단으로 6층 올라가세요');
-    expect(sentences(route(g, TOWER.hall(7), TOWER.hall(1), 'shortest'))).toContain('계단으로 6층 내려가세요');
+    expect(sentences(route(g, TOWER.hall(1), TOWER.hall(7), 'shortest'))).toContain('계단으로 7층까지 올라가세요');
+    expect(sentences(route(g, TOWER.hall(7), TOWER.hall(1), 'shortest'))).toContain('계단으로 1층까지 내려가세요');
     const blind = buildGraph(stripLevels(noIncline).campus);
     expect(sentences(route(blind, TOWER.hall(1), TOWER.hall(7), 'shortest'))).toContain('계단으로 6층 이동하세요');
+  });
+
+  it('R18: elevator and stairs name the target floor ("까지"); with no floor known the count/plain wording stays without "까지"', () => {
+    const full = buildGraph(tower7({ stepCount: null }));
+    expect(sentences(route(full, TOWER.hall(7), TOWER.hall(1), 'shortest'))).toContain('엘리베이터로 1층까지 내려가세요');
+    const blind = buildGraph(stripLevels(tower7({ stepCount: null })).campus);
+    const texts = sentences(route(blind, TOWER.hall(1), TOWER.hall(7), 'shortest'));
+    expect(texts).toContain('엘리베이터를 타고 이동하세요');
+    expect(texts.some((t) => t.includes('까지'))).toBe(false);
   });
 
   // ---- R19 (outside the checklist) ----
@@ -970,7 +979,7 @@ describe('route steps', () => {
     expect(r.steps.map((s) => s.kind)).toEqual(['walk', 'ramp', 'walk', 'portal', 'walk', 'elevator', 'walk', 'bridge', 'walk']);
     const text = sentences(r);
     expect(text[3]).toBe('A동 4층 출입구로 들어가세요');
-    expect(text[5]).toBe('엘리베이터를 타고 3층으로 가세요');
+    expect(text[5]).toBe('엘리베이터로 3층까지 내려가세요');
     expect(text[7]).toBe('A동 3층 연결통로를 건너 B동 2층으로 가세요');
     expect(text[0]).toMatch(/^\d+m 걸어가세요$/);
     expect(text[1]).toMatch(/^경사로를 따라 \d+m 가세요$/);

@@ -1,4 +1,5 @@
 import type { Feature, FeatureCollection, LineString, Polygon, Position } from 'geojson';
+import { isValidLngLat } from './markerCoords.ts';
 import { distanceM } from '../../route/slopeSections.ts';
 import type { CampusBuilding, CampusPlace, CampusRouteRequest, RoutePoint, TravelMode } from '../../contracts.ts';
 
@@ -26,8 +27,9 @@ export function routeLine(points: readonly RoutePoint[]): Feature<LineString> | 
   return { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: points.map((p) => [p.lng, p.lat]) } };
 }
 export function routeBounds(points: readonly RoutePoint[]): [number, number, number, number] | null {
-  if (!points.length) return null;
-  const xs = points.map((p) => p.lng), ys = points.map((p) => p.lat);
+  const good = points.filter((p) => isValidLngLat(p.lng, p.lat));
+  if (!good.length) return null;
+  const xs = good.map((p) => p.lng), ys = good.map((p) => p.lat);
   // A small margin also makes a zero-distance route fit a usable viewport.
   return [Math.min(...xs) - 0.0003, Math.min(...ys) - 0.0003, Math.max(...xs) + 0.0003, Math.max(...ys) + 0.0003];
 }

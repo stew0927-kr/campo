@@ -15,7 +15,7 @@ describe('CampusMap preview bubble', () => {
   it('keeps every other Marker id constant or keyed by the same value', () => {
     expect(source).toMatch(/<FacilityMarker key=\{`icon:\$\{marker\.id\}`\}/);
     expect(source).toMatch(/<LabelMarker key=\{`label:\$\{marker\.id\}`\}/);
-    expect(source).toContain('<Marker id="selected-place"');
-    expect(source).toContain('<Marker id="current-position"');
+    expect(source).toContain('<SafeMarker id="selected-place"');
+    expect(source).toContain('<SafeMarker id="current-position"');
   });
 });

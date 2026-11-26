@@ -6,6 +6,8 @@ import type { CampusPlace, CampusRouteView, PhotoCatalog, RoutePhoto, RouteStepP
 import { isEmptyCatalog } from './catalog.ts';
 import { headingLabel } from './demoPhotoArt.ts';
 import { otherPhotosAt } from './routePhotos.ts';
+import { nodeLineIndex } from './routeAlongPhotos.ts';
+import { straightRun, type StraightRun } from './turnGuide.ts';
 import { photoViewerPages, withPhoto } from './viewerModel.ts';
 
 // ---- 지점 정보 ----
@@ -71,6 +73,8 @@ export interface RoadviewFrame {
   /** 이 지점의 사진 전부(가야 할 방향에 가까운 것 먼저). */
   photos: RoutePhoto[];
   place: RoadviewPlaceInfo;
+  /** 경로일 때 이 지점에서 앞으로 곧게 걷는 거리와 그 끝의 꺾임(turnGuide.straightRun). 경로 없이 지점만 볼 때·모르면 null. */
+  run?: StraightRun | null;
 }
 
 const UNKNOWN_PLACE: RoadviewPlaceInfo = { name: '이름 없는 지점', indoor: false, level: null, buildingName: null };
@@ -91,6 +95,7 @@ export function roadviewFrames(
   backFrom: number | null = null,
 ): RoadviewFrame[] {
   const pages = photoViewerPages(route, stepPhotos, catalog, (id) => lookup(id)?.name ?? null);
+  let ranges: [number, number][] | undefined;
   return pages.map((page, index) => {
     const leg = legOf(page.stepIndex, backFrom);
     return {
@@ -104,8 +109,43 @@ export function roadviewFrames(
       step: page.step,
       photos: [...(page.step.photo ? [page.step.photo] : []), ...page.others],
       place: lookup(page.step.nodeId) ?? UNKNOWN_PLACE,
+      run: route ? stepRun(route, page.step, ranges ??= stepLineRanges(route)) : null,
     };
   });
+}
+
+/**
+ * 단계마다 경로선 위 범위 [시작 점, 끝 점](routeAlongPhotos와 같은 커서 규칙). 마지막 칸(steps.length)은 도착 지점 범위.
+ * 왕복처럼 같은 좌표가 두 번 나와도 단계 범위 안에서 찾으므로 그 단계가 지나는 쪽을 고른다.
+ */
+export function stepLineRanges(route: CampusRouteView): [number, number][] {
+  const lineAt = nodeLineIndex(route);
+  const out: [number, number][] = [];
+  let cursor = 0, lastLine = 0;
+  route.steps.forEach((step) => {
+    let a = route.nodeIds.indexOf(step.fromNodeId, cursor);
+    if (a < 0) a = route.nodeIds.indexOf(step.fromNodeId);
+    const b = a < 0 ? -1 : route.nodeIds.indexOf(step.toNodeId, a);
+    const la = a >= 0 && lineAt[a]! >= 0 ? lineAt[a]! : lastLine;
+    const lb = b >= 0 && lineAt[b]! >= 0 ? lineAt[b]! : route.polyline.length - 1;
+    out.push([la, Math.max(la, lb)]);
+    if (b > a) cursor = b;
+    lastLine = Math.max(la, lb);
+  });
+  out.push([lastLine, route.polyline.length - 1]);
+  return out;
+}
+
+/** 사진 지점의 경로선 위 자리에서 straightRun. 자리를 찾지 못하면 null. */
+export function stepRun(route: CampusRouteView, step: Pick<RouteStepPhoto, 'stepIndex' | 'lngLat'>, ranges: readonly [number, number][] = stepLineRanges(route)): StraightRun | null {
+  if (!step.lngLat) return null;
+  const [lo, hi] = ranges[Math.min(step.stepIndex, ranges.length - 1)] ?? [0, route.polyline.length - 1];
+  const [lng, lat] = step.lngLat;
+  for (let j = lo; j <= hi; j++) {
+    const p = route.polyline[j];
+    if (p && p.lng === lng && p.lat === lat) return straightRun(route.polyline.map((q) => [q.lng, q.lat]), j);
+  }
+  return null;
 }
 
 /** 경로 없이 지도에서 고른 사진 지점 하나의 장면. 사진이 없으면 null. 처음 사진은 북쪽에 가까운 것. */
@@ -197,6 +237,15 @@ export function stepMarkerGroups(stepPhotos: readonly RouteStepPhoto[], stepCoun
     else groups.set(key, { key, lngLat: s.lngLat, nodeId: s.nodeId, entries: [{ index, label }] });
   });
   return [...groups.values()];
+}
+
+/** 사진 핀을 눌렀을 때 할 일: 항목이 하나면 그 사진이 첫 장면인 로드뷰를 바로 연다, 둘 이상(왕복)이면 말풍선에서 고른다. */
+export type PinTap = { kind: 'open'; index: number } | { kind: 'choose' };
+
+/** 핀 한 번 탭 → 로드뷰. `entries[].index`는 stepPhotos 위치이고 roadviewFrames도 같은 순서·개수라 그대로 장면 위치다. */
+export function pinTapAction(group: Pick<MarkerGroup, 'entries'>): PinTap {
+  if (group.entries.length === 1) return { kind: 'open', index: group.entries[0]!.index };
+  return { kind: 'choose' };
 }
 
 export interface PhotoSpot {

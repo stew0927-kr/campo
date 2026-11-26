@@ -89,7 +89,7 @@ export class Editor {
 
   async save(): Promise<void> {
     await this.click(this.page.getByRole('button', { name: /^저장$/ }));
-    await this.page.getByText(/^저장했습니다/).waitFor();
+    await this.page.getByText(/^(이 PC에 )?저장했습니다/).waitFor();
   }
 }
 

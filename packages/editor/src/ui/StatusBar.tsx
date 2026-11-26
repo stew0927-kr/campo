@@ -1,10 +1,13 @@
 import { dirtyLabel } from '../model/elevation.ts';
+import { LOCAL_SAVE_BADGE } from '../storage.ts';
 
 interface Props {
   scopeLabel: string;
   nodes: number;
   edges: number;
   dirty: boolean;
+  /** PC 편집기: 저장이 이 PC에만 된다는 안내(LOCAL_SAVE_NOTICE). 서버 빌드면 null. 늘 보이게 저장 상태 옆에 둔다. */
+  saveTarget?: string | null;
   notice: { text: string; tone: 'info' | 'warn' | 'error' } | null;
   hint: string | null;
   /** Places waiting for a height recompute and the button that runs it. Always shown, so the feature is there to find. */
@@ -59,13 +62,14 @@ function ElevationStatus({ count, busy, onRecompute, dhCount, onOpenDh, pcOnly }
   );
 }
 
-export function StatusBar({ scopeLabel, nodes, edges, dirty, notice, hint, elevation }: Props) {
+export function StatusBar({ scopeLabel, nodes, edges, dirty, saveTarget = null, notice, hint, elevation }: Props) {
   return (
     <footer className="status">
       <span className="status-mode">{scopeLabel === '바깥' ? '바깥 모드' : scopeLabel}</span>
       <span>지점 {nodes}개</span>
       <span>구간 {edges}개</span>
-      <span className={dirty ? 'status-dirty' : 'status-clean'}>{dirty ? '저장하지 않은 변경이 있습니다' : '저장됨'}</span>
+      <span className={dirty ? 'status-dirty' : 'status-clean'}>{dirty ? '저장하지 않은 변경이 있습니다' : saveTarget ? '이 PC에 저장됨' : '저장됨'}</span>
+      {saveTarget && <span className="status-save-target" role="note" aria-label={saveTarget} title={saveTarget}>{LOCAL_SAVE_BADGE}</span>}
       <ElevationStatus {...elevation} />
       <span className="status-message" role="status" aria-live="polite">
         {notice ? <span className={`notice-${notice.tone}`} title={notice.text}>{notice.text}</span> : hint}

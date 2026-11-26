@@ -151,6 +151,8 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
   // fires). A tap marks the time, and a map tap that the same touch also produced is ignored, so it cannot close the bubble
   // the pin just opened. There is no native dot layer under them any more (the green dots were dropped: the pin is the mark).
   const pinPressedAt = useRef(0);
+  /** A finger went down on a pin or the bubble: the map tap this same touch produces is ignored (it would close the bubble first). */
+  const markPinTouch = useCallback(() => { pinPressedAt.current = Date.now(); }, []);
   const openSpot = useCallback((i: number) => {
     const spot = pressData.current.photoSpots[i];
     if (!spot) return false;
@@ -256,7 +258,7 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
       <GeoJSONSource id="app-indoor-mask" data={mask ?? EMPTY}><Layer id="app-indoor-mask-fill" type="fill" paint={P.mask} /></GeoJSONSource>
       <GeoJSONSource id="app-building-outline" data={outline ?? EMPTY}><Layer id="app-building-fill" type="fill" paint={threeD ? P.buildingFill3d : P.buildingFill} /><Layer id="app-building-border" type="line" paint={P.buildingBorder} /></GeoJSONSource>
       {/* 3D 보기: glass floors. Faint slabs (two tiers: the floor just above, then fainter), dark rims along each slab's top and
-          bottom edges so the plates read, and strong lift/stair pillars through them. */}
+          bottom edges so the plates read, and thin lift (purple) / stair (orange) vertical lines through them. */}
       <GeoJSONSource id="app-3d-floors" data={stack?.slabs ?? EMPTY}>
         <Layer id="app-3d-floor-slabs" type="fill-extrusion" filter={F.tierNear} paint={buildingId ? P.slabsNear : P.slabsOutdoor} />
         <Layer id="app-3d-floor-slabs-far" type="fill-extrusion" filter={F.tierFar} paint={P.slabsFar} />
@@ -265,8 +267,8 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
         <Layer id="app-3d-floor-rims" type="fill-extrusion" filter={F.tierNear} paint={P.rimsNear} />
         <Layer id="app-3d-floor-rims-far" type="fill-extrusion" filter={F.tierFar} paint={P.rimsFar} />
       </GeoJSONSource>
-      <GeoJSONSource id="app-3d-links" data={stack?.pillars ?? EMPTY}>
-        <Layer id="app-3d-link-pillars" type="fill-extrusion" paint={P.pillars} />
+      <GeoJSONSource id="app-3d-links" data={stack?.links ?? EMPTY}>
+        <Layer id="app-3d-link-lines" type="fill-extrusion" paint={P.links} />
       </GeoJSONSource>
       {stack && stack.outlines.features.length > 0 && <GeoJSONSource id="app-3d-outlines" data={stack.outlines}>
         <Layer id="app-3d-outline-line" type="line" paint={P.stackOutline} layout={ROUND_JOIN} />
@@ -298,13 +300,13 @@ const CampusMapView = memo(function CampusMapView({ center, label, route, from, 
         <Layer id="app-place-dots" type="circle" paint={indoorView ? P.placeDotIndoor : P.placeDotOutdoor} />
       </GeoJSONSource>
       <MarkerLayer markers={markers} indoorView={indoorView} onPlace={onPlace} sink={markerSink} viewRef={viewRef} />
-      {stepGroups.length === 0 && photoSpots.map((spot, i) => <PhotoPinMarker key={`spot:${spot.nodeId}`} id={`photo-pin:spot:${spot.nodeId}`} lngLat={spot.lngLat} index={i} count={spot.count} label={`사진 지점, 사진 ${spot.count}장. 눌러서 보기`} onOpen={openSpot} />)}
+      {stepGroups.length === 0 && photoSpots.map((spot, i) => <PhotoPinMarker key={`spot:${spot.nodeId}`} id={`photo-pin:spot:${spot.nodeId}`} lngLat={spot.lngLat} index={i} count={spot.count} label={`사진 지점, 사진 ${spot.count}장. 눌러서 로드뷰 보기`} onOpen={openSpot} onTouch={markPinTouch} />)}
       {stepGroups.map((group, i) => <PhotoPinMarker key={`group:${group.key}`} id={`photo-pin:group:${group.key}`} lngLat={group.lngLat} index={i} count={group.entries.length}
-        label={group.entries.length > 1 ? `경로 사진, ${group.entries.map((e) => e.label).join(' / ')}. 눌러서 고르기` : `경로 사진, ${group.entries[0]?.label ?? ''}. 눌러서 보기`} onOpen={openGroup} />)}
+        label={group.entries.length > 1 ? `경로 사진, ${group.entries.map((e) => e.label).join(' / ')}. 눌러서 고르기` : `경로 사진, ${group.entries[0]?.label ?? ''}. 눌러서 로드뷰 보기`} onOpen={openGroup} onTouch={markPinTouch} />)}
       {selected && visible(selected) && selected.id !== from?.id && selected.id !== to?.id && <Marker id="selected-place" lngLat={[selected.lng, selected.lat]} anchor="bottom"><View style={styles.selectedPin}><View style={styles.selectedDot} /></View></Marker>}
       {visible(from) && from && <EndpointPin id="route-start" kind="from" lng={from.lng} lat={from.lat} />}
       {visible(to) && to && <EndpointPin id="route-end" kind="to" lng={to.lng} lat={to.lat} />}
-      {preview && <PreviewBubble key={preview.key} preview={preview} onOpen={onOpenPreview} />}
+      {preview && <PreviewBubble key={preview.key} preview={preview} onOpen={onOpenPreview} onTouch={markPinTouch} />}
       {pressPin && <Marker id="press-pin" lngLat={[pressPin.lng, pressPin.lat]} anchor="bottom">
         <View accessible accessibilityLabel="길게 눌러 고른 위치" style={styles.pressPin} pointerEvents="none">
           <View style={styles.pressPinHead}><View style={styles.pressPinHole} /></View>
@@ -375,7 +377,7 @@ const MOVING_LAYOUT_MS = Math.max(DECLUTTER_THROTTLE_MS, 120);
 export const HIGHLIGHT_COLOR = '#E68A00';
 type ExtrusionPaint = NonNullable<FillExtrusionLayerSpecification['paint']>;
 type LinePaint = NonNullable<LineLayerSpecification['paint']>; type FillPaint = NonNullable<FillLayerSpecification['paint']>; type CirclePaint = NonNullable<CircleLayerSpecification['paint']>; type LineLayout = NonNullable<LineLayerSpecification['layout']>;
-/** Slab, rim and pillar heights from the feature (stack3d.ts); flat colour, no vertical gradient (glass, not a block). */
+/** Slab, rim and link heights from the feature (stack3d.ts); flat colour, no vertical gradient (glass, not a block). */
 const SLAB_HEIGHT = { 'fill-extrusion-base': ['get', 'baseM'], 'fill-extrusion-height': ['get', 'topM'], 'fill-extrusion-vertical-gradient': false } satisfies ExtrusionPaint;
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 const ROUND: LineLayout = { 'line-cap': 'round', 'line-join': 'round' };
@@ -405,13 +407,13 @@ const P = {
   placeDotOutdoor: { 'circle-radius': 6, 'circle-color': '#18744D', 'circle-stroke-color': 'white', 'circle-stroke-width': 2 },
   // 3D 보기 as glass (stack3d.ts). fill-extrusion-opacity is one value per layer and the colour's alpha is ignored, so each
   // density is its own layer: the floor just above the chosen one, the floors above that (fainter), and outdoors every floor.
-  // The rims carry the plates' edges (the editor's wireframe); lift and stair pillars stay strong so they read through the glass.
+  // The rims carry the plates' edges (the editor's wireframe); lift and stair lines are hairline-thin columns (LINK_W_M) drawn near-opaque so they read through the glass.
   slabsNear: { 'fill-extrusion-color': STACK_FLOOR_COLOR, 'fill-extrusion-opacity': 0.2, ...SLAB_HEIGHT },
   slabsFar: { 'fill-extrusion-color': STACK_FLOOR_COLOR, 'fill-extrusion-opacity': 0.1, ...SLAB_HEIGHT },
   slabsOutdoor: { 'fill-extrusion-color': ['case', ['get', 'picked'], '#8FB0F5', STACK_FLOOR_COLOR], 'fill-extrusion-opacity': 0.3, ...SLAB_HEIGHT },
   rimsNear: { 'fill-extrusion-color': STACK_EDGE_COLOR, 'fill-extrusion-opacity': 0.55, ...SLAB_HEIGHT },
   rimsFar: { 'fill-extrusion-color': STACK_EDGE_COLOR, 'fill-extrusion-opacity': 0.3, ...SLAB_HEIGHT },
-  pillars: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-opacity': 0.9, ...SLAB_HEIGHT },
+  links: { 'fill-extrusion-color': ['get', 'color'], 'fill-extrusion-opacity': 0.95, ...SLAB_HEIGHT },
   stackOutline: { 'line-color': STACK_EDGE_COLOR, 'line-width': 1.2, 'line-opacity': 0.55 },
 } satisfies Record<string, LinePaint | FillPaint | CirclePaint | ExtrusionPaint>;
 /** The indoor veil covers the whole camera range (the camera cannot leave CAMPUS_MAX_BOUNDS), with a margin. */
@@ -455,8 +457,13 @@ const compassRotatedStyle = ({ pressed }: { pressed: boolean }) => [styles.compa
 const DEFAULT_PADDING = { top: 40, bottom: 40, left: 35, right: 35 };
 const ATTRIBUTION_BOTTOM = 22;
 const HITBOX = { top: 16, right: 16, bottom: 16, left: 16 };
-/** A map tap this soon after a pin press is the same touch: ignored. */
-const PIN_TAP_GUARD_MS = 500;
+/**
+ * A map tap this soon after a finger went down on a pin or the bubble is the same touch: ignored, so the map's own tap
+ * (which closes the bubble) can never unmount the bubble before its Pressable fires. Long enough for a slow tap.
+ */
+export const PIN_TAP_GUARD_MS = 700;
+/** Extra touch margin around a pin / the bubble: a finger that wobbles a little (right after a pan or pinch) still counts as a tap. */
+const PIN_SLOP = { top: 8, bottom: 8, left: 8, right: 8 };
 /** Touch target of a photo pin's Marker (pt). */
 const PIN_TOUCH = 48;
 /** Visible photo pin disc (pt). */
@@ -467,9 +474,9 @@ const PHOTO_PIN = 28;
  * badge when the point has two or more photos (or the route passes it twice). The 48pt Pressable around it is the touch
  * target: it fires only on a short tap, never on a pan, and its touch does not reach the map. Memoised on its values.
  */
-const PhotoPinMarker = memo(function PhotoPinMarker({ id, lngLat, index, count, label, onOpen }: { id: string; lngLat: [number, number]; index: number; count: number; label: string; onOpen: (i: number) => boolean }) {
+const PhotoPinMarker = memo(function PhotoPinMarker({ id, lngLat, index, count, label, onOpen, onTouch }: { id: string; lngLat: [number, number]; index: number; count: number; label: string; onOpen: (i: number) => boolean; onTouch: () => void }) {
   return <Marker id={id} lngLat={lngLat} anchor="center">
-    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={() => { onOpen(index); }} style={pinTouchStyle}>
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPressIn={onTouch} onPress={() => { onOpen(index); }} hitSlop={PIN_SLOP} pressRetentionOffset={PIN_SLOP} style={pinTouchStyle}>
       <View pointerEvents="none" style={styles.photoPin}>
         <View style={styles.photoGlyph}><View style={styles.photoLens} /></View>
         {count > 1 && <View style={styles.photoCount}><Text style={styles.photoCountText}>{count > 99 ? '99+' : count}</Text></View>}
@@ -521,16 +528,16 @@ const EndpointPin = memo(function EndpointPin({ id, kind, lng, lat }: { id: stri
 });
 
 /** Speech bubble with the roadview thumbnail. One entry: tap to open. Two or more: pick 가는 길 / 오는 길. */
-const PreviewBubble = memo(function PreviewBubble({ preview, onOpen }: { preview: RoadviewPreview; onOpen: (entry: number | null) => void }) {
+const PreviewBubble = memo(function PreviewBubble({ preview, onOpen, onTouch }: { preview: RoadviewPreview; onOpen: (entry: number | null) => void; onTouch: () => void }) {
   const single = preview.entries.length <= 1;
   return <Marker id={`roadview-preview-${preview.key}`} lngLat={preview.lngLat} anchor="bottom" offset={[0, -12]}>
     <View style={styles.bubbleWrap}>
-      <Pressable accessibilityRole="button" accessibilityLabel={`${preview.title} 로드뷰 보기`} disabled={!single} onPress={() => onOpen(preview.entries[0]?.index ?? null)} style={styles.bubble}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`${preview.title} 로드뷰 보기`} disabled={!single} onPressIn={onTouch} onPress={() => onOpen(preview.entries[0]?.index ?? null)} pressRetentionOffset={PIN_SLOP} style={styles.bubble}>
         {preview.thumbUrl ? <Image source={{ uri: preview.thumbUrl }} contentFit="cover" style={styles.bubbleThumb} /> : <View style={[styles.bubbleThumb, { backgroundColor: '#596579' }]} />}
         <View style={styles.bubbleBody}>
           <Text numberOfLines={1} style={styles.bubbleTitle}>{preview.title}</Text>
           <Text numberOfLines={1} style={styles.bubbleSub}>{single ? `${preview.subtitle} · 눌러서 로드뷰` : '두 번 지나는 지점입니다'}</Text>
-          {!single && <View style={styles.bubbleChoices}>{preview.entries.map((entry) => <Pressable key={entry.index} accessibilityRole="button" accessibilityLabel={`${entry.label} 로드뷰 보기`} onPress={() => onOpen(entry.index)} style={styles.bubbleChoice}>
+          {!single && <View style={styles.bubbleChoices}>{preview.entries.map((entry) => <Pressable key={entry.index} accessibilityRole="button" accessibilityLabel={`${entry.label} 로드뷰 보기`} onPressIn={onTouch} onPress={() => onOpen(entry.index)} style={styles.bubbleChoice}>
             <Text style={styles.bubbleChoiceText}>{entry.label}</Text>
           </Pressable>)}</View>}
         </View>

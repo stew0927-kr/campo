@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Animated, FlatList, KeyboardAvoidingView, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { CampusBuilding, CampusPlace, TravelMode } from '../../contracts.ts';
 import { floating, theme as t } from '../../ui/theme.ts';
-import { STACK_ICON_SIZE, STACK_SCALE_Y, STACK_SQUARE, stackPlates } from './stackIcon.ts';
+import { STACK_CORNER, STACK_ICON_SIZE, STACK_PLATE_H, STACK_PLATE_W, diamond, stackPlates } from './stackIcon.ts';
 import { Empty, Notice } from '../../ui/kit.tsx';
 import { TRAVEL_MODES } from './model.ts';
 import { OUTDOOR_GROUP, TREE_ROOT, UNKNOWN_LEVEL, buildingGroups, facilityGroups, floorText, levelGroups, type TreePath } from './placeTree.ts';
@@ -51,19 +51,31 @@ export function EndpointDot({ kind }: { kind: 'from' | 'to' }) {
 }
 
 /* ---------- Floating controls ---------- */
-export function RoundButton({ label, onPress, children, busy = false, disabled = false, selected }: { label: string; onPress: () => void; children: ReactNode; busy?: boolean; disabled?: boolean; selected?: boolean }) {
+export function RoundButton({ label, onPress, onLongPress, longPressLabel, children, busy = false, disabled = false, selected }: { label: string; onPress: () => void; onLongPress?: (() => void) | undefined; longPressLabel?: string; children: ReactNode; busy?: boolean; disabled?: boolean; selected?: boolean }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: disabled || busy, busy, ...(selected === undefined ? {} : { selected }) }} disabled={disabled || busy} onPress={onPress}
+    onLongPress={onLongPress} accessibilityActions={onLongPress ? [{ name: 'longpress', label: longPressLabel ?? label }] : undefined}
+    onAccessibilityAction={onLongPress ? (event) => { if (event.nativeEvent.actionName === 'longpress') onLongPress(); } : undefined}
     style={({ pressed }) => [c.round, selected && c.roundOn, pressed && { backgroundColor: t.color.sunken }]}>{busy ? <ActivityIndicator color={t.color.primary} /> : children}</Pressable>;
 }
 /**
- * 3D 보기 토글 아이콘(코어 LAYER_STACK_ICON과 같은 중심·크기, stackIcon.ts): 비스듬히 본 층판 셋을 4dp 간격으로 붙여 한 덩어리로.
- * 아래는 옅게, 위는 진하게(켜지면 primary). SVG 없이 45° 돌린 정사각형을 세로로 눌러 마름모로 그린다.
+ * 3D 보기 토글 아이콘(stackIcon.ts, 원본 rh-1.svg): 두꺼운 마름모 층판 셋이 둥근 모서리로 촘촘히 겹친 덩어리.
+ * 같은 회색(테마 muted, 켜지면 primary)에서 위 판이 가장 진하다. 판마다 밑에 버튼 바탕색의 틈 판을 깔아 SVG 마스크와 같은 0.5dp 틈을 낸다.
+ * 틈 판 색은 RoundButton 바탕(꺼짐 surface / 켜짐 roundOn)과 같아야 한다.
  */
 export function Stack3DIcon({ on = false }: { on?: boolean }) {
-  const color = on ? t.color.primary : t.color.text;
+  const color = on ? t.color.primary : t.color.muted;
+  const gap = on ? ROUND_ON_BG : t.color.surface;
   return <View style={c.stackIcon} accessible={false} pointerEvents="none">
-    {stackPlates().map((plate, i) => <View key={i} style={[c.stackPlate, { top: plate.cy - STACK_SQUARE / 2, opacity: plate.opacity, backgroundColor: color }]} />)}
+    {stackPlates().map((plate, i) => <View key={i} style={StyleSheet.absoluteFill}>
+      {plate.haloW > 0 && <Diamond w={plate.haloW} h={plate.haloH} cy={plate.cy} color={gap} />}
+      <Diamond w={STACK_PLATE_W} h={STACK_PLATE_H} cy={plate.cy} color={color} opacity={plate.opacity} />
+    </View>)}
   </View>;
+}
+function Diamond({ w, h, cy, color, opacity = 1 }: { w: number; h: number; cy: number; color: string; opacity?: number }) {
+  const { side, scaleY } = diamond(w, h);
+  return <View style={{ position: 'absolute', left: (STACK_ICON_SIZE - side) / 2, top: cy - side / 2, width: side, height: side, borderRadius: STACK_CORNER * (side / diamond(STACK_PLATE_W, STACK_PLATE_H).side),
+    backgroundColor: color, opacity, transform: [{ scaleY }, { rotate: '45deg' }] }} />;
 }
 export function SearchBar({ onSearch, onRoute }: { onSearch: () => void; onRoute: () => void }) {
   return <View style={c.searchRow}>
@@ -75,10 +87,6 @@ export function SearchBar({ onSearch, onRoute }: { onSearch: () => void; onRoute
       <Text style={c.routeButtonText}>길찾기</Text>
     </Pressable>
   </View>;
-}
-/** Small floating chip, e.g. the developer data switch. */
-export function FloatChip({ label, text, onPress }: { label: string; text: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [c.floatChip, pressed && { backgroundColor: t.color.sunken }]}><Text style={c.floatChipText}>{text}</Text></Pressable>;
 }
 
 /**
@@ -441,13 +449,14 @@ export function PlaceTree({ places, buildings, path, onPath, onChoose, detail }:
   </ScrollView>;
 }
 
+/** 켜진 RoundButton 바탕(3D 아이콘의 틈 판도 같은 색). */
+const ROUND_ON_BG = '#EEF3FF';
 const QUICK_SLOP = { top: 4, bottom: 4, left: 2, right: 2 };
 const c = StyleSheet.create({
   dot: { width: 12, height: 12, borderRadius: 6, borderWidth: 3.5, backgroundColor: 'white' },
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: t.color.surface, alignItems: 'center', justifyContent: 'center', ...floating },
-  roundOn: { borderWidth: 2, borderColor: t.color.primary, backgroundColor: '#EEF3FF' },
+  roundOn: { borderWidth: 2, borderColor: t.color.primary, backgroundColor: ROUND_ON_BG },
   stackIcon: { width: STACK_ICON_SIZE, height: STACK_ICON_SIZE },
-  stackPlate: { position: 'absolute', left: (STACK_ICON_SIZE - STACK_SQUARE) / 2, width: STACK_SQUARE, height: STACK_SQUARE, borderRadius: 1.2, transform: [{ scaleY: STACK_SCALE_Y }, { rotate: '45deg' }] },
   selectionPill: { gap: 12, paddingLeft: 14 },
   selectionMark: { width: 26, height: 26, borderRadius: 13, backgroundColor: t.color.soft, alignItems: 'center', justifyContent: 'center' },
   selectionMarkDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 2.5, borderColor: t.color.primary, backgroundColor: t.color.surface },
@@ -470,8 +479,6 @@ const c = StyleSheet.create({
   pillText: { fontSize: 14, color: t.color.text, fontWeight: '700' },
   routeButton: { minHeight: 52, minWidth: 64, borderRadius: 26, paddingHorizontal: 16, backgroundColor: t.color.primary, alignItems: 'center', justifyContent: 'center', ...floating },
   routeButtonText: { color: 'white', fontSize: 14, fontWeight: '800' },
-  floatChip: { alignSelf: 'flex-end', minHeight: 36, paddingHorizontal: 14, borderRadius: 18, backgroundColor: t.color.surface, justifyContent: 'center', ...floating },
-  floatChipText: { fontSize: 12, fontWeight: '700', color: t.color.muted },
   endpointCard: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: t.color.surface, borderRadius: 20, paddingHorizontal: 6, paddingVertical: 6, borderWidth: 1, borderColor: t.color.border, ...floating },
   iconButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   endpointRow: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 8 },

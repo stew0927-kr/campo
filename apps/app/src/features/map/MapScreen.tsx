@@ -5,9 +5,11 @@ import type { BundledCampus } from '../../campus/types.ts';
 import type { CampusPlace, CampusRouteRequest, TravelMode, PhotoCatalog, RoutePoint } from '../../contracts.ts';
 import { EMPTY_PHOTO_CATALOG } from '../../contracts.ts';
 import { routeAlongPhotos } from '../../photos/routeAlongPhotos.ts';
-import { combineRoundTrip, photoSpots as spotsOf, placeLine, placeLookup, roadviewFrames, spotFrame, stepMarkerGroups, type MarkerGroup, type PhotoSpot, type RoadviewFrame } from '../../photos/roadviewModel.ts';
+import { combineRoundTrip, photoSpots as spotsOf, pinTapAction, placeLookup, roadviewFrames, spotFrame, stepMarkerGroups, type MarkerGroup, type PhotoSpot, type RoadviewFrame } from '../../photos/roadviewModel.ts';
 import { headingLabel } from '../../photos/demoPhotoArt.ts';
+import { useCampusRefreshing } from '../../hooks/useCampusBundle.ts';
 import { useCampusData } from '../../hooks/useCampusData.ts';
+import { useCampusAutoRefresh } from './useCampusAutoRefresh.ts';
 import { useCampusRoute } from '../../hooks/useCampusRoute.ts';
 import { useGpsMatcher } from '../../hooks/useGpsMatcher.ts';
 import { useAppActions, useAppSelector } from '../../state/AppState.tsx';
@@ -23,7 +25,7 @@ import { endpointFor, insideOutline, placeDetail, placesInScope, pointPlace, req
 import { slopeSections } from '../../route/slopeSections.ts';
 import { getBuildingOutlineForLevel } from '@campo/core';
 import { useSensorFixes } from './useSensorFixes.ts';
-import { BackIcon, EndpointCard, Stack3DIcon, EndpointDot, FloatChip, FloorChips, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
+import { BackIcon, EndpointCard, Stack3DIcon, EndpointDot, FloorChips, FloorPicker, GenderChips, LocateIcon, ModeChips, PlaceSearch, RestroomChip, RoundButton, RoutePill, SearchBar, SelectionBar, Sheet, Stat, StatusLine, SwitchRow, TextButton, WheelchairToggle, type SearchTarget } from './MapChrome.tsx';
 import { buildingCenter, floorChoice, mappedBuildings } from './buildings.ts';
 import { RoadviewScreen } from './RoadviewScreen.tsx';
 import { ROADVIEW_DEMO_CAMPUS, ROADVIEW_DEMO_CATALOG, RV } from './roadviewDemo.ts';
@@ -41,6 +43,11 @@ type Field = 'from' | 'to';
 type PickTarget = Field | 'restroom';
 type DemoData = 'none' | 'outdoor' | 'indoor' | 'roadview';
 const GPS_MODE_LABEL = { OUTDOOR: '실외', APPROACHING: '입구 근처', PORTAL: '출입구 전환', INDOOR: '실내', OFF_NETWORK_SUSPECT: '경로 밖 의심' } as const;
+/** 지도 새로고침: 관리자 웹(/map/)에서 저장한 실내·실외 지도를 앱을 다시 켜지 않고 받는다. */
+export const MAP_REFRESH_TITLE = '지도 새로고침';
+export const MAP_REFRESH_HINT = '관리자 웹에서 고친 지도가 안 보이면 눌러 주세요.';
+/** 개발 빌드 전용: 3D 버튼 길게 누름(접근성 동작 이름도 같다). 지도 위 오른쪽 위 배지는 없앴다. */
+export const DEV_MENU_HINT = '개발 데이터';
 const DEMO_LABEL: Record<DemoData, string> = { none: '실제 데이터', outdoor: '야외 가상', indoor: '실내 시험', roadview: '로드뷰 가상' };
 const DEMO_BUNDLE = { outdoor: DEMO_CAMPUS, indoor: indoorFixture as BundledCampus, roadview: ROADVIEW_DEMO_CAMPUS } as const;
 /** Travel mode to return to when the wheelchair switch is turned off. */
@@ -67,6 +74,9 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   const favorites = useAppSelector((s) => s.favorites);
   const [demo, setDemo] = useState<DemoData>('none');
   const data = useCampusData(demo === 'none' ? undefined : DEMO_BUNDLE[demo]);
+  // 서버 지도: 앱이 포그라운드로 돌아오면 10분 지난 것만 다시 받고, 시트의 "지도 새로고침"은 바로 다시 받는다.
+  const mapRefreshing = useCampusRefreshing();
+  useCampusAutoRefresh(demo === 'none');
   const [view, setView] = useState<'home' | 'plan'>('home');
   const [from, setFrom] = useState<CampusPlace | null>(null);
   const [to, setTo] = useState<CampusPlace | null>(null);
@@ -143,9 +153,10 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
   }, [sections, slopeKey]);
   // Demo data uses the virtual roadview photos (no network); the real campus uses the provider's catalog.
   const effectiveCatalog = demo === 'none' ? photoCatalog : demo === 'roadview' ? ROADVIEW_DEMO_CATALOG : EMPTY_PHOTO_CATALOG;
-  // The map shows every photo point the route passes (not only step starts), closest to the way walked there; a photo that does
-  // not face that way is still shown, with the "정면이 아닐 수 있습니다" badge (routeAlongPhotos). The contract hook stays as is.
-  const stepPhotos = useMemo(() => routeAlongPhotos(shownRoute, effectiveCatalog, data.graph), [shownRoute, effectiveCatalog, data.graph]);
+  // The map shows every photo point the route itself passes (route.nodeIds, not nearby points), closest to the way walked there;
+  // a photo more than 90° off that way is left out, so no U-turn arrow or "정면이 아닐 수 있습니다" badge (routeAlongPhotos).
+  // The contract hook stays as is.
+  const stepPhotos = useMemo(() => routeAlongPhotos(shownRoute, effectiveCatalog), [shownRoute, effectiveCatalog]);
   const lookup = useMemo(() => placeLookup(data.graph, data.places), [data.graph, data.places]);
   const frames = useMemo(() => roadviewFrames(shownRoute, stepPhotos, effectiveCatalog, lookup, trip?.backFrom ?? null), [shownRoute, stepPhotos, effectiveCatalog, lookup, trip]);
   const stepGroups = useMemo(() => stepMarkerGroups(stepPhotos, shownRoute?.steps.length ?? 0, trip?.backFrom ?? null), [stepPhotos, shownRoute, trip]);
@@ -363,9 +374,17 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
     const frame = spotFrame(preview.key.replace(/^spot:/, ''), preview.lngLat, effectiveCatalog, lookup);
     if (frame) setRoadview({ frames: [frame], index: 0, route: false });
   }
+  /** 경로 없이 보이는 사진 지점 핀: 누르면 그 지점 로드뷰를 바로 연다(말풍선을 거치지 않는다). */
   function showSpot(spot: PhotoSpot) {
-    const info = lookup(spot.nodeId);
-    setPreview({ key: `spot:${spot.nodeId}`, lngLat: spot.lngLat, thumbUrl: spot.thumbUrl, title: info?.name ?? '사진 지점', subtitle: `${info ? placeLine(info) : '실외'} · 사진 ${spot.count}장`, entries: [] });
+    setPreview(null);
+    const frame = spotFrame(spot.nodeId, spot.lngLat, effectiveCatalog, lookup);
+    if (frame) setRoadview({ frames: [frame], index: 0, route: false });
+  }
+  /** 경로 사진 핀: 항목이 하나면 그 사진이 첫 장면인 로드뷰를 바로 열고, 왕복으로 둘 이상이면 말풍선에서 가는 길/오는 길을 고른다. */
+  function tapStepGroup(group: MarkerGroup) {
+    const action = pinTapAction(group);
+    if (action.kind === 'open') openRoadview(action.index);
+    else showStepGroup(group);
   }
   function showStepGroup(group: MarkerGroup) {
     const first = frames[group.entries[0]!.index];
@@ -531,6 +550,10 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       </Pressable>)}
       {placesOpen && scopePlaces.length > 20 && <TextButton title={placesExpanded ? '장소 목록 접기' : `장소 ${scopePlaces.length}개 전체 보기`} onPress={() => setPlacesExpanded((value) => !value)} />}
     </View>
+    {demo === 'none' && <View style={st.refreshRow}>
+      <Text style={st.caption}>{mapRefreshing ? '서버 지도를 받고 있습니다…' : MAP_REFRESH_HINT}</Text>
+      <TextButton title={MAP_REFRESH_TITLE} disabled={mapRefreshing} onPress={data.reload} />
+    </View>}
   </Sheet>;
 
   const planSheet = <Sheet key={sheetKey} maxHeight={sheetMax(0.7)} defaultHeight={sheetMax(0.42)} footer={restroom ? undefined : <Button title="길찾기" disabled={!from || !to || data.status !== 'ready'} onPress={() => findRoute(from, to)} />}>
@@ -642,7 +665,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
         <View style={st.navBody} accessible accessibilityLiveRegion="polite" accessibilityLabel={`${navIndex + 1}단계, 전체 ${cards.length}단계 중. ${card.text}`}>
           <Text style={st.navCounter}>{navIndex + 1} / {cards.length}{card.distanceM > 0 ? ` · ${Math.round(card.distanceM)}m` : ''}{card.level !== null ? ` · ${floorLabel(card.level)}` : ''}</Text>
           <Text style={st.navText}>{card.text}</Text>
-          {navPreview && routePhotosOn && <Text style={st.navPhotoHint}>지도의 사진을 누르면 크게 볼 수 있어요.</Text>}
+          {navPreview && routePhotosOn && <Text style={st.navPhotoHint}>지도의 사진이나 말풍선을 누르면 로드뷰로 볼 수 있어요.</Text>}
         </View>
         <Pressable accessibilityRole="button" accessibilityLabel="다음 안내" accessibilityState={{ disabled: navIndex >= cards.length - 1 }} disabled={navIndex >= cards.length - 1} onPress={() => moveStep(1)} hitSlop={6} style={({ pressed }) => [st.navArrow, navIndex >= cards.length - 1 && st.navArrowOff, pressed && st.navArrowPressed]}>
           <Arrow />
@@ -705,7 +728,7 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       <MapCanvas center={data.campus?.center ?? { lat: 37.5572, lng: 127.045 }} label={demo !== 'none' ? '가상 시험 캠퍼스' : building?.name ?? '한양대학교 서울캠퍼스'} route={shownRoute} from={from} to={to} places={scopePlaces} graph={data.graph} buildingId={buildingId} level={level}
         position={navOn && sensors.running ? gps.position : myLocation} flow={flow}
         focus={focus} selected={screen === 'home' ? selected : null} fitPadding={{ top: fitTop, bottom: 48, left: 36, right: 36 }}
-        photoSpots={shownPhotos.photoSpots} onPhotoSpot={showSpot} stepGroups={shownPhotos.stepGroups} onStepGroup={showStepGroup}
+        photoSpots={shownPhotos.photoSpots} onPhotoSpot={showSpot} stepGroups={shownPhotos.stepGroups} onStepGroup={tapStepGroup}
         preview={screen === 'pick' ? null : screen === 'nav' ? preview ?? (shownPhotos.autoPreview ? navPreview : null) : preview} onOpenPreview={openRoadview}
         stepFocus={screen === 'nav' ? stepFocus : null} threeD={threeD}
         onLongPress={longPress} pressPin={screen === 'pick' || screen === 'nav' ? null : pressPin}
@@ -734,9 +757,9 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
             {selected
               ? <SelectionBar name={selected.name} detail={placeDetail(selected, data.buildings)} onBack={clearSelection} onSearch={searchAgain} />
               : <><SearchBar onSearch={() => openSearch('place')} onRoute={openPlan} /><RestroomChip onPress={() => openSearch('restroom')} /></>}
-            {__DEV__ && <FloatChip label="개발 데이터" text={`개발 · ${DEMO_LABEL[demo]}`} onPress={() => setDevOpen((value) => !value)} />}
+            {/* 개발 메뉴: 지도 위 배지 없이, 개발 빌드에서만 3D 버튼을 길게 눌러 연다(DEV_MENU_HINT). */}
             {__DEV__ && devOpen && <View style={st.devMenu}>
-              <Text style={st.caption}>개발용 연결 시험입니다. 가상 데이터는 실제 한양대 길이 아닙니다.</Text>
+              <Text style={st.caption}>개발용 연결 시험입니다({DEMO_LABEL[demo]}). 가상 데이터는 실제 한양대 길이 아닙니다.</Text>
               <Button secondary title="실제 캠퍼스 데이터로 돌아가기" onPress={() => switchData('none')} />
               <Button secondary title="야외 가상 경로 시험" onPress={() => switchData('outdoor')} />
               <Button secondary title="실내·계단·엘리베이터 시험" onPress={() => switchData('indoor')} />
@@ -759,7 +782,8 @@ export function MapScreen({ active = true, photoCatalog = EMPTY_PHOTO_CATALOG, p
       </View>}
       {screen !== 'pick' && search === null && <View style={st.bottomStack} pointerEvents="box-none">
         <View style={st.fabs} pointerEvents="box-none">
-          <RoundButton label={threeD ? '3D 보기 끄기' : '3D 보기, 건물 층을 세워서 보기'} selected={threeD} onPress={() => setThreeD((value) => !value)}><Stack3DIcon on={threeD} /></RoundButton>
+          <RoundButton label={threeD ? '3D 보기 끄기' : '3D 보기, 건물 층을 세워서 보기'} selected={threeD} onPress={() => setThreeD((value) => !value)}
+            onLongPress={__DEV__ ? () => setDevOpen((value) => !value) : undefined} longPressLabel={DEV_MENU_HINT}><Stack3DIcon on={threeD} /></RoundButton>
           {demo === 'none' && <RoundButton label="내 위치로 이동" busy={gpsBusy} onPress={() => void locateMe()}><LocateIcon color={myLocation ? t.color.primary : t.color.text} /></RoundButton>}
         </View>
       </View>}
@@ -826,6 +850,7 @@ const st = StyleSheet.create({
   pinCrossV: { position: 'absolute', left: -1, top: -6, width: 2, height: 12, backgroundColor: '#142A44' },
   navPanel: { flexShrink: 0, marginTop: -18, paddingTop: 14, paddingBottom: 12, borderTopLeftRadius: t.radii.sheet, borderTopRightRadius: t.radii.sheet, backgroundColor: t.color.surface, ...floating },
   navInner: { width: '100%', alignSelf: 'center', gap: 10 },
+  refreshRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: t.space.sm, flexWrap: 'wrap' },
   navHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: t.space.sm },
   summaryChip: { marginLeft: 'auto', alignSelf: 'center' },
   navCard: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 96, padding: 10, borderRadius: 16, backgroundColor: t.color.soft },

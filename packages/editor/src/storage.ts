@@ -8,6 +8,21 @@ import type { LoadedFile } from '@campo/core';
 
 export const SERVER_MODE = import.meta.env.VITE_EDITOR_STORAGE === 'supabase';
 
+/**
+ * PC 편집기(`npm run editor`)의 저장은 이 PC 디스크(data/campuses/...)에만 쓴다. 앱은 서버(campus_map_files)의 지도를 받으므로
+ * 여기서 저장한 것은 앱·서버에 들어가지 않는다. 상태 막대에 늘 보이고, 저장할 때마다 다시 알린다.
+ */
+export const LOCAL_SAVE_NOTICE = '이 저장은 이 PC에만 저장됩니다 — 앱·서버 반영은 관리자 웹의 매핑(/map/)에서 저장하거나 폴더 올리기를 쓰세요.';
+/** 상태 막대의 짧은 표시(전체 문장은 LOCAL_SAVE_NOTICE, 마우스를 올리면·스크린리더로 읽힌다). */
+export const LOCAL_SAVE_BADGE = '이 PC에만 저장 · 앱 반영은 관리자 웹 매핑(/map/)';
+/** 서버 빌드(관리자 웹 /map/)에서 저장한 뒤 알림의 뒷부분: 앱에 들어가는 길. */
+export const SERVER_SAVED_TAIL = '앱은 지도 탭의 "지도 새로고침"을 누르거나, 10분 뒤 앱으로 돌아오거나, 다시 켜면 받아 갑니다.';
+
+/** 저장 위치 안내: PC 편집기면 LOCAL_SAVE_NOTICE, 서버 빌드면 null(서버에 저장하므로 따로 알릴 것이 없다). */
+export function saveTargetNotice(serverMode: boolean = SERVER_MODE): string | null {
+  return serverMode ? null : LOCAL_SAVE_NOTICE;
+}
+
 /** What the dev-server-only features say in the server build. */
 export const PC_ONLY = '이 기능은 PC 편집기에서만 됩니다.';
 

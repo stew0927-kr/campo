@@ -1,13 +1,12 @@
-// 지도 화면의 "경로를 따라가는 사진"(routeAlongPhotos): 경로가 지나는 모든 사진 지점, 진행 방위에 가장 가까운 사진,
-// 방위가 안 맞아도 배지로 보이기, 양방향이면 다른 사진.
+// 지도 화면의 "경로를 따라가는 사진"(routeAlongPhotos): 경로가 실제로 지나는 사진 지점만, 진행 방위에 가장 가까운 사진,
+// ±90° 밖(반대·크게 어긋남)·방향 없는 사진은 제외(배지·U턴 없음), 양방향이면 다른 사진.
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { CampusRuntime } from '../src/campus/types.ts';
 import type { CampusRouteView, PhotoRow } from '../src/contracts.ts';
 import { loadBundledCampus } from '../src/campus/loadBundledCampus.ts';
 import { photoCatalogFromRows } from '../src/photos/catalog.ts';
-import { APPROXIMATE_BADGE } from '../src/photos/photoText.ts';
-import { lineBearings, NEAR_PHOTO_M, nodeLineIndex, pickAlong, routeAlongPhotos, segmentDistance } from '../src/photos/routeAlongPhotos.ts';
+import { ALONG_MAX_DEG, lineBearings, nodeLineIndex, pickAlong, routeAlongPhotos } from '../src/photos/routeAlongPhotos.ts';
 import { routeStepPhotos } from '../src/photos/routePhotos.ts';
 import { stepMarkerGroups } from '../src/photos/roadviewModel.ts';
 import { computeRoute } from '../src/route/routeEngine.ts';
@@ -89,18 +88,37 @@ describe('routeAlongPhotos (지도 화면)', () => {
     expect(Math.abs(((a.targetDeg! - b.targetDeg! + 540) % 360) - 180)).toBeGreaterThan(140);
   });
 
-  it('방위가 ±90° 밖이어도 사진을 숨기지 않고 배지와 함께 보인다(방향 없는 사진도)', () => {
-    const back180 = pickAlong(photoCatalogFromRows([row('back', 'n', 180)]).byNodeId('n'), 0, null)!;
-    expect(back180).toMatchObject({ pick: 'approximate', photo: { photoId: 'back' }, badge: APPROXIMATE_BADGE });
-    expect(Math.abs(back180.deltaDeg!)).toBe(180);
-    const noHeading = pickAlong(photoCatalogFromRows([row('x', 'n', null)]).byNodeId('n'), 0, null)!;
-    expect(noHeading).toMatchObject({ pick: 'approximate', photo: { photoId: 'x' }, deltaDeg: null, arrow: null, badge: APPROXIMATE_BADGE });
+  it('진행 방위와 ±90°를 넘게 어긋나거나 반대인 사진, 방향 없는 사진은 후보에서 뺀다(배지·U턴 없음)', () => {
+    expect(ALONG_MAX_DEG).toBe(90);
+    expect(pickAlong(photoCatalogFromRows([row('back', 'n', 180)]).byNodeId('n'), 0, null)).toBeNull();
+    expect(pickAlong(photoCatalogFromRows([row('side', 'n', 100)]).byNodeId('n'), 0, null)).toBeNull();
+    expect(pickAlong(photoCatalogFromRows([row('x', 'n', null)]).byNodeId('n'), 0, null)).toBeNull();
     expect(pickAlong([], 0, null)).toBeNull();
-    // 계약 훅은 그대로: ±90° 밖이면 none.
+    // 진행 방위를 모르면 고르지 않는다.
+    expect(pickAlong(photoCatalogFromRows([row('a', 'n', 0)]).byNodeId('n'), null, null)).toBeNull();
+    // 반대 사진과 80° 사진이 같이 있으면 80° 쪽(±90° 안)을 고르고, 화살표는 U턴이 아니다. 배지도 없다.
+    const ok = pickAlong(photoCatalogFromRows([row('back', 'n', 180), row('ok', 'n', 80)]).byNodeId('n'), 0, null)!;
+    expect(ok).toMatchObject({ pick: 'approximate', photo: { photoId: 'ok' }, badge: null });
+    expect(ok.arrow!.mode).not.toBe('behind');
+    // 들어오는 방향 사진(approach)도 나가는 방향과 90°를 넘으면 쓰지 않는다: 반대로 돌아서 보는 사진이 끼지 않는다.
+    expect(pickAlong(photoCatalogFromRows([row('in', 'n', 180)]).byNodeId('n'), 0, 180)).toBeNull();
+    // 계약 훅도 그대로: ±90° 밖이면 none. 지도 목록은 그 지점을 사진 없음으로 두되 자리는 남긴다(단계 시작).
     const first = fixture.steps[0]!;
     const catalog = photoCatalogFromRows([row('behind', GATE, first.bearing_deg! + 180)]);
     expect(routeStepPhotos(fixture, catalog)[0]!.pick).toBe('none');
-    expect(routeAlongPhotos(fixture, catalog)[0]).toMatchObject({ pick: 'approximate', photo: { photoId: 'behind' }, badge: APPROXIMATE_BADGE });
+    expect(routeAlongPhotos(fixture, catalog)[0]).toMatchObject({ pick: 'none', photo: null, arrow: null, badge: null });
+  });
+
+  it('이 목록에서는 배지와 U턴(behind) 화살표가 나오지 않는다(로드뷰 가상 캠퍼스 전체 경로)', async () => {
+    const { ROADVIEW_DEMO_CAMPUS, ROADVIEW_DEMO_CATALOG, RV } = await import('../src/features/map/roadviewDemo.ts');
+    const rt = loadBundledCampus(ROADVIEW_DEMO_CAMPUS);
+    for (const [a, b] of [[RV.gate, RV.room201], [RV.room201, RV.gate], [RV.gate, RV.plaza], [RV.plaza, RV.gate]] as const) {
+      for (const s of routeAlongPhotos(routeOf(rt, a, b), ROADVIEW_DEMO_CATALOG)) {
+        expect(s.badge).toBeNull();
+        if (s.arrow) expect(s.arrow.mode).not.toBe('behind');
+        if (s.deltaDeg !== null) expect(Math.abs(s.deltaDeg)).toBeLessThanOrEqual(ALONG_MAX_DEG);
+      }
+    }
   });
 });
 
@@ -118,49 +136,46 @@ describe('routeAlongPhotos on the real campus (제1공학관 4층 복도, 양방
   });
 });
 
-describe('routeAlongPhotos: 경로 근처(오프셋) 사진', () => {
-  it(`같은 층 경로선에서 ${NEAR_PHOTO_M}m 안 사진은 그 단계 사진, 25m 밖·다른 층은 제외, 핀은 실제 촬영 지점`, async () => {
+describe('routeAlongPhotos: 경로 밖 근처 사진 제외', () => {
+  it('경로가 지나지 않는 지점의 사진은 같은 층 12 m 안이어도 넣지 않는다 — 경로 위 node_id 사진만', async () => {
     const walk = (await fourthFloorWalk())!;
     const rt = loadBundledCampus(await bundleOf(REAL_DIR, 'hanyang-seoul'));
     const base = rt.graph.nodes.get(walk.nodeId)!;
-    // 복도 진행 방향에 직각으로 12 m / 25 m 떨어진 가짜 사진 지점(같은 4층), 12 m 떨어진 5층 지점.
     const side = ((walk.outDeg + 90) * Math.PI) / 180;
     const [lng, lat] = base.geometry.coordinates as [number, number];
     const off = (m: number): [number, number] => [lng + (Math.sin(side) * m) / (111_320 * Math.cos((lat * Math.PI) / 180)), lat + (Math.cos(side) * m) / 110_540];
-    const fake = (id: string, at: [number, number], level: number) => ({ ...base, id, properties: { ...base.properties, level }, geometry: { type: 'Point' as const, coordinates: at } });
+    const fake = (id: string, at: [number, number]) => ({ ...base, id, geometry: { type: 'Point' as const, coordinates: at } });
     const nodes = new Map(rt.graph.nodes);
-    for (const n of [fake('near12', off(12), 4), fake('far25', off(25), 4), fake('up12', off(12), 5)]) nodes.set(n.id, n as typeof base);
-    const graph = { ...rt.graph, nodes };
-    const catalog = photoCatalogFromRows([row('pNear', 'near12', walk.outDeg), row('pNearBack', 'near12', (walk.outDeg + 180) % 360), row('pFar', 'far25', walk.outDeg), row('pUp', 'up12', walk.outDeg)]);
-    const there = routeAlongPhotos(walk.there, catalog, graph);
+    nodes.set('near12', fake('near12', off(12)) as typeof base);
+    expect(nodes.size).toBe(rt.graph.nodes.size + 1);
+    // 근처(12 m) 지점 사진 + 경로 위 지점 사진.
+    const catalog = photoCatalogFromRows([row('pNear', 'near12', walk.outDeg), row('pOn', walk.nodeId, walk.outDeg)]);
+    const there = routeAlongPhotos(walk.there, catalog);
     const hit = there.filter((s) => s.photo !== null);
-    expect(hit.map((s) => s.nodeId)).toEqual(['near12']);
-    expect(hit[0]!.lngLat).toEqual(off(12));
-    // 그 구간의 진행 방위에 가까운 쪽 사진.
-    const facing = (h: number) => Math.abs(((h - hit[0]!.targetDeg! + 540) % 360) - 180);
-    expect(facing(hit[0]!.photo!.heading_deg!)).toBeLessThanOrEqual(90);
-    expect(hit[0]!.stepIndex).toBeGreaterThanOrEqual(0);
-    expect(hit[0]!.stepIndex).toBeLessThan(walk.there.steps.length);
-    // 지도 핀은 그 촬영 지점에, 그 단계 항목으로 연결된다.
+    expect(hit.map((s) => s.nodeId)).toEqual([walk.nodeId]);
+    expect(hit.every((s) => walk.there.nodeIds.includes(s.nodeId))).toBe(true);
+    // 지도 핀도 경로 위 지점 사진만.
     const groups = stepMarkerGroups(there, walk.there.steps.length);
-    expect(groups).toHaveLength(1);
-    expect(groups[0]!.lngLat).toEqual(off(12));
-    expect(there[groups[0]!.entries[0]!.index]!.nodeId).toBe('near12');
-    // 반대로 걸으면 반대쪽 사진.
-    const backHit = routeAlongPhotos(walk.back, catalog, graph).find((s) => s.nodeId === 'near12')!;
-    expect(backHit.photo?.photoId).not.toBe(hit[0]!.photo?.photoId);
-    // 그래프를 넘기지 않으면 근처 사진은 보지 않는다.
-    expect(routeAlongPhotos(walk.there, catalog).some((s) => s.photo !== null)).toBe(false);
-    expect(segmentDistance([0, 0.0001], [-0.001, 0], [0.001, 0]).m).toBeCloseTo(11.05, 1);
+    expect(groups.map((g) => g.nodeId)).toEqual([walk.nodeId]);
+  });
+
+  it('왕복(같은 구간 두 번): 지날 때마다 하나씩, 방향에 맞는 사진', async () => {
+    const walk = (await fourthFloorWalk())!;
+    const catalog = photoCatalogFromRows([row('fwd', walk.nodeId, walk.outDeg), row('rev', walk.nodeId, (walk.outDeg + 180) % 360)]);
+    const { combineRoundTrip } = await import('../src/photos/roadviewModel.ts');
+    const trip = combineRoundTrip(walk.there, walk.back)!;
+    expect(trip).not.toBeNull();
+    const hits = routeAlongPhotos(trip.route, catalog).filter((s) => s.nodeId === walk.nodeId && s.photo !== null);
+    expect(hits.map((s) => s.photo!.photoId)).toEqual(['fwd', 'rev']);
   });
 });
 
 describe('routeAlongPhotos: 순서', () => {
-  it('근처 사진까지 넣어도 경로 순서(단계 번호가 줄지 않는다)를 지킨다(로드뷰 가상 캠퍼스)', async () => {
+  it('경로 순서(단계 번호가 줄지 않는다)를 지킨다(로드뷰 가상 캠퍼스)', async () => {
     const { ROADVIEW_DEMO_CAMPUS, ROADVIEW_DEMO_CATALOG, RV } = await import('../src/features/map/roadviewDemo.ts');
     const rt = loadBundledCampus(ROADVIEW_DEMO_CAMPUS);
     for (const to of [RV.room201, RV.plaza]) {
-      const along = routeAlongPhotos(routeOf(rt, RV.gate, to), ROADVIEW_DEMO_CATALOG, rt.graph);
+      const along = routeAlongPhotos(routeOf(rt, RV.gate, to), ROADVIEW_DEMO_CATALOG);
       const steps = along.map((s) => s.stepIndex);
       expect(steps).toEqual([...steps].sort((a, b) => a - b));
       expect(along.at(-1)!.nodeId).toBe(to);

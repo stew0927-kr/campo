@@ -10,6 +10,7 @@ import { ArrowOverlay } from '../../photos/PhotoArrowOverlay.tsx';
 import { headingLabel } from '../../photos/demoPhotoArt.ts';
 import { PHOTO_LOAD_FAILED_TEXT, arrowSentence } from '../../photos/photoText.ts';
 import { framePhoto, placeLine, viewingText, type RoadviewFrame } from '../../photos/roadviewModel.ts';
+import { turnGuide } from '../../photos/turnGuide.ts';
 import { RoadviewMiniMap } from './RoadviewMiniMap.tsx';
 
 export interface RoadviewScreenProps {
@@ -34,6 +35,8 @@ export function RoadviewScreen({ visible, frames, initialIndex = 0, route = null
   const frame = frames[index];
   const shown = useMemo(() => (frame ? (chosen[frame.key] ? framePhoto(frame, chosen[frame.key]!) : frame.step) : null), [frame, chosen]);
   const photo = shown?.photo ?? null;
+  // "앞으로 25m 직진" / "25m 직진 후 왼쪽": the route's straight run from this point plus the shown photo's own angle.
+  const guide = useMemo(() => (shown?.arrow ? turnGuide(frame?.run ?? null, shown.deltaDeg ?? shown.arrow.rotateDeg) : null), [frame, shown]);
   useEffect(() => setFailed(false), [photo?.fullUrl]);
   const stops = useMemo(() => frames.map((f) => f.lngLat).filter((p): p is [number, number] => p !== null), [frames]);
   const go = (to: number) => { if (to >= 0 && to < frames.length) { setIndex(to); setOthersOpen(false); } };
@@ -66,7 +69,7 @@ export function RoadviewScreen({ visible, frames, initialIndex = 0, route = null
             ? <Image source={{ uri: photo.fullUrl }} placeholder={{ uri: photo.thumbUrl }} contentFit={full ? 'contain' : 'cover'} cachePolicy="memory-disk" style={s.fill}
               onError={() => setFailed(true)} accessibilityLabel={`${frame.place.name}, ${headingLabel(photo.heading_deg)} 방향 사진`} />
             : <View style={[s.fill, s.noPhoto]}><Text style={s.emptyText}>{PHOTO_LOAD_FAILED_TEXT}</Text></View>}
-          {shown.arrow && <ArrowOverlay arrow={shown.arrow} />}
+          {shown.arrow && <ArrowOverlay arrow={shown.arrow} guide={guide} />}
           {chrome}
 
           <View style={s.bottomBar} pointerEvents="box-none">
@@ -97,7 +100,7 @@ export function RoadviewScreen({ visible, frames, initialIndex = 0, route = null
             </View>
             <Text style={s.cardLine}>{hasPhoto ? `${placeLine(frame.place)} · ${viewingText(photo)}` : placeLine(frame.place)}</Text>
             <Text style={s.cardStep}>{frame.stepText}</Text>
-            {shown.arrow && <Text style={s.cardLine}>{arrowSentence(shown.arrow)}</Text>}
+            {shown.arrow && <Text style={s.cardGuide}>{arrowSentence(shown.arrow, guide)}</Text>}
             {shown.badge && <Text style={s.badge}>! {shown.badge}</Text>}
           </View>
           {!hasPhoto && chrome}
@@ -152,6 +155,7 @@ const s = StyleSheet.create({
   tagIndoor: { backgroundColor: '#7A4FD6' }, tagOutdoor: { backgroundColor: '#18744D' },
   tagText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   cardLine: { fontSize: 14, color: '#4A5A6E', lineHeight: 20 },
+  cardGuide: { fontSize: 15, color: '#142A44', fontWeight: '800', lineHeight: 21 },
   cardStep: { fontSize: 15, color: '#142A44', fontWeight: '700', lineHeight: 21 },
   badge: { alignSelf: 'flex-start', fontSize: 13, fontWeight: '800', color: '#000000', backgroundColor: '#FFD400', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
 });

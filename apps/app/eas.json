@@ -21,6 +21,10 @@
       "extends": "base",
       "distribution": "internal",
       "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://aywecgqblhclhwqpthgl.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_xac75JwVelaFGFF8n7U2qw_h0pJYzXu"
+      },
       "android": {
         "buildType": "apk"
       }
@@ -29,6 +33,10 @@
       "extends": "base",
       "autoIncrement": true,
       "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://aywecgqblhclhwqpthgl.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_xac75JwVelaFGFF8n7U2qw_h0pJYzXu"
+      },
       "android": {
         "buildType": "app-bundle"
       }

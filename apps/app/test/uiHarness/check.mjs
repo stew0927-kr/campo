@@ -137,7 +137,7 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CAMPO_CHROMIUM ?? '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
   await scenario('five tabs, retained detail and back navigation', async (p) => {
     for (const name of ['지도·길찾기', '논술', '축제', '학교행사', '내정보']) { await tab(p, name).click(); await selected(p, name); }
-    await tab(p, '논술').click(); await button(p, '2026-11-29').click();
+    await tab(p, '논술').click(); await button(p, '11/29(일)').click();
     await p.getByRole('textbox', { name: '시험·고사장 검색' }).fill('상경');
     await button(p, '고사장 상세 보기').click(); await text(p, '가상 상경계열 오전').waitFor();
     await tab(p, '축제').click(); await tab(p, '논술').click();
@@ -146,7 +146,7 @@ try {
     await p.evaluate(() => window.__campoBack()); await selected(p, '지도·길찾기');
   });
   await scenario('essay date and multiword search, checklist, favorites and route handoff', async (p) => {
-    await tab(p, '논술').click(); await button(p, '2026-11-28').click();
+    await tab(p, '논술').click(); await button(p, '11/28(토)').click();
     await p.getByRole('textbox', { name: '시험·고사장 검색' }).fill('오후   402');
     assert.equal(await button(p, '고사장 상세 보기').count(), 1);
     await button(p, '고사장 상세 보기').click();
@@ -157,18 +157,18 @@ try {
     await handoffSearch(p, '가상 시험관 가상 402호');
     await tab(p, '내정보').click(); await button(p, '즐겨찾기에서 삭제').click(); await text(p, '아직 담은 항목이 없습니다').waitFor();
   });
-  await scenario('festival dates, category filter, favorites and all three flow buttons', async (p) => {
-    await tab(p, '축제').click(); await button(p, '2026-11-21').click();
-    await text(p, '가상 밴드 2').waitFor(); await button(p, '2026-11-20').click(); await button(p, '부스').click();
-    await p.getByRole('textbox', { name: '축제 부스 검색' }).fill('가상  만들기');
+  await scenario('festival days, views, category and area filters, favorites and all three flow buttons', async (p) => {
+    await tab(p, '축제').click(); await text(p, '이 날짜의 공연 정보가 아직 공개되지 않았습니다').waitFor();
+    await button(p, 'DAY 2 · 10/2(금)').click(); await text(p, 'fromis_9').waitFor(); await text(p, '17시 이후 성동 03-2번 버스 회차 지점 변경').waitFor();
+    await button(p, '부스').first().click(); await button(p, '한마당').click();
+    await p.getByRole('textbox', { name: '축제 부스 검색' }).fill('자취  시뮬레이터');
     assert.equal(await button(p, '부스 상세 보기').count(), 1); await button(p, '부스 상세 보기').click();
-    await text(p, '실제 대기 시간은 제공하지 않습니다').waitFor(); await button(p, '즐겨찾기 추가').click();
-    for (const name of ['입장 동선 · 지도 연결 대기', '대기 동선 · 지도 연결 대기', '퇴장 동선 · 지도 연결 대기']) {
+    await text(p, '자취:ON').waitFor(); await button(p, '즐겨찾기 추가').click();
+    for (const name of ['입장 동선', '대기 동선', '퇴장 동선']) {
       await tab(p, '축제').click(); await button(p, name).click(); await selected(p, '지도·길찾기');
-      await searchSheet(p).waitFor(); assert.equal(await p.getByRole('textbox', { name: '장소 검색어' }).inputValue(), '가상 축제 광장'); await button(p, '검색 닫기').click();
-      await button(p, '출발: 검색해서 선택해 주세요').waitFor();
+      await searchSheet(p).waitFor(); assert.equal(await p.getByRole('textbox', { name: '장소 검색어' }).inputValue(), '한마당'); await button(p, '검색 닫기').click();
     }
-    await tab(p, '내정보').click(); await button(p, '부스').click(); await text(p, '가상 만들기 부스').waitFor();
+    await tab(p, '내정보').click(); await button(p, '부스').click(); await text(p, '자취:ON').waitFor();
   });
   await scenario('event category and search, detail, route and favorite handoff', async (p) => {
     await tab(p, '학교행사').click(); await text(p, '고정 · 가상 행사 운영 안내').waitFor(); await button(p, '다가오는 행사').click(); await button(p, '강연').click();

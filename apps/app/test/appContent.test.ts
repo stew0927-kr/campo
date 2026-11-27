@@ -13,9 +13,10 @@ describe('demo content and published data contracts', () => {
     expect(DEMO_CONTENT.stalls.every((row) => row.nodeId === null && row.entranceNodeId === null && row.exitNodeId === null)).toBe(true);
     expect(DEMO_CONTENT.events.every((row) => row.nodeId === null)).toBe(true);
   });
-  it('retains the four festival tables, all categories and day-specific relationships', () => {
-    expect(DEMO_CONTENT.days).toHaveLength(3);
-    expect(new Set(DEMO_CONTENT.stalls.map((row) => row.category))).toEqual(new Set(['주점', '부스', '공연', '편의']));
+  it('retains the four festival tables, valid categories and day-specific relationships', () => {
+    // The festival example is the official 2026 '오름' notice: two days, and only the categories it actually shows.
+    expect(DEMO_CONTENT.days).toHaveLength(2);
+    expect(new Set(DEMO_CONTENT.stalls.map((row) => row.category))).toEqual(new Set(['주점', '부스', '편의']));
     expect(DEMO_CONTENT.stalls.every((row) => DEMO_CONTENT.days.some((d) => d.id === row.dayId))).toBe(true);
     expect(DEMO_CONTENT.performances.every((row) => DEMO_CONTENT.days.some((d) => d.id === row.dayId))).toBe(true);
   });

@@ -2,21 +2,25 @@
 // 높이는 코어 buildingStack(측정 층고 → 건물 ext.floor_height_m → 3.9 m)을 그대로 쓴다. 화면 표시용이며 길찾기는 층 번호를 보지 않는다.
 //
 // MapLibre 네이티브의 선·점·아이콘(그리고 React Native Marker)은 고도를 줄 수 없어 항상 지면(0 m)에 그려진다. 그래서 건물·층을
-// 고른 3D 보기에서는 고른 층을 지면에 두고(그 층의 도면 선·시설 아이콘이 그 층 위에 정확히 놓이게) 그 위층들을 실제 층고대로
-// 쌓는다. 고른 층보다 아래층은 지면 아래라 세우지 않는다(fill-extrusion은 0 m 아래로 내려가지 않는다).
-// - 고른 건물: 위층 슬래브(옅게, 층 사이 틈) + 엘리베이터·계단 세로 선분(links: 폭 LINK_W_M의 아주 가는 수직 기둥, 편집기 3D의
-//   보라·주황 세로선과 같은 인상) + 정류장·계단참 자리의 작은 바닥 표식(foot).
+// 고른 3D 보기에서는 고른 층을 지면에 두고(그 층의 도면 선·시설 아이콘이 그 층 위에 정확히 놓이게) 그 위층들을 각 층 바닥에서
+// 아주 얇게(SLAB_THICKNESS_M) 띄워 "유리 바닥판"으로만 그린다. 층 전체 높이를 블록으로 채우지 않기 때문에 판 사이의 실제 층고가
+// 그대로 빈 공간으로 남아 층간 간격이 시원하게 읽힌다. 고른 층보다 아래층은 지면 아래라 세우지 않는다(fill-extrusion은 0 m
+// 아래로 내려가지 않는다).
+// - 고른 건물: 위층 얇은 바닥판(옅게, 각 판은 바닥 높이 기준 SLAB_THICKNESS_M만) + 엘리베이터·계단 세로 선분(links: 폭
+//   LINK_W_M의 아주 가는 수직 기둥, 편집기 3D의 보라·주황 세로선과 같은 인상) + 정류장·계단참 자리의 작은 바닥 표식(foot).
 // - 다른 건물: 슬래브 대신 외곽선만.
 // - 아무 건물도 고르지 않았으면: 층이 둘 이상인 건물을 모두 1층을 지면에 두고 옅게 세운다(기둥 없음).
 //
-// 유리판처럼 보이게(편집기 deck3d의 wireframe 슬래브와 같은 인상): 슬래브는 아주 옅게 칠하고, 슬래브의 윗변·아랫변을 따라 가는 띠
-// (rims, 폭 RIM_W_M·높이 RIM_H_M)를 진하게 세워 층판 경계를 읽게 한다. MapLibre의 선 레이어는 지면에만 그려지고 fill-extrusion-color의
-// 알파는 무시되므로(레이어 opacity 하나만 쓴다) 경계는 띠로, 층별 농도는 tier(바로 위 층 0 / 그 위 1)별 레이어로 나눠 준다.
+// 유리판처럼 보이게(편집기 deck3d의 wireframe 슬래브와 같은 인상): 판은 아주 옅게 칠하고, 판의 윗변·아랫변을 따라 가는 띠
+// (rims, 폭 RIM_W_M·높이 RIM_H_M)를 진하게 세운다. 판 자체가 얇아(두 띠의 높이를 합치면 판 두께와 같거나 더 크다) 위·아래 띠가
+// 거의 맞붙어 하나의 깔끔한 단일 테두리로 읽힌다(옛 "두꺼운 블록 + 양끝 띠"처럼 비스듬한 시선에서 여러 겹의 판·띠가 교차해
+// 줄무늬로 보이던 문제가 사라진다). MapLibre의 선 레이어는 지면에만 그려지고 fill-extrusion-color의 알파는 무시되므로(레이어
+// opacity 하나만 쓴다) 경계는 띠로, 층별 농도는 tier(바로 위 층 0 / 그 위 1)별 레이어로 나눠 준다.
 import { PICTOGRAM_COLORS, STACK_COLORS, buildingStack, type CampusGraph, type BuildingFeature, type EditBuilding, type Level } from '@campo/core';
 import type { FeatureCollection, Polygon, Position } from 'geojson';
 
-/** 층 슬래브 사이 틈(m): 층이 한 덩어리로 붙어 보이지 않게. */
-export const SLAB_GAP_M = 0.6;
+/** 위층 바닥판의 두께(m, 바닥 높이 기준): 층 전체가 아니라 얇은 유리판 하나만 그린다. */
+export const SLAB_THICKNESS_M = 0.3;
 /** 계단참 두 개가 이 거리(m) 안이면 같은 계단(아래층 ↔ 위층)으로 본다. */
 export const STAIR_PAIR_M = 6;
 /**
@@ -101,7 +105,8 @@ export function stack3d(graph: CampusGraph | null, buildingId: string | null, le
     for (const f of floors) {
       // 고른 층은 지면의 2D 도면(외곽선·선·아이콘)이 그대로 그 층이다: 슬래브를 겹치지 않는다.
       if (selected && f.baseM <= 1e-6) continue;
-      const top = Math.max(f.baseM + 0.2, f.topM - SLAB_GAP_M);
+      // 바닥 높이 기준 얇은 유리판 하나만: 층 전체를 블록으로 채우지 않는다(짧은 층에서도 최소 0.2 m는 유지).
+      const top = Math.max(f.baseM + 0.2, Math.min(f.baseM + SLAB_THICKNESS_M, f.topM - 0.05));
       const tier: 0 | 1 = selected && above++ > 0 ? 1 : 0;
       const baseM = round(f.baseM), topM = round(top);
       slabs.push({ type: 'Feature', properties: { buildingId: b.id, level: f.level, baseM, topM, picked: b.id === pickedId, tier }, geometry: { type: 'Polygon', coordinates: f.outline } });

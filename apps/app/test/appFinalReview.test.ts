@@ -28,9 +28,9 @@ describe('screen search and filter behavior', () => {
     expect(selectEssays(DEMO_CONTENT, '2026-11-29', '402')).toEqual([]);
   });
   it('combines festival day, category and multiword query', () => {
-    expect(selectStalls(DEMO_CONTENT, 'demo-day-0', '부스', '가상 만들기').map((r) => r.id)).toEqual(['demo-stall-2']);
-    expect(selectStalls(DEMO_CONTENT, 'demo-day-1', '부스', '만들기')).toEqual([]);
-    expect(selectStalls(DEMO_CONTENT, 'demo-day-0', '주점', '만들기')).toEqual([]);
+    expect(selectStalls(DEMO_CONTENT, 'orum-day-2', '부스', '  자취 시뮬레이터').map((r) => r.id)).toEqual(['orum-booth-8']);
+    expect(selectStalls(DEMO_CONTENT, 'orum-day-1', '부스', '자취')).toEqual([]);
+    expect(selectStalls(DEMO_CONTENT, 'orum-day-2', '주점', '자취')).toEqual([]);
   });
   it('combines event category, title and host and sorts actual instants', () => {
     expect(selectEvents(DEMO_CONTENT, '강연', '가상 학술팀').map((r) => r.id)).toEqual(['demo-event-2']);

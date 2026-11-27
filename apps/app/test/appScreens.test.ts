@@ -42,13 +42,14 @@ import { AppStateProvider } from '../src/state/AppState.tsx';
 import { INITIAL_STATE } from '../src/state/model.ts';
 import { DEMO_CONTENT } from '../src/features/content/mock.ts';
 import { EssayScreen } from '../src/features/essay/EssayScreen.tsx';
-import { FestivalScreen } from '../src/features/festival/FestivalScreen.tsx';
+import { FestivalScreen, type FestivalView } from '../src/features/festival/FestivalScreen.tsx';
 import { EventsScreen } from '../src/features/events/EventsScreen.tsx';
 import { MeScreen } from '../src/features/me/MeScreen.tsx';
 import { AppInfoScreen, CONTACT_EMAIL, PRIVACY_URL, TERMS_URL } from '../src/features/me/AppInfoScreen.tsx';
 import { Linking } from 'react-native';
 import { MapScreen } from '../src/features/map/MapScreen.tsx';
 import { ContentGate } from '../src/features/content/ContentGate.tsx';
+import { festivalGuide } from '../src/features/festival/guide.ts';
 function render(child: ReactNode) { return renderToStaticMarkup(createElement(AppStateProvider, { initialState: INITIAL_STATE, children: child })); }
 describe('A screen rendering with mocked native views (not device tests)', () => {
   it('shows the empty real map honestly and supports manual endpoints', () => {
@@ -101,13 +102,34 @@ describe('A screen rendering with mocked native views (not device tests)', () =>
   });
   it('always shows the essay prototype notice and both date filters', () => {
     const html = render(createElement(EssayScreen, { data: DEMO_CONTENT }));
-    expect(html).toContain('예시 정보'); expect(html).not.toContain('시연'); expect(html).toContain('2026-11-28'); expect(html).toContain('2026-11-29');
+    expect(html).toContain('예시 정보'); expect(html).not.toContain('시연'); expect(html).toContain('11/28(토)'); expect(html).toContain('11/29(일)');
     expect(html).toContain('실제 일정'); expect(html).toContain('고사장 상세 보기');
   });
-  it('renders the festival timetable without inventing booth pins', () => {
+  it('renders the festival hero, day switch, notices and the four guide views without inventing booth pins', () => {
     const html = render(createElement(FestivalScreen, { data: DEMO_CONTENT }));
-    expect(html).toContain('가상 밴드'); expect(html).toContain('예시 정보');
-    for (const category of ['주점', '부스', '공연', '편의']) expect(html).toContain(category);
+    expect(html).toContain('예시 정보'); expect(html).toContain('2026 애국한양응원제 : 오름');
+    for (const label of ['DAY 1 · 10/1(목)', 'DAY 2 · 10/2(금)', '17시 이후 성동 03-2번 버스 회차 지점 변경', '타임테이블', '입장·동선', '부스', '이용안내']) expect(html).toContain(label);
+    // DAY 1 has no published line-up: an honest empty state, not made-up acts.
+    expect(html).toContain('이 날짜의 공연 정보가 아직 공개되지 않았습니다'); expect(html).not.toContain('가상');
+  });
+  it('fills the festival guide sections only from the published guide', () => {
+    const guide = festivalGuide(DEMO_CONTENT.festivals[0]);
+    expect(guide.prohibitedItems).toHaveLength(8); expect(guide.gates.map((g) => g.label)).toEqual(['GATE A', 'GATE B', 'GATE C']);
+    const bare = render(createElement(FestivalScreen, { data: { ...DEMO_CONTENT, festivals: DEMO_CONTENT.festivals.map((f) => ({ ...f, guide: null })) } }));
+    expect(bare).not.toContain('버스 회차'); expect(bare).toContain('2026 애국한양응원제 : 오름');
+  });
+  it('renders every festival view from the official notice data', () => {
+    const view = (initialView: FestivalView) => render(createElement(FestivalScreen, { data: DEMO_CONTENT, initialView, initialDayId: 'orum-day-2' }));
+    const timetable = view('타임테이블');
+    for (const act of ['15:10', '20:00', '한울림', '블라인드 소개팅', '루터스', 'fromis_9', 'HIGHLIGHT', '일부 일정이 변동될 수 있습니다']) expect(timetable).toContain(act);
+    const flows = view('입장·동선');
+    for (const label of ['한양존', '프렌즈존', 'GATE A 길찾기', 'GATE C 길찾기', '주황 선', '보라 선', '비상구', '대기 동선 지도에서 보기']) expect(flows).toContain(label);
+    const booths = view('부스 찾기');
+    for (const label of ['주점', '부스', '공연', '편의', '한마당', '국제관 옆', '지구 멸망까지 3분', '시끄러운 밤', '탕화쿵푸', '사천훠궈마라탕', '용기한걸음메아리', '부스 상세 보기']) expect(booths).toContain(label);
+    const services = view('이용 안내');
+    for (const label of ['팔찌 수령', '국제관 옆 팔찌 부스(2곳)', '10:00 ~ 20:00', '축구 유니폼', '38,000원', '3XL', '반입 금지 물품', '셀카봉', '가연성·폭발성 물질', '분실물·미수령 안내']) expect(services).toContain(label);
+    // Sections with no published notice say so instead of inventing rules.
+    expect(services).toContain('아직 공지되지 않았습니다');
   });
   it('renders event categories and an empty content state', () => {
     expect(render(createElement(EventsScreen, { data: DEMO_CONTENT }))).toContain('가상 입학설명회');

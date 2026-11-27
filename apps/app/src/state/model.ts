@@ -1,7 +1,7 @@
 import type { CampusPlace, TravelMode } from '../contracts.ts';
 import type { CampusRuntime } from '../campus/types.ts';
 
-export const TABS = ['지도·길찾기', '논술', '축제', '학교행사', '내정보'] as const;
+export const TABS = ['논술', '축제', '지도·길찾기', '학교행사', '내정보'] as const;
 export type Tab = (typeof TABS)[number];
 export type DefaultMode = Extract<TravelMode, 'shortest' | 'step_free' | 'wheelchair'>;
 export interface Destination {
@@ -23,7 +23,8 @@ export interface AppState {
   sequence: number;
   lastEstimate: { nodeId: string; timeSec: number } | null;
 }
-export const INITIAL_STATE: AppState = { tab: TABS[0], defaultMode: 'shortest', favorites: [], intent: null, sequence: 0, lastEstimate: null };
+// 가운데 탭(지도·길찾기)에서 시작한다. TABS의 순서(화면 배치용)와는 독립적으로 고정한다.
+export const INITIAL_STATE: AppState = { tab: '지도·길찾기', defaultMode: 'shortest', favorites: [], intent: null, sequence: 0, lastEstimate: null };
 export type Action =
   | { type: 'tab'; tab: Tab }
   | { type: 'navigate'; destination: Destination }
@@ -35,7 +36,7 @@ export type Action =
 export function appReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'tab': return { ...state, tab: action.tab };
-    case 'navigate': return { ...state, tab: TABS[0], sequence: state.sequence + 1, intent: { sequence: state.sequence + 1, destination: action.destination } };
+    case 'navigate': return { ...state, tab: '지도·길찾기', sequence: state.sequence + 1, intent: { sequence: state.sequence + 1, destination: action.destination } };
     case 'consumed': return state.intent?.sequence === action.sequence ? { ...state, intent: null } : state;
     case 'mode': return { ...state, defaultMode: action.mode, lastEstimate: null };
     case 'clearEstimate': return state.lastEstimate === null ? state : { ...state, lastEstimate: null };
